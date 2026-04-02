@@ -1,0 +1,720 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  ArrowRight,
+  Shield,
+  Truck,
+  RefreshCw,
+  Sparkles,
+  Star,
+  Zap,
+} from "lucide-react";
+import { db } from "../lib/firebase";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  Unsubscribe,
+  where,
+} from "firebase/firestore";
+import { toCategorySlug } from "../lib/category";
+
+interface Product {
+  id: string;
+  name: string;
+  price: number;
+  original_price?: number;
+  discount_percentage?: number;
+  image_url: string;
+  category: string;
+  description?: string;
+  is_featured?: boolean;
+  is_new_arrival?: boolean;
+  created_at?: unknown;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  image_url: string;
+  slug: string;
+}
+
+interface CollectionItem {
+  id: string;
+  name: string;
+  description: string;
+  image_url: string;
+  season?: string;
+  year?: number;
+  is_active?: boolean;
+}
+
+const defaultCategories: Category[] = [
+  {
+    id: "1",
+    name: "Men",
+    image_url:
+      "https://images.unsplash.com/photo-1490114538077-0a7f8cb49891?q=80&w=1000",
+    slug: "men",
+  },
+  {
+    id: "2",
+    name: "Women",
+    image_url:
+      "https://images.unsplash.com/photo-1483985988355-763728e1935b?q=80&w=1000",
+    slug: "women",
+  },
+  {
+    id: "3",
+    name: "Accessories",
+    image_url:
+      "https://images.unsplash.com/photo-1523779917675-b6ed3a42a561?q=80&w=1000",
+    slug: "accessories",
+  },
+  {
+    id: "4",
+    name: "Sale",
+    image_url:
+      "https://images.unsplash.com/photo-1607083206968-13611e3d76db?q=80&w=1000",
+    slug: "sale",
+  },
+];
+
+const formatPrice = (value: number) => `$${value.toFixed(2)}`;
+
+export function Home() {
+  const [featuredProducts, setFeaturedProducts] = useState<Product[]>([]);
+  const [newArrivals, setNewArrivals] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>(defaultCategories);
+  const [collectionsData, setCollectionsData] = useState<CollectionItem[]>([]);
+  const [todayPickProductId, setTodayPickProductId] = useState("");
+  const [heroImageOverride, setHeroImageOverride] = useState("");
+  const [homeCollectionIds, setHomeCollectionIds] = useState<string[]>([]);
+  const [email, setEmail] = useState("");
+  const [subscribeStatus, setSubscribeStatus] = useState<
+    "idle" | "success" | "exists" | "error"
+  >("idle");
+
+  useEffect(() => {
+    const unsubscribers: Unsubscribe[] = [];
+
+    try {
+      const settingsRef = doc(db, "site_settings", "homepage");
+
+      unsubscribers.push(
+        onSnapshot(settingsRef, async (settingsSnap) => {
+          let featuredIds: string[] = [];
+          let newArrivalIds: string[] = [];
+
+          if (settingsSnap.exists()) {
+            const data = settingsSnap.data();
+            featuredIds = data.featured_product_ids || [];
+            newArrivalIds = data.new_arrival_ids || [];
+            setTodayPickProductId(data.today_pick_product_id || "");
+            setHeroImageOverride(data.hero_image_url || "");
+            setHomeCollectionIds(data.home_collection_ids || []);
+            const configuredCategories = Array.isArray(data.home_categories)
+              ? data.home_categories
+                  .map((entry: unknown, index: number) => {
+                    if (!entry || typeof entry !== "object") return null;
+                    const candidate = entry as Partial<Category>;
+                    const name = typeof candidate.name === "string" ? candidate.name : "";
+                    const slug = typeof candidate.slug === "string" ? candidate.slug : "";
+                    const imageUrl =
+                      typeof candidate.image_url === "string"
+                        ? candidate.image_url
+                        : "";
+
+                    if (!name || !slug || !imageUrl) return null;
+                    return {
+                      id: candidate.id || `custom-${index + 1}`,
+                      name,
+                      slug,
+                      image_url: imageUrl,
+                    } as Category;
+                  })
+                  .filter((item: Category | null): item is Category => item !== null)
+              : [];
+
+            setCategories(
+              configuredCategories.length > 0
+                ? configuredCategories
+                : defaultCategories
+            );
+          } else {
+            setTodayPickProductId("");
+            setHeroImageOverride("");
+            setHomeCollectionIds([]);
+            setCategories(defaultCategories);
+          }
+
+          if (featuredIds.length > 0) {
+            const featured = await Promise.all(
+              featuredIds.slice(0, 3).map(async (id) => {
+                const snap = await getDoc(doc(db, "products", id));
+                if (!snap.exists()) return null;
+                return { id: snap.id, ...snap.data() } as Product;
+              })
+            );
+            setFeaturedProducts(featured.filter((p): p is Product => p !== null));
+          } else {
+            const recentQ = query(
+              collection(db, "products"),
+              orderBy("created_at", "desc"),
+              limit(3)
+            );
+            const recentSnap = await getDocs(recentQ);
+            setFeaturedProducts(
+              recentSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Product))
+            );
+          }
+
+          if (newArrivalIds.length > 0) {
+            const arrivals = await Promise.all(
+              newArrivalIds.slice(0, 4).map(async (id) => {
+                const snap = await getDoc(doc(db, "products", id));
+                if (!snap.exists()) return null;
+                return { id: snap.id, ...snap.data() } as Product;
+              })
+            );
+            setNewArrivals(arrivals.filter((p): p is Product => p !== null));
+          } else {
+            const recentQ = query(
+              collection(db, "products"),
+              orderBy("created_at", "desc"),
+              limit(4)
+            );
+            const recentSnap = await getDocs(recentQ);
+            setNewArrivals(
+              recentSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Product))
+            );
+          }
+
+        })
+      );
+
+      const collectionsQ = query(collection(db, "collections"), orderBy("year", "desc"));
+      unsubscribers.push(
+        onSnapshot(collectionsQ, (snapshot) => {
+          const data = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...d.data(),
+          })) as CollectionItem[];
+          setCollectionsData(data.filter((item) => item.is_active !== false));
+        })
+      );
+
+      return () => {
+        unsubscribers.forEach((unsubscribe) => unsubscribe());
+      };
+    } catch (error) {
+      console.error("Error loading home content:", error);
+    }
+  }, []);
+
+  const handleSubscribe = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!email.includes("@")) {
+      setSubscribeStatus("error");
+      setTimeout(() => setSubscribeStatus("idle"), 3000);
+      return;
+    }
+
+    try {
+      const duplicateQuery = query(
+        collection(db, "newsletter"),
+        where("email", "==", email.toLowerCase())
+      );
+      const existing = await getDocs(duplicateQuery);
+
+      if (existing.empty) {
+        await addDoc(collection(db, "newsletter"), {
+          email: email.toLowerCase(),
+          subscribed_at: serverTimestamp(),
+          sent_emails: 0,
+        });
+        setSubscribeStatus("success");
+      } else {
+        setSubscribeStatus("exists");
+      }
+      setEmail("");
+    } catch (error) {
+      console.error("Newsletter subscribe failed:", error);
+      setSubscribeStatus("error");
+    } finally {
+      setTimeout(() => setSubscribeStatus("idle"), 3000);
+    }
+  };
+
+  const heroProduct =
+    featuredProducts.find((product) => product.id === todayPickProductId) ||
+    featuredProducts[0];
+  const heroImage =
+    heroImageOverride ||
+    heroProduct?.image_url ||
+    "https://images.unsplash.com/photo-1441984904996-e0b6ba687e04?q=80&w=2200";
+  const homeCollections =
+    homeCollectionIds.length > 0
+      ? homeCollectionIds
+          .map((id) => collectionsData.find((entry) => entry.id === id))
+          .filter((entry): entry is CollectionItem => Boolean(entry))
+      : collectionsData.slice(0, 3);
+
+  return (
+    <div className="min-h-screen pb-16">
+      <section className="pt-0">
+        <div className="space-y-6">
+          <div className="relative overflow-hidden min-h-screen">
+            <img
+              src={heroImage}
+              alt={heroProduct?.name || "Hero"}
+              className="absolute inset-0 h-full w-full object-cover scale-[1.03]"
+            />
+            <div className="absolute inset-0 bg-gradient-to-b from-slate-950/82 via-slate-950/58 to-slate-950/82 backdrop-blur-[2px]" />
+            <div className="relative z-10 min-h-screen max-w-7xl mx-auto px-4 py-16 md:py-20 lg:py-24 flex items-center justify-center">
+              <div className="text-center max-w-3xl">
+                <p className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-cyan-300/35 bg-cyan-400/10 text-cyan-100 text-xs tracking-[0.2em]">
+                  <Sparkles size={14} />
+                  FUTURE OF STREET LUXE
+                </p>
+                <h1 className="mt-6 font-display text-5xl md:text-7xl leading-[0.94] tracking-[0.12em] text-white">
+                  PRECISION
+                  <br />
+                  DRIVEN STYLE
+                </h1>
+                <p className="mt-6 max-w-2xl mx-auto text-slate-200/90 text-base md:text-lg leading-relaxed">
+                  A sharper wardrobe language. Built with clean silhouettes,
+                  elevated textures, and a high-contrast editorial look.
+                </p>
+
+                <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center sm:items-center">
+                  <Link
+                    to="/shop"
+                    className="inline-flex items-center justify-center gap-2 px-7 py-3 rounded-xl luxe-button text-sm font-semibold tracking-[0.13em]"
+                  >
+                    EXPLORE COLLECTION
+                    <ArrowRight size={16} />
+                  </Link>
+                  <Link
+                    to="/new-arrivals"
+                    className="inline-flex items-center justify-center gap-2 px-7 py-3 rounded-xl border border-slate-400/40 bg-slate-900/50 text-slate-100 text-sm font-semibold tracking-[0.13em] hover:border-cyan-300/50 hover:bg-slate-900/80"
+                  >
+                    NEW ARRIVALS
+                    <ArrowRight size={16} />
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="max-w-7xl mx-auto px-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="surface-card rounded-3xl p-6 md:p-7 h-[260px] live-float [animation-duration:8s]">
+              <p className="text-xs tracking-[0.18em] text-cyan-200">TODAY'S PICK</p>
+              <h2 className="mt-3 text-2xl font-semibold text-slate-50 leading-tight">
+                {heroProduct?.name || "Editorial Capsule"}
+              </h2>
+              <p className="mt-3 text-slate-300 text-sm line-clamp-3">
+                {heroProduct?.description ||
+                  "Curated pieces selected for modern confidence and all-day versatility."}
+              </p>
+              <div className="mt-4 flex items-center justify-between">
+                <span className="text-xl font-bold text-cyan-100">
+                  {formatPrice(heroProduct?.price || 129)}
+                </span>
+                <Link
+                  to={heroProduct ? `/product/${heroProduct.id}` : "/shop"}
+                  className="text-sm text-cyan-200 hover:text-cyan-100 inline-flex items-center gap-1"
+                >
+                  View piece <ArrowRight size={14} />
+                </Link>
+              </div>
+            </div>
+
+            <div className="surface-card rounded-3xl p-6 md:p-7 h-[260px]">
+              <p className="text-xs tracking-[0.18em] text-slate-300">STORE SIGNALS</p>
+              <div className="mt-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300 text-sm">Products live</span>
+                  <span className="text-2xl font-semibold text-slate-50">
+                    {Math.max(featuredProducts.length + newArrivals.length, 8)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300 text-sm">Fast shipping</span>
+                  <span className="text-lg font-semibold text-cyan-100">24-48h</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300 text-sm">Return window</span>
+                  <span className="text-lg font-semibold text-slate-100">30 days</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="px-4 mt-8">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[
+            { icon: Truck, label: "FREE EXPRESS", sub: "Orders over $100" },
+            { icon: RefreshCw, label: "EASY RETURNS", sub: "7-day policy" },
+            { icon: Shield, label: "SECURE PAY", sub: "Protected checkout" },
+          ].map((item) => (
+            <div
+              key={item.label}
+              className="surface-card rounded-2xl p-5 flex items-center gap-4 hover:-translate-y-0.5"
+            >
+              <div className="h-11 w-11 rounded-xl bg-cyan-500/18 text-cyan-100 flex items-center justify-center">
+                <item.icon size={20} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold tracking-wide text-slate-100">
+                  {item.label}
+                </p>
+                <p className="text-xs text-slate-300">{item.sub}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="px-4 mt-16">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex items-end justify-between gap-4 mb-7">
+            <div>
+              <p className="text-xs tracking-[0.18em] text-cyan-200">DISCOVER</p>
+              <h2 className="font-display text-4xl md:text-5xl tracking-[0.08em] text-slate-50">
+                SHOP BY CATEGORY
+              </h2>
+            </div>
+            <Link
+              to="/shop"
+              className="text-sm text-slate-300 hover:text-cyan-200 inline-flex items-center gap-2"
+            >
+              View full catalog <ArrowRight size={15} />
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {categories.map((category, index) => (
+              <Link
+                key={category.id}
+                to={
+                  category.slug
+                    ? `/category/${toCategorySlug(category.slug)}`
+                    : "/shop"
+                }
+                className={`group relative overflow-hidden rounded-3xl border border-slate-700/70 min-h-[220px] md:min-h-[320px] ${
+                  index === 0 ? "md:col-span-2" : ""
+                }`}
+              >
+                <img
+                  src={category.image_url}
+                  alt={category.name}
+                  className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/40 to-transparent" />
+                <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between">
+                  <h3 className="text-lg md:text-2xl font-semibold tracking-[0.14em] text-white">
+                    {category.name.toUpperCase()}
+                  </h3>
+                  <span className="h-9 w-9 rounded-full bg-cyan-400/25 border border-cyan-300/35 text-cyan-100 flex items-center justify-center">
+                    <ArrowRight size={14} />
+                  </span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {homeCollections.length > 0 ? (
+        <section className="px-4 mt-16">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-end justify-between gap-4 mb-7">
+              <div>
+                <p className="text-xs tracking-[0.18em] text-cyan-200">RUNWAY</p>
+                <h2 className="font-display text-4xl md:text-5xl tracking-[0.08em] text-slate-50">
+                  COLLECTIONS
+                </h2>
+              </div>
+              <Link
+                to="/collections"
+                className="text-sm text-slate-300 hover:text-cyan-200 inline-flex items-center gap-2"
+              >
+                View all collections <ArrowRight size={15} />
+              </Link>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              {homeCollections.map((entry) => (
+                <Link
+                  key={entry.id}
+                  to="/collections"
+                  className="group relative rounded-3xl overflow-hidden min-h-[320px] border border-slate-700/70"
+                >
+                  <img
+                    src={entry.image_url}
+                    alt={entry.name}
+                    className="absolute inset-0 h-full w-full object-cover group-hover:scale-105 transition-transform duration-700"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/92 via-slate-950/40 to-transparent" />
+                  <div className="absolute bottom-0 left-0 right-0 p-5">
+                    <p className="text-xs tracking-[0.14em] text-cyan-200">
+                      {(entry.season || "CURATED").toUpperCase()}
+                      {entry.year ? ` ${entry.year}` : ""}
+                    </p>
+                    <h3 className="mt-2 text-2xl font-semibold text-white line-clamp-2">
+                      {entry.name}
+                    </h3>
+                    <p className="mt-2 text-sm text-slate-200/95 line-clamp-2">
+                      {entry.description}
+                    </p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="px-4 mt-16">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex items-end justify-between mb-7">
+            <div>
+              <p className="text-xs tracking-[0.18em] text-cyan-200">CURATED</p>
+              <h2 className="font-display text-4xl md:text-5xl tracking-[0.08em] text-slate-50">
+                FEATURED SELECTS
+              </h2>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {featuredProducts.map((product) => (
+              <Link
+                key={product.id}
+                to={`/product/${product.id}`}
+                className="group surface-card rounded-3xl overflow-hidden hover:-translate-y-1"
+              >
+                <div className="relative aspect-[3/4] overflow-hidden p-2 bg-slate-900/40">
+                  <img
+                    src={product.image_url}
+                    alt={product.name}
+                    className="w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-700"
+                  />
+                  <div className="absolute top-3 left-3 inline-flex items-center gap-1 rounded-full bg-cyan-500/85 px-3 py-1 text-[11px] font-semibold tracking-wide text-slate-950">
+                    <Star size={12} />
+                    EDITOR'S PICK
+                  </div>
+                  {product.discount_percentage ? (
+                    <div className="absolute top-3 right-3 rounded-full bg-rose-500 px-3 py-1 text-[11px] font-semibold text-white">
+                      -{product.discount_percentage}%
+                    </div>
+                  ) : null}
+                </div>
+                <div className="p-5">
+                  <p className="text-xs text-slate-300 tracking-[0.16em] uppercase">
+                    {product.category}
+                  </p>
+                  <h3 className="mt-2 text-lg font-semibold text-slate-50 line-clamp-2">
+                    {product.name}
+                  </h3>
+                  <div className="mt-3 flex items-center gap-2">
+                    <span className="text-xl font-bold text-cyan-100">
+                      {formatPrice(product.price)}
+                    </span>
+                    {product.original_price && product.original_price > product.price ? (
+                      <span className="text-sm text-slate-400 line-through">
+                        {formatPrice(product.original_price)}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section id="about" className="px-4 mt-16">
+        <div className="max-w-7xl mx-auto surface-card rounded-3xl p-8 md:p-10 border border-slate-700/70">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+            <div className="lg:col-span-1">
+              <p className="text-xs tracking-[0.18em] text-cyan-200">ABOUT ISHTARI 961</p>
+              <h2 className="mt-3 font-display text-3xl md:text-4xl tracking-[0.08em] text-slate-50">
+                DESIGN-LED
+                <br />
+                ESSENTIALS
+              </h2>
+            </div>
+            <div className="lg:col-span-2">
+              <p className="text-slate-200 leading-relaxed">
+                ISHTARI 961 is built around clean silhouettes, elevated materials, and
+                intentional details that feel modern every day. We focus on
+                wearable luxury with limited releases, fast fulfillment, and a
+                refined shopping experience from first look to delivery.
+              </p>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Link
+                  to="/shop"
+                  className="inline-flex items-center gap-2 px-6 py-3 rounded-xl luxe-button text-sm font-semibold tracking-[0.12em]"
+                >
+                  SHOP NOW
+                  <ArrowRight size={15} />
+                </Link>
+                <Link
+                  to="/contact"
+                  className="inline-flex items-center gap-2 px-6 py-3 rounded-xl luxe-outline text-sm font-semibold tracking-[0.12em]"
+                >
+                  CONTACT TEAM
+                  <ArrowRight size={15} />
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="px-4 mt-16">
+        <div className="max-w-7xl mx-auto rounded-3xl border border-slate-700/70 bg-gradient-to-r from-slate-900/80 to-cyan-950/45 p-8 md:p-10">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-7 items-center">
+            <div className="lg:col-span-2">
+              <p className="text-xs tracking-[0.18em] text-cyan-200">LIMITED DROP</p>
+              <h2 className="mt-3 font-display text-4xl md:text-6xl leading-[0.95] text-slate-50 tracking-[0.08em]">
+                OWN THE NEXT
+                <br />
+                NEW ARRIVAL WAVE
+              </h2>
+              <p className="mt-5 text-slate-200 max-w-2xl">
+                Fresh pieces are moving fast. Secure your fit before sizes go.
+              </p>
+              <Link
+                to="/new-arrivals"
+                className="mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-cyan-400 text-slate-950 text-sm font-bold tracking-[0.12em] hover:bg-cyan-300"
+              >
+                SHOP NEW ARRIVALS
+                <Zap size={15} />
+              </Link>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {newArrivals.slice(0, 4).map((product) => (
+                <Link
+                  key={product.id}
+                  to={`/product/${product.id}`}
+                  className="relative rounded-2xl overflow-hidden border border-slate-700/70 h-36"
+                >
+                  <img
+                    src={product.image_url}
+                    alt={product.name}
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 to-transparent" />
+                  <span className="absolute bottom-2 left-2 right-2 text-xs text-white line-clamp-1">
+                    {product.name}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="px-4 mt-16">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex items-end justify-between mb-7">
+            <div>
+              <p className="text-xs tracking-[0.18em] text-cyan-200">JUST IN</p>
+              <h2 className="font-display text-4xl md:text-5xl tracking-[0.08em] text-slate-50">
+                NEW ARRIVALS
+              </h2>
+            </div>
+            <Link
+              to="/new-arrivals"
+              className="text-sm text-slate-300 hover:text-cyan-200 inline-flex items-center gap-2"
+            >
+              Browse all <ArrowRight size={15} />
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {newArrivals.map((product) => (
+              <Link
+                key={product.id}
+                to={`/product/${product.id}`}
+                className="group surface-card rounded-2xl overflow-hidden"
+              >
+                <div className="aspect-[3/4] overflow-hidden p-2 bg-slate-900/40">
+                  <img
+                    src={product.image_url}
+                    alt={product.name}
+                    className="w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-700"
+                  />
+                </div>
+                <div className="p-4">
+                  <h3 className="text-sm md:text-base font-medium text-slate-50 line-clamp-2">
+                    {product.name}
+                  </h3>
+                  <p className="mt-2 text-cyan-100 font-semibold">
+                    {formatPrice(product.price)}
+                  </p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="px-4 mt-16">
+        <div className="max-w-3xl mx-auto surface-card rounded-3xl p-8 md:p-10 text-center border border-slate-700/70">
+          <p className="text-xs tracking-[0.18em] text-cyan-200">INNER CIRCLE</p>
+          <h2 className="mt-3 font-display text-3xl md:text-5xl tracking-[0.08em] text-slate-50">
+            JOIN THE CLUB
+          </h2>
+          <p className="mt-4 text-slate-300">
+            Receive early-access drops, private sale alerts, and curated style
+            updates.
+          </p>
+
+          <form
+            onSubmit={handleSubscribe}
+            className="mt-7 max-w-xl mx-auto flex flex-col sm:flex-row gap-3"
+          >
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@email.com"
+              className="flex-1 rounded-xl px-5 py-3 border border-slate-600/80 bg-slate-950/65 text-slate-100 focus:outline-none focus:border-cyan-300"
+              required
+            />
+            <button
+              type="submit"
+              className="rounded-xl px-6 py-3 luxe-button text-sm font-semibold tracking-[0.12em]"
+            >
+              SUBSCRIBE
+            </button>
+          </form>
+
+          {subscribeStatus === "success" ? (
+            <p className="mt-4 text-emerald-300 text-sm">You're in. Welcome to the circle.</p>
+          ) : null}
+          {subscribeStatus === "exists" ? (
+            <p className="mt-4 text-cyan-200 text-sm">This email is already subscribed.</p>
+          ) : null}
+          {subscribeStatus === "error" ? (
+            <p className="mt-4 text-rose-300 text-sm">Please enter a valid email address.</p>
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
