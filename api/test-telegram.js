@@ -3,7 +3,13 @@ const sendTelegramText = async (text) => {
   const chatId = String(process.env.TELEGRAM_CHAT_ID || "").trim();
 
   if (!token || !chatId) {
-    throw new Error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID");
+    throw new Error(
+      `Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID (tokenPresent=${Boolean(
+        token
+      )}, tokenLen=${token.length}, chatPresent=${Boolean(
+        chatId
+      )}, chatLen=${chatId.length})`
+    );
   }
 
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -26,7 +32,7 @@ const sendTelegramText = async (text) => {
 };
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
+  if (req.method !== "POST" && req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
@@ -43,8 +49,9 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("Telegram test notify error:", err);
+    const message = err instanceof Error ? err.message : "Unknown error";
     return res.status(500).json({
-      error: err instanceof Error ? err.message : "Unknown error",
+      error: message,
     });
   }
 }
