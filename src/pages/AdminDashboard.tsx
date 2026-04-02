@@ -1140,7 +1140,7 @@ export function AdminDashboard() {
     }
 
     try {
-      const response = await fetch("/.netlify/functions/send-newsletter", {
+      const response = await fetch("/api/send-newsletter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

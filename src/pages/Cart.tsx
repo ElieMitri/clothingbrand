@@ -367,41 +367,26 @@ export function Cart() {
             })),
           };
 
-          // Try Vercel endpoint first, then Netlify for cross-platform deployments.
-          const endpointCandidates = [
-            "/api/send-order-slack",
-            "/.netlify/functions/send-order-slack",
-          ];
+          try {
+            const slackResponse = await fetch("/api/send-order-slack", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(slackPayload),
+            });
 
-          let sent = false;
-          let failureReason = "Slack notification failed";
-
-          for (const endpoint of endpointCandidates) {
-            try {
-              const slackResponse = await fetch(endpoint, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify(slackPayload),
-              });
-
-              if (slackResponse.ok) {
-                sent = true;
-                break;
-              }
-
+            if (!slackResponse.ok) {
               const reason = await slackResponse.text();
-              failureReason = reason || `HTTP ${slackResponse.status}`;
-            } catch (endpointError) {
-              failureReason =
-                endpointError instanceof Error
-                  ? endpointError.message
-                  : "Request error";
+              throw new Error(reason || `HTTP ${slackResponse.status}`);
             }
-          }
-
-          if (!sent) {
+            slackNoticeType = "success";
+            slackNoticeText = "Order placed. Slack notification sent.";
+          } catch (endpointError) {
+            const failureReason =
+              endpointError instanceof Error
+                ? endpointError.message
+                : "Request error";
             console.error(
               "Failed to send Slack order notification:",
               failureReason
@@ -409,9 +394,6 @@ export function Cart() {
             slackNoticeType = "error";
             slackNoticeText =
               "Order placed, but Slack notification failed to send.";
-          } else {
-            slackNoticeType = "success";
-            slackNoticeText = "Order placed. Slack notification sent.";
           }
         }
       } catch (slackError) {
