@@ -1,31 +1,9 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import fetch from "node-fetch";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.resolve(__dirname, "../.env") });
-
-const app = express();
-
-app.use(cors());
-app.use(express.json());
-
 const sendTelegramText = async (text) => {
   const token = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
   const chatId = String(process.env.TELEGRAM_CHAT_ID || "").trim();
 
   if (!token || !chatId) {
-    throw new Error(
-      `Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID (tokenPresent=${Boolean(
-        token
-      )}, tokenLen=${token.length}, chatPresent=${Boolean(
-        chatId
-      )}, chatLen=${chatId.length})`
-    );
+    throw new Error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID");
   }
 
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -108,49 +86,11 @@ const buildOrderTelegramMessage = (order) => {
   ].join("\n");
 };
 
-const sendNewsletter = async (req, res) => {
-  try {
-    const { subject, message, recipients } = req.body;
-
-    // Basic validation
-    if (
-      !subject ||
-      !message ||
-      !Array.isArray(recipients) ||
-      recipients.length === 0
-    ) {
-      return res.status(400).json({ error: "Invalid payload" });
-    }
-
-    const r = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: "Trivo <onboarding@resend.dev>",
-        to: recipients,
-        subject,
-        html: `<p>${message.replace(/\n/g, "<br />")}</p>`,
-      }),
-    });
-
-    const text = await r.text();
-
-    if (!r.ok) {
-      console.error("Resend API error:", text);
-      return res.status(500).json({ error: text });
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error("Server error:", err);
-    res.status(500).json({ error: err.message });
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
   }
-};
 
-const sendOrderTelegram = async (req, res) => {
   try {
     const {
       orderId,
@@ -192,51 +132,12 @@ const sendOrderTelegram = async (req, res) => {
       items,
     });
     await sendTelegramText(text);
+
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("Telegram order notify error:", err);
     return res.status(500).json({
-      error: err.message || "Unknown error",
+      error: err instanceof Error ? err.message : "Unknown error",
     });
   }
-};
-
-const sendTestTelegram = async (req, res) => {
-  try {
-    const timestamp = new Date().toISOString();
-    await sendTelegramText(
-      [
-        "Telegram Notification Test",
-        "API endpoint is reachable and bot is configured.",
-        `Time: ${timestamp}`,
-      ].join("\n")
-    );
-
-    return res.status(200).json({
-      success: true,
-    });
-  } catch (err) {
-    console.error("Telegram test notify error:", err);
-    return res.status(500).json({
-      error: err.message || "Unknown error",
-    });
-  }
-};
-
-app.post("/send-newsletter", sendNewsletter);
-app.post("/api/send-newsletter", sendNewsletter);
-app.post("/send-order-telegram", sendOrderTelegram);
-app.post("/api/send-order-telegram", sendOrderTelegram);
-app.post("/test-telegram", sendTestTelegram);
-app.post("/api/test-telegram", sendTestTelegram);
-
-app.listen(3001, () => {
-  const token = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
-  const chatId = String(process.env.TELEGRAM_CHAT_ID || "").trim();
-  console.log("Email server running on http://localhost:3001");
-  console.log(
-    `Telegram env loaded: tokenPresent=${Boolean(token)} tokenLen=${
-      token.length
-    } chatPresent=${Boolean(chatId)} chatLen=${chatId.length}`
-  );
-});
+}

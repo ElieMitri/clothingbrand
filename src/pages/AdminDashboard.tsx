@@ -320,6 +320,11 @@ export function AdminDashboard() {
     subject: "",
     message: "",
   });
+  const [sendingTelegramTest, setSendingTelegramTest] = useState(false);
+  const [telegramTestMessage, setTelegramTestMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
 
   // Confirmation Modal
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -1161,6 +1166,41 @@ export function AdminDashboard() {
     } catch (err) {
       console.error("Send newsletter error:", err);
       alert("Error sending emails");
+    }
+  };
+
+  const sendTelegramTest = async () => {
+    try {
+      setSendingTelegramTest(true);
+      setTelegramTestMessage(null);
+
+      const response = await fetch("/api/test-telegram", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const errorText =
+          typeof body?.error === "string" && body.error
+            ? body.error
+            : `HTTP ${response.status}`;
+        throw new Error(errorText);
+      }
+
+      setTelegramTestMessage({
+        type: "success",
+        text: "Telegram test sent successfully.",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      console.error("Telegram test failed:", err);
+      setTelegramTestMessage({
+        type: "error",
+        text: `Telegram test failed: ${message}`,
+      });
+    } finally {
+      setSendingTelegramTest(false);
     }
   };
 
@@ -3169,15 +3209,37 @@ export function AdminDashboard() {
                     Manage subscribers and send campaigns
                   </p>
                 </div>
-                <button
-                  onClick={() => setShowEmailModal(true)}
-                  disabled={subscribers.length === 0}
-                  className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  <Mail size={20} />
-                  Send Campaign
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={sendTelegramTest}
+                    disabled={sendingTelegramTest}
+                    className="flex items-center gap-2 border border-gray-300 px-4 py-3 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <RefreshCw size={18} className={sendingTelegramTest ? "animate-spin" : ""} />
+                    {sendingTelegramTest ? "Testing..." : "Test Telegram"}
+                  </button>
+                  <button
+                    onClick={() => setShowEmailModal(true)}
+                    disabled={subscribers.length === 0}
+                    className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Mail size={20} />
+                    Send Campaign
+                  </button>
+                </div>
               </div>
+
+              {telegramTestMessage && (
+                <div
+                  className={`mb-4 rounded-lg px-4 py-3 text-sm ${
+                    telegramTestMessage.type === "success"
+                      ? "bg-green-50 text-green-800 border border-green-200"
+                      : "bg-red-50 text-red-800 border border-red-200"
+                  }`}
+                >
+                  {telegramTestMessage.text}
+                </div>
+              )}
 
               {/* Search */}
               <div className="relative">

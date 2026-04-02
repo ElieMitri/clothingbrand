@@ -58,9 +58,6 @@ interface RawCartItem {
 export function Cart() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const frontendSlackWebhookUrl = String(
-    import.meta.env.VITE_SLACK_ORDER_WEBHOOK_URL || ""
-  ).trim();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
@@ -245,165 +242,69 @@ export function Cart() {
       const state = String(profileData.state || "").trim() || "-";
       const zipCode = String(profileData.zipCode || "").trim() || "-";
       const country = String(profileData.country || "").trim() || "-";
-      let slackNoticeType: "success" | "error" = "success";
-      let slackNoticeText = "Order placed. Slack notification queued.";
+      let notificationType: "success" | "error" = "success";
+      let notificationText = "Order placed. Telegram notification queued.";
 
       try {
-        const orderedItemsText = orderItems
-          .map((item, index) => {
-            const lineTotal = Number(item.price || 0) * Number(item.quantity || 0);
-            const sizePart = item.size ? ` • Size ${item.size}` : "";
-            return `${index + 1}. ${item.product_name}${sizePart} • Qty ${
-              item.quantity
-            } • $${lineTotal.toFixed(2)}`;
-          })
-          .join("\n");
-
-        const payload = {
-          text: `New order #${orderId} • $${total.toFixed(2)}`,
-          blocks: [
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: "______________________________",
-              },
-            },
-            {
-              type: "header",
-              text: {
-                type: "plain_text",
-                text: "New Order Received",
-                emoji: true,
-              },
-            },
-            {
-              type: "section",
-              fields: [
-                { type: "mrkdwn", text: `*Order ID:*\n${orderId}` },
-                { type: "mrkdwn", text: `*Customer:*\n${fullName}` },
-                { type: "mrkdwn", text: `*Email:*\n${email}` },
-                { type: "mrkdwn", text: `*Phone:*\n${phone}` },
-              ],
-            },
-            {
-              type: "section",
-              fields: [
-                { type: "mrkdwn", text: `*Items:*\n${orderItems.length}` },
-                { type: "mrkdwn", text: `*Subtotal:*\n$${subtotal.toFixed(2)}` },
-                { type: "mrkdwn", text: `*Shipping:*\n$${shipping.toFixed(2)}` },
-                { type: "mrkdwn", text: `*Tax:*\n$${tax.toFixed(2)}` },
-                { type: "mrkdwn", text: `*Total:*\n$${total.toFixed(2)}` },
-              ],
-            },
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text:
-                  `*Delivery Address:*\n${address}\n\n` +
-                  `*Directions:*\n${directions}`,
-              },
-            },
-            {
-              type: "section",
-              fields: [
-                { type: "mrkdwn", text: `*City:*\n${city}` },
-                { type: "mrkdwn", text: `*State:*\n${state}` },
-                { type: "mrkdwn", text: `*ZIP:*\n${zipCode}` },
-                { type: "mrkdwn", text: `*Country:*\n${country}` },
-              ],
-            },
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: `*Order Items:*\n${orderedItemsText || "- No items"}`,
-              },
-            },
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: "______________________________",
-              },
-            },
-          ],
+        const notificationPayload = {
+          orderId,
+          name: fullName,
+          email,
+          address,
+          phone,
+          directions,
+          city,
+          state,
+          zipCode,
+          country,
+          subtotal,
+          shipping,
+          tax,
+          total,
+          items: orderItems.map((item) => ({
+            name: item.product_name,
+            size: item.size,
+            quantity: item.quantity,
+            unitPrice: item.price,
+          })),
         };
 
-        if (frontendSlackWebhookUrl) {
-          await fetch(frontendSlackWebhookUrl, {
+        try {
+          const response = await fetch("/api/send-order-telegram", {
             method: "POST",
-            mode: "no-cors",
             headers: {
               "Content-Type": "application/json",
             },
-            body: JSON.stringify(payload),
+            body: JSON.stringify(notificationPayload),
           });
-          slackNoticeType = "success";
-          slackNoticeText =
-            "Order placed. Slack notification attempted (frontend mode).";
-        } else {
-          const slackPayload = {
-            orderId,
-            name: fullName,
-            email,
-            address,
-            phone,
-            directions,
-            city,
-            state,
-            zipCode,
-            country,
-            subtotal,
-            shipping,
-            tax,
-            total,
-            items: orderItems.map((item) => ({
-              name: item.product_name,
-              size: item.size,
-              quantity: item.quantity,
-              unitPrice: item.price,
-            })),
-          };
 
-          try {
-            const slackResponse = await fetch("/api/send-order-slack", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(slackPayload),
-            });
-
-            if (!slackResponse.ok) {
-              const reason = await slackResponse.text();
-              throw new Error(reason || `HTTP ${slackResponse.status}`);
-            }
-            slackNoticeType = "success";
-            slackNoticeText = "Order placed. Slack notification sent.";
-          } catch (endpointError) {
-            const failureReason =
-              endpointError instanceof Error
-                ? endpointError.message
-                : "Request error";
-            console.error(
-              "Failed to send Slack order notification:",
-              failureReason
-            );
-            slackNoticeType = "error";
-            slackNoticeText =
-              "Order placed, but Slack notification failed to send.";
+          if (!response.ok) {
+            const reason = await response.text();
+            throw new Error(reason || `HTTP ${response.status}`);
           }
+          notificationType = "success";
+          notificationText = "Order placed. Telegram notification sent.";
+        } catch (endpointError) {
+          const failureReason =
+            endpointError instanceof Error
+              ? endpointError.message
+              : "Request error";
+          console.error(
+            "Failed to send Telegram order notification via API:",
+            failureReason
+          );
+          notificationType = "error";
+          notificationText =
+            "Order placed, but Telegram notification failed to send.";
         }
-      } catch (slackError) {
-        console.error("Slack order notification request failed:", slackError);
-        slackNoticeType = "error";
-        slackNoticeText =
-          "Order placed, but Slack notification request failed.";
+      } catch (notificationError) {
+        console.error("Telegram order notification request failed:", notificationError);
+        notificationType = "error";
+        notificationText =
+          "Order placed, but Telegram notification request failed.";
       }
 
-      setCheckoutNotice({ type: slackNoticeType, text: slackNoticeText });
+      setCheckoutNotice({ type: notificationType, text: notificationText });
       setTimeout(() => navigate("/orders"), 1300);
     } catch (error) {
       console.error("Error placing order:", error);
