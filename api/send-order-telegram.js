@@ -66,10 +66,16 @@ const buildOrderTelegramMessage = (order) => {
           })
           .join("\n")
       : "- No items";
+  const orderedAtRaw = order.orderedAt || new Date().toISOString();
+  const orderedAt = new Date(String(orderedAtRaw));
+  const orderedAtText = Number.isNaN(orderedAt.getTime())
+    ? String(orderedAtRaw)
+    : orderedAt.toLocaleString("en-GB", { hour12: false });
 
   return [
     "New Order Received",
     `Order ID: ${orderId}`,
+    `Ordered At: ${orderedAtText}`,
     `Customer: ${name}`,
     `Email: ${email}`,
     `Phone: ${phone || "Not provided"}`,

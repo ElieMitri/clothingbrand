@@ -248,6 +248,7 @@ export function Cart() {
       try {
         const notificationPayload = {
           orderId,
+          orderedAt: new Date().toISOString(),
           name: fullName,
           email,
           address,
