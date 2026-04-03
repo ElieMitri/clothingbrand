@@ -12,15 +12,6 @@ import {
   Sparkles,
   User,
 } from "lucide-react";
-import {
-  addDoc,
-  collection,
-  getDocs,
-  query,
-  serverTimestamp,
-  where,
-} from "firebase/firestore";
-import { db } from "../lib/firebase";
 import { useAuth } from "../contexts/AuthContext";
 
 export function Register() {
@@ -36,7 +27,6 @@ export function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [agreeToTerms, setAgreeToTerms] = useState(false);
-  const [subscribeNewsletter, setSubscribeNewsletter] = useState(true);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -94,37 +84,6 @@ export function Register() {
     return "";
   };
 
-  const upsertNewsletter = async () => {
-    if (!subscribeNewsletter) return;
-
-    const duplicateQ = query(
-      collection(db, "newsletter"),
-      where("email", "==", normalizedEmail)
-    );
-    const existing = await getDocs(duplicateQ);
-
-    if (existing.empty) {
-      await addDoc(collection(db, "newsletter"), {
-        email: normalizedEmail,
-        subscribed_at: serverTimestamp(),
-        sent_emails: 0,
-        source: "register",
-      });
-      try {
-        await fetch("/api/send-newsletter-subscriber-discord", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: normalizedEmail,
-            source: "register",
-          }),
-        });
-      } catch (notifyError) {
-        console.error("Newsletter Discord notify failed:", notifyError);
-      }
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -152,8 +111,6 @@ export function Register() {
         lastName.trim(),
         normalizedPhone
       );
-
-      await upsertNewsletter();
 
       try {
         await fetch("/api/send-user-created-discord", {
@@ -424,15 +381,6 @@ export function Register() {
                   </span>
                 </label>
 
-                <label className="inline-flex items-start gap-2 text-sm text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={subscribeNewsletter}
-                    onChange={(e) => setSubscribeNewsletter(e.target.checked)}
-                    className="h-4 w-4 mt-0.5 rounded border-slate-500"
-                  />
-                  <span>Subscribe me to exclusive product and sale updates.</span>
-                </label>
               </div>
             </div>
 

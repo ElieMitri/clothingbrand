@@ -33,9 +33,11 @@ import {
   orderBy,
   Timestamp,
   getDoc,
+  getDocs,
   setDoc,
   onSnapshot,
   writeBatch,
+  where,
 } from "firebase/firestore";
 import { useAuth } from "../contexts/AuthContext";
 import {
@@ -1635,13 +1637,81 @@ export function AdminDashboard() {
   };
 
   const deleteSubscriber = async (subscriberId: string) => {
+    const subscriber = subscribers.find((entry) => entry.id === subscriberId);
+
     setConfirmAction({
       title: "Remove Subscriber",
       message: "Remove this subscriber from your newsletter list?",
       danger: false,
       onConfirm: async () => {
         try {
-          await deleteDoc(doc(db, "newsletter", subscriberId));
+          const batch = writeBatch(db);
+          batch.delete(doc(db, "newsletter", subscriberId));
+
+          if (subscriber?.email) {
+            const normalizedEmail = subscriber.email.trim().toLowerCase();
+            const usersRef = collection(db, "users");
+            const newsletterRef = collection(db, "newsletter");
+
+            const subscriberSnapshot = await getDocs(
+              query(newsletterRef, where("email", "==", normalizedEmail))
+            );
+
+            // Fallback for legacy records that may have non-normalized casing.
+            const fallbackSubscriberSnapshot =
+              normalizedEmail !== subscriber.email
+                ? await getDocs(
+                    query(newsletterRef, where("email", "==", subscriber.email))
+                  )
+                : null;
+
+            const seenSubscriberIds = new Set<string>();
+            const matchedSubscriberDocs = [
+              ...subscriberSnapshot.docs,
+              ...(fallbackSubscriberSnapshot?.docs ?? []),
+            ].filter((subscriberDoc) => {
+              if (seenSubscriberIds.has(subscriberDoc.id)) return false;
+              seenSubscriberIds.add(subscriberDoc.id);
+              return true;
+            });
+
+            matchedSubscriberDocs.forEach((subscriberDoc) => {
+              batch.delete(subscriberDoc.ref);
+            });
+
+            const userSnapshot = await getDocs(
+              query(usersRef, where("email", "==", normalizedEmail))
+            );
+
+            // Fallback for legacy records that may have non-normalized casing.
+            const fallbackSnapshot =
+              normalizedEmail !== subscriber.email
+                ? await getDocs(
+                    query(usersRef, where("email", "==", subscriber.email))
+                  )
+                : null;
+
+            const seenUserIds = new Set<string>();
+            const matchedUserDocs = [
+              ...userSnapshot.docs,
+              ...(fallbackSnapshot?.docs ?? []),
+            ].filter((userDoc) => {
+              if (seenUserIds.has(userDoc.id)) return false;
+              seenUserIds.add(userDoc.id);
+              return true;
+            });
+
+            if (matchedUserDocs.length > 0) {
+              matchedUserDocs.forEach((userDoc) => {
+                batch.update(userDoc.ref, {
+                  subscribeNewsletter: false,
+                  updatedAt: Timestamp.now(),
+                });
+              });
+            }
+          }
+
+          await batch.commit();
         } catch (error) {
           console.error("Error deleting subscriber:", error);
           alert("Failed to remove subscriber");
