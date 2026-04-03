@@ -11,9 +11,7 @@ export type OrderStatus =
   | "processing"
   | "shipped"
   | "delivered"
-  | "cancelled"
-  | "refund_requested"
-  | "refunded";
+  | "cancelled";
 
 export interface OrderLineItem {
   product_id: string;
@@ -44,13 +42,12 @@ interface UpdateOrderStatusInput {
   statusNote?: string;
 }
 
-const RESTOCK_STATUSES = new Set<OrderStatus>(["cancelled", "refunded"]);
+const RESTOCK_STATUSES = new Set<OrderStatus>(["cancelled"]);
 const STOCK_CONSUMING_STATUSES = new Set<OrderStatus>([
   "pending",
   "processing",
   "shipped",
   "delivered",
-  "refund_requested",
 ]);
 
 const normalizeSizeKey = (size?: string) => (size || "").trim();
@@ -197,6 +194,10 @@ export async function updateOrderStatusWithInventory({
     const stockDeducted = Boolean(orderData.stock_deducted);
     const stockRestored = Boolean(orderData.stock_restored);
     const now = Timestamp.now();
+
+    if (newStatus === "cancelled" && currentStatus !== "pending") {
+      throw new Error("Orders can only be cancelled while they are pending.");
+    }
 
     const shouldRestock =
       stockDeducted &&

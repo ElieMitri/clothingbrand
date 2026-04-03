@@ -40,12 +40,6 @@ function App() {
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/collections" element={<Collections />} />
             <Route path="/new-arrivals" element={<NewArrivals />} />
-            <Route path="/men" element={<Navigate to="/category/men" replace />} />
-            <Route path="/women" element={<Navigate to="/category/women" replace />} />
-            <Route
-              path="/accessories"
-              element={<Navigate to="/category/accessories" replace />}
-            />
             <Route path="/sale" element={<Sale />} />
 
             {/* Protected Routes WITH Navbar */}

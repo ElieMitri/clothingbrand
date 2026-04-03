@@ -22,7 +22,7 @@ export default async function handler(req, res) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "Trivo <onboarding@resend.dev>",
+        from: "LBathletes <onboarding@resend.dev>",
         to: recipients,
         subject,
         html: `<p>${String(message).replace(/\n/g, "<br />")}</p>`,

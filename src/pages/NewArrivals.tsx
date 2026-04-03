@@ -2,7 +2,15 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Filter } from "lucide-react";
 import { db } from "../lib/firebase";
-import { collection, getDocs, query, orderBy, limit } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  orderBy,
+  limit,
+} from "firebase/firestore";
 import {
   ProductAudience,
   normalizeProductAudience,
@@ -52,24 +60,60 @@ export function NewArrivals() {
   const loadProducts = async () => {
     try {
       setLoading(true);
-      const productsRef = collection(db, "products");
-      const q = query(productsRef, orderBy("created_at", "desc"), limit(50));
-      const querySnapshot = await getDocs(q);
-
-      const productsData = querySnapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          name: data.name,
-          price: data.price,
-          image_url: data.image_url,
-          category: data.category,
-          description: data.description,
-          created_at: data.created_at?.toDate
-            ? data.created_at.toDate().toISOString()
-            : data.created_at,
-        } as Product;
+      const mapDocToProduct = (
+        productId: string,
+        data: Record<string, unknown>
+      ): Product => ({
+        id: productId,
+        name: String(data.name || ""),
+        price: Number(data.price || 0),
+        image_url: String(data.image_url || ""),
+        category: String(data.category || ""),
+        audience: data.audience as ProductAudience | undefined,
+        description:
+          typeof data.description === "string" ? data.description : undefined,
+        created_at:
+          data.created_at && typeof data.created_at === "object"
+            ? (data.created_at as { toDate?: () => Date }).toDate
+              ? (
+                  data.created_at as {
+                    toDate: () => Date;
+                  }
+                ).toDate().toISOString()
+              : String(data.created_at)
+            : String(data.created_at || ""),
       });
+
+      const homepageSettingsSnap = await getDoc(
+        doc(db, "site_settings", "homepage")
+      );
+      const configuredNewArrivalIds =
+        homepageSettingsSnap.exists() &&
+        Array.isArray(homepageSettingsSnap.data().new_arrival_ids)
+          ? (homepageSettingsSnap.data().new_arrival_ids as string[])
+          : [];
+
+      let productsData: Product[] = [];
+
+      if (configuredNewArrivalIds.length > 0) {
+        const arrivals = await Promise.all(
+          configuredNewArrivalIds.map(async (id) => {
+            const snap = await getDoc(doc(db, "products", id));
+            if (!snap.exists()) return null;
+            return mapDocToProduct(snap.id, snap.data());
+          })
+        );
+        productsData = arrivals.filter(
+          (item): item is Product => item !== null
+        );
+      } else {
+        const productsRef = collection(db, "products");
+        const q = query(productsRef, orderBy("created_at", "desc"), limit(50));
+        const querySnapshot = await getDocs(q);
+        productsData = querySnapshot.docs.map((item) =>
+          mapDocToProduct(item.id, item.data())
+        );
+      }
 
       setProducts(productsData);
     } catch (error) {
@@ -145,31 +189,43 @@ export function NewArrivals() {
     priceRange[1] < 1000;
 
   return (
-    <div className="min-h-screen pt-24 pb-16 px-4 bg-white">
+    <div className="min-h-screen pt-20 pb-10 px-4 bg-white">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-12 text-center">
-          <h1 className="text-4xl md:text-5xl font-light tracking-wider mb-4">
+        <div className="mb-8 text-center">
+          <h1 className="text-4xl md:text-5xl font-light tracking-[0.14em] mb-3">
             NEW ARRIVALS
           </h1>
           <p className="text-gray-600 max-w-2xl mx-auto">
             Discover the latest additions to our collection. Fresh styles just
             landed.
           </p>
-          <div className="w-20 h-px bg-black mx-auto mt-6" />
+          <div className="w-20 h-px bg-black mx-auto mt-4" />
         </div>
 
         {/* Filter Bar */}
-        <div className="flex items-center justify-between mb-8 pb-4 border-b border-gray-200">
-          <div className="flex items-center gap-4">
+        <div className="flex items-center justify-between mb-5 pb-3 border-b border-gray-200">
+          <div className="flex items-center gap-3">
             <button
+              type="button"
+              aria-pressed={showFilters}
               onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:border-black transition-colors"
+              className={`relative z-10 inline-flex items-center gap-2 px-4 py-2 rounded-lg border transition-all duration-200 ${
+                showFilters
+                  ? "bg-black text-white border-black shadow-md"
+                  : "bg-white text-gray-900 border-gray-300 hover:border-black"
+              }`}
             >
               <Filter size={18} />
               <span className="text-sm tracking-wide">FILTERS</span>
               {hasActiveFilters && (
-                <span className="ml-1 px-2 py-0.5 bg-black text-white text-xs rounded-full">
+                <span
+                  className={`ml-1 px-2 py-0.5 text-xs rounded-full ${
+                    showFilters
+                      ? "bg-white text-black"
+                      : "bg-black text-white"
+                  }`}
+                >
                   {selectedCategories.length +
                     (selectedAudience !== "all" ? 1 : 0) +
                     (priceRange[0] > 0 || priceRange[1] < 1000 ? 1 : 0)}
@@ -187,7 +243,7 @@ export function NewArrivals() {
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <span className="text-sm text-gray-600 hidden sm:inline">
               {filteredProducts.length}{" "}
               {filteredProducts.length === 1 ? "item" : "items"}
@@ -205,13 +261,13 @@ export function NewArrivals() {
           </div>
         </div>
 
-        <div className="flex gap-8">
+        <div className="flex flex-col lg:flex-row gap-5 lg:gap-6">
           {/* Sidebar Filters */}
           {showFilters && (
-            <div className="w-64 flex-shrink-0 space-y-6">
+            <div className="w-full lg:w-64 flex-shrink-0 space-y-5 border border-gray-200 rounded-xl p-4 lg:p-0 lg:border-0">
               {/* Categories */}
               <div>
-                <h3 className="font-medium text-sm tracking-wider mb-4">
+                <h3 className="font-medium text-sm tracking-wider mb-3">
                   CATEGORY
                 </h3>
                 <div className="space-y-2">
@@ -235,7 +291,7 @@ export function NewArrivals() {
               </div>
 
               <div>
-                <h3 className="font-medium text-sm tracking-wider mb-4">
+                <h3 className="font-medium text-sm tracking-wider mb-3">
                   AUDIENCE
                 </h3>
                 <select
@@ -254,7 +310,7 @@ export function NewArrivals() {
 
               {/* Price Range */}
               <div>
-                <h3 className="font-medium text-sm tracking-wider mb-4">
+                <h3 className="font-medium text-sm tracking-wider mb-3">
                   PRICE RANGE
                 </h3>
                 <div className="space-y-4">
@@ -297,18 +353,18 @@ export function NewArrivals() {
           {/* Products Grid */}
           <div className="flex-1">
             {loading ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-5 md:gap-6">
                 {[...Array(8)].map((_, i) => (
                   <div key={i} className="animate-pulse">
-                    <div className="aspect-[3/4] bg-slate-800 rounded-lg mb-4" />
+                    <div className="aspect-[3/4] bg-slate-800 rounded-lg mb-3" />
                     <div className="h-4 bg-slate-800 rounded mb-2" />
                     <div className="h-4 bg-slate-800 rounded w-1/2" />
                   </div>
                 ))}
               </div>
             ) : filteredProducts.length === 0 ? (
-              <div className="text-center py-20">
-                <p className="text-gray-500 text-lg mb-4">No products found</p>
+              <div className="text-center py-14">
+                <p className="text-gray-500 text-lg mb-3">No products found</p>
                 <button
                   onClick={clearFilters}
                   className="text-sm underline hover:text-black"
@@ -317,14 +373,14 @@ export function NewArrivals() {
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-5 md:gap-6">
                 {filteredProducts.map((product) => (
                   <Link
                     key={product.id}
                     to={`/product/${product.id}`}
                     className="group"
                   >
-                    <div className="aspect-[3/4] bg-gray-100 rounded-lg mb-4 overflow-hidden relative p-2">
+                    <div className="aspect-[3/4] bg-gray-100 rounded-lg mb-3 overflow-hidden relative p-2">
                       <img
                         src={product.image_url}
                         alt={product.name}

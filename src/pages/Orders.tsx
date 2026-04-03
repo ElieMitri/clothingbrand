@@ -20,7 +20,6 @@ import {
   ChevronUp,
   Calendar,
   XCircle,
-  RotateCcw,
 } from "lucide-react";
 import {
   OrderStatus,
@@ -164,10 +163,6 @@ export function Orders() {
         return <Truck className="text-purple-600" size={20} />;
       case "delivered":
         return <CheckCircle className="text-green-600" size={20} />;
-      case "refund_requested":
-        return <RotateCcw className="text-orange-600" size={20} />;
-      case "refunded":
-        return <RotateCcw className="text-cyan-600" size={20} />;
       case "cancelled":
         return <XCircle className="text-red-600" size={20} />;
       default:
@@ -185,10 +180,6 @@ export function Orders() {
         return "bg-purple-100 text-purple-800 border-purple-200";
       case "delivered":
         return "bg-green-100 text-green-800 border-green-200";
-      case "refund_requested":
-        return "bg-orange-100 text-orange-800 border-orange-200";
-      case "refunded":
-        return "bg-cyan-100 text-cyan-800 border-cyan-200";
       case "cancelled":
         return "bg-red-100 text-red-800 border-red-200";
       default:
@@ -199,7 +190,8 @@ export function Orders() {
   const requestStatusChange = async (
     order: Order,
     newStatus: OrderStatus,
-    confirmText: string
+    confirmText: string,
+    reason?: string
   ) => {
     if (!window.confirm(confirmText)) return;
 
@@ -211,6 +203,85 @@ export function Orders() {
         items: order.items,
         newStatus,
       });
+
+      if (newStatus === "cancelled") {
+        let profileData: Record<string, unknown> = {};
+        if (user?.uid) {
+          try {
+            const profileSnap = await getDoc(doc(db, "users", user.uid));
+            if (profileSnap.exists()) {
+              profileData = profileSnap.data() as Record<string, unknown>;
+            }
+          } catch (profileError) {
+            console.error("Failed to load user profile for status webhook:", profileError);
+          }
+        }
+
+        const fullName = String(
+          `${profileData.firstName || ""} ${profileData.lastName || ""}`.trim() ||
+            profileData.displayName ||
+            user?.displayName ||
+            "Customer"
+        );
+        const phone = String(
+          `${profileData.countryCode || ""} ${profileData.phone || ""}`.trim() ||
+            "Not provided"
+        );
+        const city = String(profileData.city || "").trim() || "-";
+        const state = String(profileData.state || "").trim() || "-";
+        const zipCode = String(profileData.zipCode || "").trim() || "-";
+        const country = String(profileData.country || "").trim() || "-";
+        const subtotal = Number(
+          order.items.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0)
+        );
+        const shipping = Number(order.total || 0) > 100 ? 0 : 10;
+        const tax = Math.max(0, Number(order.total || 0) - subtotal - shipping);
+
+        const response = await fetch("/api/send-order-status-discord", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: newStatus,
+            orderId: order.id,
+            name: fullName,
+            userEmail: user?.email || "",
+            phone,
+            city,
+            state,
+            zipCode,
+            country,
+            total: Number(order.total || 0),
+            subtotal,
+            shipping,
+            tax,
+            createdAt:
+              order.created_at instanceof Timestamp
+                ? order.created_at.toDate().toISOString()
+                : order.created_at instanceof Date
+                ? order.created_at.toISOString()
+                : String(order.created_at || ""),
+            itemCount: Array.isArray(order.items)
+              ? order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+              : 0,
+            items: Array.isArray(order.items)
+              ? order.items.map((item) => ({
+                  name: item.product_name || "Item",
+                  size: item.size,
+                  quantity: item.quantity,
+                  unitPrice: item.price,
+                }))
+              : [],
+            reason: reason || "",
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error("Order status webhook failed:", errorText);
+        }
+      }
     } catch (error) {
       console.error("Error updating order status:", error);
       alert(
@@ -255,11 +326,11 @@ export function Orders() {
   }
 
   return (
-    <div className="min-h-screen pt-24 pb-16 px-4 bg-gray-50">
+    <div className="min-h-screen pt-24 pb-16 px-3 sm:px-4 bg-gray-50">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-4xl md:text-5xl font-light tracking-wide mb-2">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-light tracking-wide mb-2">
             My Orders
           </h1>
           <p className="text-gray-600">
@@ -294,9 +365,9 @@ export function Orders() {
                 className="bg-white rounded-2xl shadow-sm overflow-hidden transition-all hover:shadow-md"
               >
                 {/* Order Header */}
-                <div className="p-6 border-b border-gray-100">
+                <div className="p-4 sm:p-6 border-b border-gray-100">
                   <div className="flex items-center justify-between flex-wrap gap-4">
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3 sm:gap-4">
                       <div className="flex items-center gap-2">
                         {getStatusIcon(order.status)}
                         <div>
@@ -329,7 +400,7 @@ export function Orders() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                       <span
                         className={`px-4 py-2 rounded-full text-sm font-medium border ${getStatusColor(
                           order.status
@@ -338,35 +409,20 @@ export function Orders() {
                         {order.status.charAt(0).toUpperCase() +
                           order.status.slice(1)}
                       </span>
-                      {(order.status === "pending" ||
-                        order.status === "processing") && (
+                      {order.status === "pending" && (
                         <button
                           onClick={() =>
                             requestStatusChange(
                               order,
                               "cancelled",
-                              "Cancel this order? Stock will be returned to inventory."
+                              "Cancel this order? Stock will be returned to inventory.",
+                              "User cancelled order"
                             )
                           }
                           disabled={statusUpdating === order.id}
                           className="px-3 py-2 rounded-lg text-xs font-medium border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-60"
                         >
                           Cancel Order
-                        </button>
-                      )}
-                      {order.status === "delivered" && (
-                        <button
-                          onClick={() =>
-                            requestStatusChange(
-                              order,
-                              "refund_requested",
-                              "Request a refund for this order?"
-                            )
-                          }
-                          disabled={statusUpdating === order.id}
-                          className="px-3 py-2 rounded-lg text-xs font-medium border border-orange-200 text-orange-700 hover:bg-orange-50 disabled:opacity-60"
-                        >
-                          Request Refund
                         </button>
                       )}
                       <button
@@ -397,7 +453,7 @@ export function Orders() {
 
                 {/* Expanded Order Details */}
                 {expandedOrder === order.id && (
-                  <div className="p-6 bg-gray-50">
+                  <div className="p-4 sm:p-6 bg-gray-50">
                     {/* Order Items */}
                     <div className="mb-6">
                       <h3 className="font-semibold text-lg mb-4">
@@ -407,7 +463,7 @@ export function Orders() {
                         {order.items.map((item, index) => (
                           <div
                             key={index}
-                            className="flex gap-4 bg-white p-4 rounded-xl"
+                            className="flex flex-col sm:flex-row gap-4 bg-white p-4 rounded-xl"
                           >
                             {item.product_image && (
                               <div className="w-20 h-24 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
@@ -432,7 +488,7 @@ export function Orders() {
                                 ${item.price.toFixed(2)} each
                               </p>
                             </div>
-                            <div className="text-right">
+                            <div className="text-left sm:text-right">
                               <p className="text-sm text-gray-500 mb-1">
                                 Item Total
                               </p>
@@ -503,8 +559,6 @@ export function Orders() {
                                 "shipped",
                                 "delivered",
                                 "cancelled",
-                                "refund_requested",
-                                "refunded",
                               ].includes(order.status)
                                 ? ""
                                 : "opacity-50"
@@ -518,8 +572,6 @@ export function Orders() {
                                   "shipped",
                                   "delivered",
                                   "cancelled",
-                                  "refund_requested",
-                                  "refunded",
                                 ].includes(order.status)
                                   ? "bg-green-500"
                                   : "bg-gray-300"
@@ -541,8 +593,6 @@ export function Orders() {
                                 "processing",
                                 "shipped",
                                 "delivered",
-                                "refund_requested",
-                                "refunded",
                               ].includes(
                                 order.status
                               )
@@ -556,8 +606,6 @@ export function Orders() {
                                   "processing",
                                   "shipped",
                                   "delivered",
-                                  "refund_requested",
-                                  "refunded",
                                 ].includes(order.status)
                                   ? "bg-green-500"
                                   : "bg-gray-300"
@@ -567,8 +615,6 @@ export function Orders() {
                                 "processing",
                                 "shipped",
                                 "delivered",
-                                "refund_requested",
-                                "refunded",
                               ].includes(order.status) ? (
                                 <CheckCircle className="text-white" size={16} />
                               ) : (
@@ -588,8 +634,6 @@ export function Orders() {
                               [
                                 "shipped",
                                 "delivered",
-                                "refund_requested",
-                                "refunded",
                               ].includes(order.status)
                                 ? ""
                                 : "opacity-50"
@@ -600,8 +644,6 @@ export function Orders() {
                                 [
                                   "shipped",
                                   "delivered",
-                                  "refund_requested",
-                                  "refunded",
                                 ].includes(order.status)
                                   ? "bg-green-500"
                                   : "bg-gray-300"
@@ -610,8 +652,6 @@ export function Orders() {
                               {[
                                 "shipped",
                                 "delivered",
-                                "refund_requested",
-                                "refunded",
                               ].includes(order.status) ? (
                                 <CheckCircle className="text-white" size={16} />
                               ) : (
@@ -628,18 +668,14 @@ export function Orders() {
 
                           <div
                             className={`flex items-center gap-4 ${
-                              ["delivered", "refund_requested", "refunded"].includes(
-                                order.status
-                              )
+                              ["delivered"].includes(order.status)
                                 ? ""
                                 : "opacity-50"
                             }`}
                           >
                             <div
                               className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
-                                ["delivered", "refund_requested", "refunded"].includes(
-                                  order.status
-                                )
+                                ["delivered"].includes(order.status)
                                   ? "bg-green-500"
                                   : "bg-gray-300"
                               }`}
@@ -656,42 +692,14 @@ export function Orders() {
 
                           <div
                             className={`flex items-center gap-4 ${
-                              ["refund_requested", "refunded"].includes(
-                                order.status
-                              )
+                              ["cancelled"].includes(order.status)
                                 ? ""
                                 : "opacity-50"
                             }`}
                           >
                             <div
                               className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
-                                ["refund_requested", "refunded"].includes(
-                                  order.status
-                                )
-                                  ? "bg-orange-500"
-                                  : "bg-gray-300"
-                              }`}
-                            >
-                              <RotateCcw className="text-white" size={16} />
-                            </div>
-                            <div>
-                              <p className="font-medium">Refund Requested</p>
-                              <p className="text-sm text-gray-500">
-                                Waiting for admin approval
-                              </p>
-                            </div>
-                          </div>
-
-                          <div
-                            className={`flex items-center gap-4 ${
-                              ["cancelled", "refunded"].includes(order.status)
-                                ? ""
-                                : "opacity-50"
-                            }`}
-                          >
-                            <div
-                              className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
-                                ["cancelled", "refunded"].includes(order.status)
+                                ["cancelled"].includes(order.status)
                                   ? "bg-red-500"
                                   : "bg-gray-300"
                               }`}
@@ -701,7 +709,7 @@ export function Orders() {
                             <div>
                               <p className="font-medium">Closed</p>
                               <p className="text-sm text-gray-500">
-                                Order cancelled or refunded
+                                Order cancelled
                               </p>
                             </div>
                           </div>

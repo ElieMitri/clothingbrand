@@ -258,3 +258,16 @@ button {
     transition-duration: 0.001ms !important;
   }
 }
+
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea,
+  button {
+    min-height: 42px;
+  }
+
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}

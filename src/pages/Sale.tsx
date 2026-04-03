@@ -305,8 +305,14 @@ export function Sale() {
         <div className="flex items-center justify-between mb-8 pb-4 border-b border-slate-700/70">
           <div className="flex items-center gap-4">
             <button
+              type="button"
+              aria-pressed={showFilters}
               onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center gap-2 px-4 py-2 surface-card rounded-lg hover:border-cyan-300/50"
+              className={`relative z-10 inline-flex items-center gap-2 px-4 py-2 rounded-lg border transition-all duration-200 ${
+                showFilters
+                  ? "bg-cyan-400 text-slate-950 border-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.35)]"
+                  : "surface-card border-slate-700 hover:border-cyan-300/50"
+              }`}
             >
               <Filter size={18} />
               <span className="text-sm tracking-wide">FILTERS</span>

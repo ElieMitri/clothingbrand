@@ -210,44 +210,8 @@ export function AdminDashboard() {
     end_at_input: "",
   });
   const [savingSaleSettings, setSavingSaleSettings] = useState(false);
-  const defaultHomeCategories: HomeCategoryEntry[] = [
-    {
-      id: "1",
-      name: "Men",
-      slug: "men",
-      image_url:
-        "https://images.unsplash.com/photo-1490114538077-0a7f8cb49891?q=80&w=1000",
-    },
-    {
-      id: "2",
-      name: "Women",
-      slug: "women",
-      image_url:
-        "https://images.unsplash.com/photo-1483985988355-763728e1935b?q=80&w=1000",
-    },
-    {
-      id: "3",
-      name: "Accessories",
-      slug: "accessories",
-      image_url:
-        "https://images.unsplash.com/photo-1523779917675-b6ed3a42a561?q=80&w=1000",
-    },
-    {
-      id: "4",
-      name: "Sale",
-      slug: "sale",
-      image_url:
-        "https://images.unsplash.com/photo-1607083206968-13611e3d76db?q=80&w=1000",
-    },
-  ];
-  const defaultShopMenuItems: ShopMenuItemEntry[] = [
-    { id: "menu-1", label: "New Arrivals", path: "/new-arrivals" },
-    { id: "menu-2", label: "Men", path: "/category/men" },
-    { id: "menu-3", label: "Women", path: "/category/women" },
-    { id: "menu-4", label: "Accessories", path: "/category/accessories" },
-    { id: "menu-5", label: "Sale", path: "/sale", special: true },
-    { id: "menu-6", label: "Collections", path: "/collections" },
-  ];
+  const defaultHomeCategories: HomeCategoryEntry[] = [];
+  const defaultShopMenuItems: ShopMenuItemEntry[] = [];
   const [homepageSettings, setHomepageSettings] = useState({
     hero_image_url: "",
     today_pick_product_id: "",
@@ -320,11 +284,13 @@ export function AdminDashboard() {
     subject: "",
     message: "",
   });
-  const [sendingTelegramTest, setSendingTelegramTest] = useState(false);
-  const [telegramTestMessage, setTelegramTestMessage] = useState<{
+  const [sendingDiscordTest, setSendingDiscordTest] = useState(false);
+  const [discordTestMessage, setDiscordTestMessage] = useState<{
     type: "success" | "error";
     text: string;
   } | null>(null);
+  const [featuredToAddId, setFeaturedToAddId] = useState("");
+  const [newArrivalToAddId, setNewArrivalToAddId] = useState("");
 
   // Confirmation Modal
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -688,17 +654,11 @@ export function AdminDashboard() {
             typeof data.today_pick_product_id === "string"
               ? data.today_pick_product_id
               : "",
-          home_categories:
-            configuredCategories.length > 0
-              ? configuredCategories
-              : defaultHomeCategories,
+          home_categories: configuredCategories,
           home_collection_ids: Array.isArray(data.home_collection_ids)
             ? data.home_collection_ids
             : [],
-          shop_menu_items:
-            configuredShopMenu.length > 0
-              ? configuredShopMenu
-              : defaultShopMenuItems,
+          shop_menu_items: configuredShopMenu,
         }));
       })
     );
@@ -716,7 +676,7 @@ export function AdminDashboard() {
 
   const calculateMonthlyRevenue = (ords: Order[], prods: Product[]) => {
     const revenueOrders = ords.filter(
-      (order) => !["cancelled", "refunded"].includes(order.status)
+      (order) => !["cancelled"].includes(order.status)
     );
     const monthlyData: { [key: string]: MonthlyRevenue } = {};
 
@@ -768,7 +728,7 @@ export function AdminDashboard() {
     subs: Subscriber[]
   ) => {
     const revenueOrders = ords.filter(
-      (order) => !["cancelled", "refunded"].includes(order.status)
+      (order) => !["cancelled"].includes(order.status)
     );
     const now = new Date();
     const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -1169,12 +1129,12 @@ export function AdminDashboard() {
     }
   };
 
-  const sendTelegramTest = async () => {
+  const sendDiscordTest = async () => {
     try {
-      setSendingTelegramTest(true);
-      setTelegramTestMessage(null);
+      setSendingDiscordTest(true);
+      setDiscordTestMessage(null);
 
-      const response = await fetch("/api/test-telegram", {
+      const response = await fetch("/api/test-discord", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
@@ -1188,19 +1148,19 @@ export function AdminDashboard() {
         throw new Error(errorText);
       }
 
-      setTelegramTestMessage({
+      setDiscordTestMessage({
         type: "success",
-        text: "Telegram test sent successfully.",
+        text: "Discord test sent successfully.",
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      console.error("Telegram test failed:", err);
-      setTelegramTestMessage({
+      console.error("Discord test failed:", err);
+      setDiscordTestMessage({
         type: "error",
-        text: `Telegram test failed: ${message}`,
+        text: `Discord test failed: ${message}`,
       });
     } finally {
-      setSendingTelegramTest(false);
+      setSendingDiscordTest(false);
     }
   };
 
@@ -1282,6 +1242,22 @@ export function AdminDashboard() {
       console.error("Error toggling new arrival:", error);
       alert("Failed to update new arrival status");
     }
+  };
+
+  const addFeaturedProduct = async () => {
+    if (!featuredToAddId) return;
+    const product = products.find((p) => p.id === featuredToAddId);
+    if (!product || product.is_featured) return;
+    await toggleFeatured(product.id, false);
+    setFeaturedToAddId("");
+  };
+
+  const addNewArrivalProduct = async () => {
+    if (!newArrivalToAddId) return;
+    const product = products.find((p) => p.id === newArrivalToAddId);
+    if (!product || product.is_new_arrival) return;
+    await toggleNewArrival(product.id, false);
+    setNewArrivalToAddId("");
   };
 
   const deleteProduct = async (productId: string) => {
@@ -1573,11 +1549,6 @@ export function AdminDashboard() {
       }))
       .filter((entry) => entry.name && entry.slug && entry.image_url);
 
-    if (cleanedCategories.length === 0) {
-      alert("Please add at least one category with name, slug, and image URL.");
-      return;
-    }
-
     const cleanedShopMenuItems = homepageSettings.shop_menu_items
       .map((entry, index) => ({
         id: entry.id || `menu-${index + 1}`,
@@ -1586,11 +1557,6 @@ export function AdminDashboard() {
         special: Boolean(entry.special),
       }))
       .filter((entry) => entry.label && entry.path);
-
-    if (cleanedShopMenuItems.length === 0) {
-      alert("Please add at least one shop menu item.");
-      return;
-    }
 
     try {
       setSavingHomepageSettings(true);
@@ -1615,7 +1581,11 @@ export function AdminDashboard() {
     }
   };
 
-  const updateOrderStatus = async (orderId: string, newStatus: string) => {
+  const updateOrderStatus = async (
+    orderId: string,
+    newStatus: string,
+    statusNote?: string
+  ) => {
     try {
       const order = orders.find((o) => o.id === orderId);
       if (!order) return;
@@ -1624,6 +1594,7 @@ export function AdminDashboard() {
         userId: order.user_id,
         items: order.items,
         newStatus: newStatus as OrderStatus,
+        statusNote,
       });
     } catch (error) {
       console.error("Error updating order status:", error);
@@ -1780,6 +1751,8 @@ export function AdminDashboard() {
 
   const featuredProducts = products.filter((p) => p.is_featured);
   const newArrivals = products.filter((p) => p.is_new_arrival);
+  const availableForFeatured = products.filter((p) => !p.is_featured);
+  const availableForNewArrivals = products.filter((p) => !p.is_new_arrival);
 
   if (loading) {
     return (
@@ -1811,12 +1784,12 @@ export function AdminDashboard() {
   ];
 
   return (
-    <div className="min-h-screen pt-24 pb-16 px-4 bg-gray-50">
+    <div className="min-h-screen pt-24 pb-16 px-3 sm:px-4 bg-gray-50">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-8 flex items-center justify-between">
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-light tracking-wider mb-2">
+            <h1 className="text-3xl sm:text-4xl font-light tracking-wider mb-2">
               ADMIN DASHBOARD
             </h1>
             <p className="text-gray-600">
@@ -1825,7 +1798,7 @@ export function AdminDashboard() {
           </div>
           <button
             onClick={resetAllOrders}
-            className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
           >
             <RefreshCw size={20} />
             Reset Revenue
@@ -1833,12 +1806,12 @@ export function AdminDashboard() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-4 mb-8 border-b border-gray-200 overflow-x-auto">
+        <div className="flex gap-2 sm:gap-4 mb-8 border-b border-gray-200 overflow-x-auto pb-1">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-6 py-3 border-b-2 transition-colors whitespace-nowrap ${
+              className={`flex items-center gap-2 px-3 sm:px-6 py-3 border-b-2 transition-colors whitespace-nowrap text-sm sm:text-base ${
                 activeTab === tab.id
                   ? "border-black text-black"
                   : "border-transparent text-gray-500 hover:text-black"
@@ -1856,9 +1829,9 @@ export function AdminDashboard() {
             {/* Monthly Revenue Navigation */}
             {monthlyRevenueHistory.length > 0 && (
               <div className="bg-white p-6 rounded-xl shadow-sm">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                   <h2 className="text-xl font-light">Monthly Analysis</h2>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between sm:justify-start gap-2">
                     <button
                       onClick={() =>
                         setSelectedMonthIndex((prev) =>
@@ -1872,7 +1845,7 @@ export function AdminDashboard() {
                     >
                       <ChevronLeft size={20} />
                     </button>
-                    <span className="text-sm font-medium min-w-[150px] text-center">
+                    <span className="text-sm font-medium min-w-[120px] sm:min-w-[150px] text-center">
                       {currentMonthData?.month}
                     </span>
                     <button
@@ -2068,7 +2041,7 @@ export function AdminDashboard() {
                       <p className="font-medium">
                         ${(order.total || 0).toFixed(2)}
                       </p>
-                      <span
+                          <span
                         className={`text-xs px-2 py-1 rounded-full inline-block ${
                           order.status === "pending"
                             ? "bg-yellow-100 text-yellow-800"
@@ -2076,10 +2049,6 @@ export function AdminDashboard() {
                             ? "bg-blue-100 text-blue-800"
                             : order.status === "shipped"
                             ? "bg-purple-100 text-purple-800"
-                            : order.status === "refund_requested"
-                            ? "bg-orange-100 text-orange-800"
-                            : order.status === "refunded"
-                            ? "bg-cyan-100 text-cyan-800"
                             : order.status === "cancelled"
                             ? "bg-red-100 text-red-800"
                             : "bg-green-100 text-green-800"
@@ -2100,9 +2069,9 @@ export function AdminDashboard() {
         {activeTab === "products" && (
           <div className="space-y-6">
             {/* Filters & Actions */}
-            <div className="bg-white p-4 rounded-xl shadow-sm flex items-center justify-between gap-4 flex-wrap">
-              <div className="flex items-center gap-4 flex-1">
-                <div className="relative flex-1 max-w-md">
+            <div className="bg-white p-4 rounded-xl shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 flex-1 w-full">
+                <div className="relative flex-1 w-full lg:max-w-md">
                   <Search
                     className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
                     size={20}
@@ -2118,7 +2087,7 @@ export function AdminDashboard() {
                 <select
                   value={selectedCategory}
                   onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                  className="w-full sm:w-auto px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
                 >
                   <option value="all">All Categories</option>
                   {categories.map((cat) => (
@@ -2128,17 +2097,17 @@ export function AdminDashboard() {
                   ))}
                 </select>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
                 <button
                   onClick={() => exportData(filteredProducts, "products.csv")}
-                  className="flex items-center gap-2 bg-gray-200 text-black px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gray-200 text-black px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
                 >
                   <Download size={20} />
                   Export
                 </button>
                 <button
                   onClick={() => openProductModal()}
-                  className="flex items-center gap-2 bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors"
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors"
                 >
                   <Plus size={20} />
                   Add Product
@@ -2345,8 +2314,8 @@ export function AdminDashboard() {
         {activeTab === "orders" && (
           <div className="space-y-6">
             {/* Search Bar */}
-            <div className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-4">
-              <div className="relative flex-1">
+            <div className="bg-white p-4 rounded-xl shadow-sm flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+              <div className="relative flex-1 w-full">
                 <Search
                   className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
                   size={20}
@@ -2361,7 +2330,7 @@ export function AdminDashboard() {
               </div>
               <button
                 onClick={() => exportData(filteredOrders, "orders.csv")}
-                className="flex items-center gap-2 bg-gray-200 text-black px-4 py-2 rounded-lg hover:bg-gray-300"
+                className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gray-200 text-black px-4 py-2 rounded-lg hover:bg-gray-300"
               >
                 <Download size={20} />
               </button>
@@ -2369,7 +2338,7 @@ export function AdminDashboard() {
 
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full min-w-[920px]">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -2440,10 +2409,6 @@ export function AdminDashboard() {
                                 ? "bg-purple-100 text-purple-800"
                                 : order.status === "delivered"
                                 ? "bg-green-100 text-green-800"
-                                : order.status === "refund_requested"
-                                ? "bg-orange-100 text-orange-800"
-                                : order.status === "refunded"
-                                ? "bg-cyan-100 text-cyan-800"
                                 : "bg-red-100 text-red-800"
                             }`}
                           >
@@ -2451,17 +2416,15 @@ export function AdminDashboard() {
                             <option value="processing">Processing</option>
                             <option value="shipped">Shipped</option>
                             <option value="delivered">Delivered</option>
-                            <option value="refund_requested">
-                              Refund Requested
-                            </option>
-                            <option value="refunded">Refunded</option>
-                            <option value="cancelled">Cancelled</option>
+                            {(order.status === "pending" ||
+                              order.status === "cancelled") && (
+                              <option value="cancelled">Cancelled</option>
+                            )}
                           </select>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                           <div className="flex gap-2 flex-wrap">
-                            {(order.status === "pending" ||
-                              order.status === "processing") && (
+                            {order.status === "pending" && (
                               <button
                                 onClick={() =>
                                   updateOrderStatus(order.id, "cancelled")
@@ -2469,16 +2432,6 @@ export function AdminDashboard() {
                                 className="text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
                               >
                                 Cancel
-                              </button>
-                            )}
-                            {order.status === "refund_requested" && (
-                              <button
-                                onClick={() =>
-                                  updateOrderStatus(order.id, "refunded")
-                                }
-                                className="text-cyan-600 hover:text-cyan-800 font-medium flex items-center gap-1"
-                              >
-                                Approve Refund
                               </button>
                             )}
                             <button
@@ -2633,8 +2586,8 @@ export function AdminDashboard() {
               <div className="mb-5">
                 <p className="text-sm font-medium mb-2">Home Categories</p>
                 <p className="text-xs text-gray-500 mb-3">
-                  Slug should match a route like `men`, `women`, `sale`, or
-                  `collections`.
+                  Slug should match your category route (example: `padel`,
+                  `running`, `tennis`).
                 </p>
 
                 <div className="space-y-3">
@@ -2649,7 +2602,7 @@ export function AdminDashboard() {
                         onChange={(e) =>
                           updateHomeCategory(index, "name", e.target.value)
                         }
-                        placeholder="Name (e.g. Men)"
+                        placeholder="Name (e.g. Padel)"
                         className="px-3 py-2 border border-gray-300 rounded-lg"
                       />
                       <input
@@ -2658,7 +2611,7 @@ export function AdminDashboard() {
                         onChange={(e) =>
                           updateHomeCategory(index, "slug", e.target.value)
                         }
-                        placeholder="Slug (e.g. men)"
+                        placeholder="Slug (e.g. padel)"
                         className="px-3 py-2 border border-gray-300 rounded-lg"
                       />
                       <input
@@ -2891,11 +2844,32 @@ export function AdminDashboard() {
 
             {/* Featured Products */}
             <div>
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-4">
                 <h2 className="text-2xl font-light flex items-center gap-2">
                   <Star size={24} className="text-yellow-600" />
                   Featured Products ({featuredProducts.length}/3)
                 </h2>
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+                  <select
+                    value={featuredToAddId}
+                    onChange={(e) => setFeaturedToAddId(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[260px]"
+                  >
+                    <option value="">Select product to feature</option>
+                    {availableForFeatured.map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.name} ({product.category})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={addFeaturedProduct}
+                    disabled={!featuredToAddId || featuredProducts.length >= 3}
+                    className="px-4 py-2 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium hover:bg-yellow-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Add
+                  </button>
+                </div>
               </div>
               {featuredProducts.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -2945,11 +2919,32 @@ export function AdminDashboard() {
 
             {/* New Arrivals */}
             <div>
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-4">
                 <h2 className="text-2xl font-light flex items-center gap-2">
                   <Sparkles size={24} className="text-blue-600" />
                   New Arrivals ({newArrivals.length}/3)
                 </h2>
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+                  <select
+                    value={newArrivalToAddId}
+                    onChange={(e) => setNewArrivalToAddId(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[260px]"
+                  >
+                    <option value="">Select product for new arrivals</option>
+                    {availableForNewArrivals.map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.name} ({product.category})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={addNewArrivalProduct}
+                    disabled={!newArrivalToAddId || newArrivals.length >= 3}
+                    className="px-4 py-2 bg-blue-100 text-blue-800 rounded-lg text-sm font-medium hover:bg-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Add
+                  </button>
+                </div>
               </div>
               {newArrivals.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -3209,19 +3204,19 @@ export function AdminDashboard() {
                     Manage subscribers and send campaigns
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
                   <button
-                    onClick={sendTelegramTest}
-                    disabled={sendingTelegramTest}
-                    className="flex items-center gap-2 border border-gray-300 px-4 py-3 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    onClick={sendDiscordTest}
+                    disabled={sendingDiscordTest}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 border border-gray-300 px-4 py-3 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
-                    <RefreshCw size={18} className={sendingTelegramTest ? "animate-spin" : ""} />
-                    {sendingTelegramTest ? "Testing..." : "Test Telegram"}
+                    <RefreshCw size={18} className={sendingDiscordTest ? "animate-spin" : ""} />
+                    {sendingDiscordTest ? "Testing..." : "Test Discord"}
                   </button>
                   <button
                     onClick={() => setShowEmailModal(true)}
                     disabled={subscribers.length === 0}
-                    className="flex items-center gap-2 bg-black text-white px-6 py-3 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-black text-white px-6 py-3 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     <Mail size={20} />
                     Send Campaign
@@ -3229,15 +3224,15 @@ export function AdminDashboard() {
                 </div>
               </div>
 
-              {telegramTestMessage && (
+              {discordTestMessage && (
                 <div
                   className={`mb-4 rounded-lg px-4 py-3 text-sm ${
-                    telegramTestMessage.type === "success"
+                    discordTestMessage.type === "success"
                       ? "bg-green-50 text-green-800 border border-green-200"
                       : "bg-red-50 text-red-800 border border-red-200"
                   }`}
                 >
-                  {telegramTestMessage.text}
+                  {discordTestMessage.text}
                 </div>
               )}
 
@@ -3260,7 +3255,7 @@ export function AdminDashboard() {
             {/* Subscribers Table */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full min-w-[760px]">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -3410,7 +3405,7 @@ export function AdminDashboard() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">
                     Retail Price ($) *
@@ -3493,7 +3488,7 @@ export function AdminDashboard() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">
                     Discount (%)
@@ -3948,7 +3943,7 @@ export function AdminDashboard() {
               </div>
             </div>
 
-            <div className="p-6 border-t border-gray-200 flex gap-3 sticky bottom-0 bg-white">
+            <div className="p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-3 sticky bottom-0 bg-white">
               <button
                 onClick={() => setShowProductModal(false)}
                 className="flex-1 px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
@@ -4012,13 +4007,14 @@ export function AdminDashboard() {
                   <option value="processing">Processing</option>
                   <option value="shipped">Shipped</option>
                   <option value="delivered">Delivered</option>
-                  <option value="refund_requested">Refund Requested</option>
-                  <option value="refunded">Refunded</option>
-                  <option value="cancelled">Cancelled</option>
+                  {(editingOrder.status === "pending" ||
+                    editingOrder.status === "cancelled") && (
+                    <option value="cancelled">Cancelled</option>
+                  )}
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">
                     Subtotal ($)
@@ -4195,7 +4191,7 @@ export function AdminDashboard() {
               </div>
             </div>
 
-            <div className="p-6 border-t border-gray-200 flex gap-3 sticky bottom-0 bg-white">
+            <div className="p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-3 sticky bottom-0 bg-white">
               <button
                 onClick={() => setShowOrderModal(false)}
                 className="flex-1 px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
@@ -4268,7 +4264,7 @@ We're excited to announce..."
               </div>
             </div>
 
-            <div className="p-6 border-t border-gray-200 flex gap-3 sticky bottom-0 bg-white">
+            <div className="p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-3 sticky bottom-0 bg-white">
               <button
                 onClick={() => setShowEmailModal(false)}
                 className="flex-1 px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"

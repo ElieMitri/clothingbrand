@@ -243,7 +243,7 @@ export function Cart() {
       const zipCode = String(profileData.zipCode || "").trim() || "-";
       const country = String(profileData.country || "").trim() || "-";
       let notificationType: "success" | "error" = "success";
-      let notificationText = "Order placed. Telegram notification queued.";
+      let notificationText = "Order placed. Discord notification queued.";
 
       try {
         const notificationPayload = {
@@ -271,7 +271,7 @@ export function Cart() {
         };
 
         try {
-          const response = await fetch("/api/send-order-telegram", {
+          const response = await fetch("/api/send-order-discord", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -284,25 +284,25 @@ export function Cart() {
             throw new Error(reason || `HTTP ${response.status}`);
           }
           notificationType = "success";
-          notificationText = "Order placed. Telegram notification sent.";
+          notificationText = "Order placed. Discord notification sent.";
         } catch (endpointError) {
           const failureReason =
             endpointError instanceof Error
               ? endpointError.message
               : "Request error";
           console.error(
-            "Failed to send Telegram order notification via API:",
+            "Failed to send Discord order notification via API:",
             failureReason
           );
           notificationType = "error";
           notificationText =
-            "Order placed, but Telegram notification failed to send.";
+            "Order placed, but Discord notification failed to send.";
         }
       } catch (notificationError) {
-        console.error("Telegram order notification request failed:", notificationError);
+        console.error("Discord order notification request failed:", notificationError);
         notificationType = "error";
         notificationText =
-          "Order placed, but Telegram notification request failed.";
+          "Order placed, but Discord notification request failed.";
       }
 
       setCheckoutNotice({ type: notificationType, text: notificationText });
@@ -364,7 +364,7 @@ export function Cart() {
   }
 
   return (
-    <div className="min-h-screen pt-24 pb-16 px-4 bg-gray-50">
+    <div className="min-h-screen pt-24 pb-16 px-3 sm:px-4 bg-gray-50">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
@@ -375,7 +375,7 @@ export function Cart() {
             <ChevronLeft size={20} />
             Continue Shopping
           </Link>
-          <h1 className="text-4xl md:text-5xl font-light tracking-wide">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-light tracking-wide">
             Shopping Cart
           </h1>
           <p className="text-gray-600 mt-2">
@@ -416,19 +416,19 @@ export function Cart() {
             </div>
           </div>
         ) : (
-          <div className="grid lg:grid-cols-3 gap-8">
+          <div className="grid lg:grid-cols-3 gap-5 sm:gap-8">
             {/* Cart Items */}
             <div className="lg:col-span-2 space-y-4">
               {cartItems.map((item) => (
                 <div
                   key={item.id}
-                  className="bg-white rounded-2xl shadow-sm p-6 transition-all hover:shadow-md"
+                  className="bg-white rounded-2xl shadow-sm p-4 sm:p-6 transition-all hover:shadow-md"
                 >
-                  <div className="flex gap-6">
+                  <div className="flex flex-col sm:flex-row gap-4 sm:gap-6">
                     {/* Product Image */}
                     <Link
                       to={`/product/${item.product_id}`}
-                      className="w-28 h-36 bg-gray-100 rounded-xl flex-shrink-0 overflow-hidden group"
+                      className="w-full sm:w-28 h-48 sm:h-36 bg-gray-100 rounded-xl flex-shrink-0 overflow-hidden group"
                     >
                       <img
                         src={item.product.image_url}
@@ -440,11 +440,11 @@ export function Cart() {
                     {/* Product Info */}
                     <div className="flex-1 flex flex-col justify-between">
                       <div>
-                        <div className="flex items-start justify-between mb-2">
+                        <div className="flex items-start justify-between gap-2 mb-2">
                           <div className="flex-1">
                             <Link
                               to={`/product/${item.product_id}`}
-                              className="font-medium text-lg hover:text-gray-600 transition-colors"
+                            className="font-medium text-base sm:text-lg hover:text-gray-600 transition-colors break-words"
                             >
                               {item.product.name}
                             </Link>
@@ -476,8 +476,8 @@ export function Cart() {
                       </div>
 
                       {/* Quantity Controls */}
-                      <div className="flex items-center justify-between mt-4">
-                        <div className="flex items-center gap-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-4">
+                        <div className="flex flex-wrap items-center gap-3">
                           <span className="text-sm text-gray-600">
                             Quantity:
                           </span>
@@ -514,7 +514,7 @@ export function Cart() {
                           </span>
                         </div>
 
-                        <div className="text-right">
+                        <div className="text-left sm:text-right">
                           <p className="text-sm text-gray-500">Item Total</p>
                           <p className="text-lg font-bold">
                             ${(item.product.price * item.quantity).toFixed(2)}
@@ -529,7 +529,7 @@ export function Cart() {
 
             {/* Order Summary */}
             <div className="lg:col-span-1">
-              <div className="bg-white rounded-2xl shadow-sm p-6 sticky top-24">
+              <div className="bg-white rounded-2xl shadow-sm p-5 sm:p-6 lg:sticky lg:top-24">
                 <h2 className="text-xl font-semibold mb-6">Order Summary</h2>
 
                 <div className="space-y-4 mb-6">

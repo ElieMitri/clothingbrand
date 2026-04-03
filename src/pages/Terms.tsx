@@ -11,7 +11,7 @@ export function Terms() {
           <section>
             <h2 className="text-xl font-semibold text-slate-100">1. Use of Service</h2>
             <p className="mt-2">
-              By using ISHTARI 961, you agree to use the platform lawfully and avoid
+              By using LBathletes, you agree to use the platform lawfully and avoid
               misuse, fraud, or any activity that harms the service or other users.
             </p>
           </section>
@@ -25,10 +25,10 @@ export function Terms() {
           </section>
 
           <section>
-            <h2 className="text-xl font-semibold text-slate-100">3. Returns and Refunds</h2>
+            <h2 className="text-xl font-semibold text-slate-100">3. Returns and Cancellations</h2>
             <p className="mt-2">
-              Return and refund requests are reviewed according to our store policy.
-              Approved refunds are processed to the original payment method.
+              Orders can be cancelled before shipment. Once an order is shipped or delivered,
+              it is considered final and non-refundable.
             </p>
           </section>
 

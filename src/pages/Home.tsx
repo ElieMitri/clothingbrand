@@ -2,12 +2,15 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
+  Banknote,
+  BadgeCheck,
+  Gem,
+  MessageSquareQuote,
+  PackageCheck,
   Shield,
   Truck,
-  RefreshCw,
   Sparkles,
   Star,
-  Zap,
 } from "lucide-react";
 import { db } from "../lib/firebase";
 import {
@@ -25,6 +28,9 @@ import {
   where,
 } from "firebase/firestore";
 import { toCategorySlug } from "../lib/category";
+import { useAuth } from "../contexts/AuthContext";
+
+import Photo from "../assets/photo.png"
 
 interface Product {
   id: string;
@@ -57,43 +63,13 @@ interface CollectionItem {
   is_active?: boolean;
 }
 
-const defaultCategories: Category[] = [
-  {
-    id: "1",
-    name: "Men",
-    image_url:
-      "https://images.unsplash.com/photo-1490114538077-0a7f8cb49891?q=80&w=1000",
-    slug: "men",
-  },
-  {
-    id: "2",
-    name: "Women",
-    image_url:
-      "https://images.unsplash.com/photo-1483985988355-763728e1935b?q=80&w=1000",
-    slug: "women",
-  },
-  {
-    id: "3",
-    name: "Accessories",
-    image_url:
-      "https://images.unsplash.com/photo-1523779917675-b6ed3a42a561?q=80&w=1000",
-    slug: "accessories",
-  },
-  {
-    id: "4",
-    name: "Sale",
-    image_url:
-      "https://images.unsplash.com/photo-1607083206968-13611e3d76db?q=80&w=1000",
-    slug: "sale",
-  },
-];
-
 const formatPrice = (value: number) => `$${value.toFixed(2)}`;
 
 export function Home() {
+  const { user } = useAuth();
   const [featuredProducts, setFeaturedProducts] = useState<Product[]>([]);
   const [newArrivals, setNewArrivals] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>(defaultCategories);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [collectionsData, setCollectionsData] = useState<CollectionItem[]>([]);
   const [todayPickProductId, setTodayPickProductId] = useState("");
   const [heroImageOverride, setHeroImageOverride] = useState("");
@@ -102,6 +78,8 @@ export function Home() {
   const [subscribeStatus, setSubscribeStatus] = useState<
     "idle" | "success" | "exists" | "error"
   >("idle");
+  const [isCheckingSubscription, setIsCheckingSubscription] = useState(false);
+  const [isUserSubscribed, setIsUserSubscribed] = useState(false);
 
   useEffect(() => {
     const unsubscribers: Unsubscribe[] = [];
@@ -145,15 +123,13 @@ export function Home() {
               : [];
 
             setCategories(
-              configuredCategories.length > 0
-                ? configuredCategories
-                : defaultCategories
+              configuredCategories
             );
           } else {
             setTodayPickProductId("");
             setHeroImageOverride("");
             setHomeCollectionIds([]);
-            setCategories(defaultCategories);
+            setCategories([]);
           }
 
           if (featuredIds.length > 0) {
@@ -220,10 +196,41 @@ export function Home() {
     }
   }, []);
 
+  useEffect(() => {
+    const checkUserSubscription = async () => {
+      if (!user?.email) {
+        setIsUserSubscribed(false);
+        return;
+      }
+
+      const normalizedUserEmail = user.email.toLowerCase();
+      setEmail(normalizedUserEmail);
+      setIsCheckingSubscription(true);
+
+      try {
+        const subscriberQuery = query(
+          collection(db, "newsletter"),
+          where("email", "==", normalizedUserEmail)
+        );
+        const subscriberSnap = await getDocs(subscriberQuery);
+        setIsUserSubscribed(!subscriberSnap.empty);
+      } catch (error) {
+        console.error("Error checking newsletter subscription:", error);
+        setIsUserSubscribed(false);
+      } finally {
+        setIsCheckingSubscription(false);
+      }
+    };
+
+    checkUserSubscription();
+  }, [user?.email]);
+
   const handleSubscribe = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!email.includes("@")) {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail.includes("@")) {
       setSubscribeStatus("error");
       setTimeout(() => setSubscribeStatus("idle"), 3000);
       return;
@@ -232,21 +239,29 @@ export function Home() {
     try {
       const duplicateQuery = query(
         collection(db, "newsletter"),
-        where("email", "==", email.toLowerCase())
+        where("email", "==", normalizedEmail)
       );
       const existing = await getDocs(duplicateQuery);
 
       if (existing.empty) {
         await addDoc(collection(db, "newsletter"), {
-          email: email.toLowerCase(),
+          email: normalizedEmail,
           subscribed_at: serverTimestamp(),
           sent_emails: 0,
         });
         setSubscribeStatus("success");
+        if (user?.email && user.email.toLowerCase() === normalizedEmail) {
+          setIsUserSubscribed(true);
+        }
       } else {
         setSubscribeStatus("exists");
+        if (user?.email && user.email.toLowerCase() === normalizedEmail) {
+          setIsUserSubscribed(true);
+        }
       }
-      setEmail("");
+      if (!user?.email) {
+        setEmail("");
+      }
     } catch (error) {
       console.error("Newsletter subscribe failed:", error);
       setSubscribeStatus("error");
@@ -258,10 +273,11 @@ export function Home() {
   const heroProduct =
     featuredProducts.find((product) => product.id === todayPickProductId) ||
     featuredProducts[0];
+  const defaultHeroImage =
+ Photo;
   const heroImage =
     heroImageOverride ||
-    heroProduct?.image_url ||
-    "https://images.unsplash.com/photo-1441984904996-e0b6ba687e04?q=80&w=2200";
+    defaultHeroImage;
   const homeCollections =
     homeCollectionIds.length > 0
       ? homeCollectionIds
@@ -277,38 +293,32 @@ export function Home() {
             <img
               src={heroImage}
               alt={heroProduct?.name || "Hero"}
-              className="absolute inset-0 h-full w-full object-cover scale-[1.03]"
+              className="absolute inset-0 h-full w-full object-cover object-[62%_center] md:object-center scale-105 md:scale-[1.02] brightness-[0.58] contrast-110 saturate-[0.9]"
             />
-            <div className="absolute inset-0 bg-gradient-to-b from-slate-950/82 via-slate-950/58 to-slate-950/82 backdrop-blur-[2px]" />
-            <div className="relative z-10 min-h-screen max-w-7xl mx-auto px-4 py-16 md:py-20 lg:py-24 flex items-center justify-center">
+            <div className="absolute inset-0 bg-gradient-to-b from-slate-950/84 via-slate-950/55 to-slate-950/86 backdrop-blur-[1px]" />
+            <div className="absolute inset-0 bg-gradient-to-r from-slate-950/35 via-transparent to-slate-950/45" />
+            <div className="relative z-10 min-h-screen max-w-7xl mx-auto px-4 py-20 md:py-20 lg:py-24 flex items-center justify-center">
               <div className="text-center max-w-3xl">
-                <p className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-cyan-300/35 bg-cyan-400/10 text-cyan-100 text-xs tracking-[0.2em]">
+                <p className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-cyan-300/45 bg-cyan-400/12 text-cyan-100 text-xs tracking-[0.2em] shadow-[0_0_20px_rgba(34,211,238,0.25)]">
                   <Sparkles size={14} />
-                  FUTURE OF STREET LUXE
+                  LBATHLETES • ALL SPORTS
                 </p>
-                <h1 className="mt-6 font-display text-5xl md:text-7xl leading-[0.94] tracking-[0.12em] text-white">
-                  PRECISION
+                <h1 className="mt-6 font-display text-4xl sm:text-5xl md:text-7xl leading-[0.94] tracking-[0.12em] text-white text-balance drop-shadow-[0_4px_24px_rgba(2,6,23,0.75)]">
+                  LBATHLETES
                   <br />
-                  DRIVEN STYLE
+                  PERFORMANCE
                 </h1>
-                <p className="mt-6 max-w-2xl mx-auto text-slate-200/90 text-base md:text-lg leading-relaxed">
-                  A sharper wardrobe language. Built with clean silhouettes,
-                  elevated textures, and a high-contrast editorial look.
+                <p className="mt-6 max-w-2xl mx-auto text-slate-200/95 text-base md:text-lg leading-relaxed drop-shadow-[0_2px_14px_rgba(2,6,23,0.7)]">
+                  Gear and style for every sport. Built for movement, speed,
+                  endurance, and everyday athlete confidence.
                 </p>
 
                 <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center sm:items-center">
                   <Link
                     to="/shop"
-                    className="inline-flex items-center justify-center gap-2 px-7 py-3 rounded-xl luxe-button text-sm font-semibold tracking-[0.13em]"
-                  >
-                    EXPLORE COLLECTION
-                    <ArrowRight size={16} />
-                  </Link>
-                  <Link
-                    to="/new-arrivals"
                     className="inline-flex items-center justify-center gap-2 px-7 py-3 rounded-xl border border-slate-400/40 bg-slate-900/50 text-slate-100 text-sm font-semibold tracking-[0.13em] hover:border-cyan-300/50 hover:bg-slate-900/80"
                   >
-                    NEW ARRIVALS
+                   Shop Now!
                     <ArrowRight size={16} />
                   </Link>
                 </div>
@@ -317,44 +327,59 @@ export function Home() {
           </div>
 
           <div className="max-w-7xl mx-auto px-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="surface-card rounded-3xl p-6 md:p-7 h-[260px] live-float [animation-duration:8s]">
-              <p className="text-xs tracking-[0.18em] text-cyan-200">TODAY'S PICK</p>
+            <div className="surface-card rounded-3xl p-6 md:p-7 min-h-[260px] live-float [animation-duration:8s]">
+              <p className="text-xs tracking-[0.18em] text-cyan-200">ATHLETE REVIEWS</p>
               <h2 className="mt-3 text-2xl font-semibold text-slate-50 leading-tight">
-                {heroProduct?.name || "Editorial Capsule"}
+                Trusted By Players
               </h2>
-              <p className="mt-3 text-slate-300 text-sm line-clamp-3">
-                {heroProduct?.description ||
-                  "Curated pieces selected for modern confidence and all-day versatility."}
+              <div className="mt-3 flex items-center gap-2 text-cyan-100">
+                <Star size={16} fill="currentColor" />
+                <Star size={16} fill="currentColor" />
+                <Star size={16} fill="currentColor" />
+                <Star size={16} fill="currentColor" />
+                <Star size={16} fill="currentColor" />
+                <span className="text-sm text-slate-300">4.9/5 average rating</span>
+              </div>
+              <p className="mt-3 text-slate-300 text-sm line-clamp-2 inline-flex items-start gap-2">
+                <MessageSquareQuote size={14} className="mt-0.5 text-cyan-200" />
+                “Premium feel and great fit from day one.”
               </p>
               <div className="mt-4 flex items-center justify-between">
-                <span className="text-xl font-bold text-cyan-100">
-                  {formatPrice(heroProduct?.price || 129)}
+                <span className="text-sm text-slate-300">
+                  1.4k+ verified customer reviews
                 </span>
-                <Link
-                  to={heroProduct ? `/product/${heroProduct.id}` : "/shop"}
+                {/* <Link
+                  to="/shop"
                   className="text-sm text-cyan-200 hover:text-cyan-100 inline-flex items-center gap-1"
                 >
-                  View piece <ArrowRight size={14} />
-                </Link>
+                  Read more <ArrowRight size={14} />
+                </Link> */}
               </div>
             </div>
 
-            <div className="surface-card rounded-3xl p-6 md:p-7 h-[260px]">
-              <p className="text-xs tracking-[0.18em] text-slate-300">STORE SIGNALS</p>
-              <div className="mt-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-300 text-sm">Products live</span>
-                  <span className="text-2xl font-semibold text-slate-50">
-                    {Math.max(featuredProducts.length + newArrivals.length, 8)}
-                  </span>
+            <div className="surface-card rounded-3xl p-6 md:p-7 min-h-[260px]">
+              <p className="text-xs tracking-[0.18em] text-slate-300">ABOUT US</p>
+              <h3 className="mt-3 text-xl font-semibold text-slate-50">Built By Athletes, For Athletes</h3>
+              <p className="mt-2 text-sm text-slate-300 line-clamp-2">
+                We focus on performance products that look clean, feel premium,
+                and hold up in real play.
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                <div className="rounded-xl border border-slate-700/70 p-3 text-slate-200 inline-flex items-center gap-2">
+                  <Gem size={14} className="text-cyan-200" />
+                  High quality materials
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-300 text-sm">Fast shipping</span>
-                  <span className="text-lg font-semibold text-cyan-100">24-48h</span>
+                <div className="rounded-xl border border-slate-700/70 p-3 text-slate-200 inline-flex items-center gap-2">
+                  <PackageCheck size={14} className="text-cyan-200" />
+                  Fast shipping 24-48h
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-300 text-sm">Return window</span>
-                  <span className="text-lg font-semibold text-slate-100">30 days</span>
+                <div className="rounded-xl border border-slate-700/70 p-3 text-slate-200 inline-flex items-center gap-2">
+                  <BadgeCheck size={14} className="text-cyan-200" />
+                  Quality checked drops
+                </div>
+                <div className="rounded-xl border border-slate-700/70 p-3 text-slate-200 inline-flex items-center gap-2">
+                  <Banknote size={14} className="text-cyan-200" />
+                  Cash on delivery
                 </div>
               </div>
             </div>
@@ -366,8 +391,8 @@ export function Home() {
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
             { icon: Truck, label: "FREE EXPRESS", sub: "Orders over $100" },
-            { icon: RefreshCw, label: "EASY RETURNS", sub: "7-day policy" },
-            { icon: Shield, label: "SECURE PAY", sub: "Protected checkout" },
+            { icon: Banknote, label: "CASH ON DELIVERY", sub: "Pay when you receive" },
+            { icon: Shield, label: "FINAL SALE", sub: "No returns or exchanges" },
           ].map((item) => (
             <div
               key={item.label}
@@ -387,55 +412,57 @@ export function Home() {
         </div>
       </section>
 
-      <section className="px-4 mt-16">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex items-end justify-between gap-4 mb-7">
-            <div>
-              <p className="text-xs tracking-[0.18em] text-cyan-200">DISCOVER</p>
-              <h2 className="font-display text-4xl md:text-5xl tracking-[0.08em] text-slate-50">
-                SHOP BY CATEGORY
-              </h2>
-            </div>
-            <Link
-              to="/shop"
-              className="text-sm text-slate-300 hover:text-cyan-200 inline-flex items-center gap-2"
-            >
-              View full catalog <ArrowRight size={15} />
-            </Link>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {categories.map((category, index) => (
+      {categories.length > 0 ? (
+        <section className="px-4 mt-16">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-end justify-between gap-4 mb-7">
+              <div>
+                <p className="text-xs tracking-[0.18em] text-cyan-200">DISCOVER</p>
+                <h2 className="font-display text-4xl md:text-5xl tracking-[0.08em] text-slate-50">
+                  SHOP BY CATEGORY
+                </h2>
+              </div>
               <Link
-                key={category.id}
-                to={
-                  category.slug
-                    ? `/category/${toCategorySlug(category.slug)}`
-                    : "/shop"
-                }
-                className={`group relative overflow-hidden rounded-3xl border border-slate-700/70 min-h-[220px] md:min-h-[320px] ${
-                  index === 0 ? "md:col-span-2" : ""
-                }`}
+                to="/shop"
+                className="text-sm text-slate-300 hover:text-cyan-200 inline-flex items-center gap-2"
               >
-                <img
-                  src={category.image_url}
-                  alt={category.name}
-                  className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/40 to-transparent" />
-                <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between">
-                  <h3 className="text-lg md:text-2xl font-semibold tracking-[0.14em] text-white">
-                    {category.name.toUpperCase()}
-                  </h3>
-                  <span className="h-9 w-9 rounded-full bg-cyan-400/25 border border-cyan-300/35 text-cyan-100 flex items-center justify-center">
-                    <ArrowRight size={14} />
-                  </span>
-                </div>
+                View full catalog <ArrowRight size={15} />
               </Link>
-            ))}
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {categories.map((category, index) => (
+                <Link
+                  key={category.id}
+                  to={
+                    category.slug
+                      ? `/category/${toCategorySlug(category.slug)}`
+                      : "/shop"
+                  }
+                  className={`group relative overflow-hidden rounded-3xl border border-slate-700/70 min-h-[220px] md:min-h-[320px] ${
+                    index === 0 ? "md:col-span-2" : ""
+                  }`}
+                >
+                  <img
+                    src={category.image_url}
+                    alt={category.name}
+                    className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/40 to-transparent" />
+                  <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between">
+                    <h3 className="text-lg md:text-2xl font-semibold tracking-[0.14em] text-white">
+                      {category.name.toUpperCase()}
+                    </h3>
+                    <span className="h-9 w-9 rounded-full bg-cyan-400/25 border border-cyan-300/35 text-cyan-100 flex items-center justify-center">
+                      <ArrowRight size={14} />
+                    </span>
+                  </div>
+                </Link>
+              ))}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      ) : null}
 
       {homeCollections.length > 0 ? (
         <section className="px-4 mt-16">
@@ -549,7 +576,7 @@ export function Home() {
         <div className="max-w-7xl mx-auto surface-card rounded-3xl p-8 md:p-10 border border-slate-700/70">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
             <div className="lg:col-span-1">
-              <p className="text-xs tracking-[0.18em] text-cyan-200">ABOUT ISHTARI 961</p>
+              <p className="text-xs tracking-[0.18em] text-cyan-200">ABOUT LBathletes</p>
               <h2 className="mt-3 font-display text-3xl md:text-4xl tracking-[0.08em] text-slate-50">
                 DESIGN-LED
                 <br />
@@ -558,7 +585,7 @@ export function Home() {
             </div>
             <div className="lg:col-span-2">
               <p className="text-slate-200 leading-relaxed">
-                ISHTARI 961 is built around clean silhouettes, elevated materials, and
+                LBathletes is built around clean silhouettes, elevated materials, and
                 intentional details that feel modern every day. We focus on
                 wearable luxury with limited releases, fast fulfillment, and a
                 refined shopping experience from first look to delivery.
@@ -585,50 +612,6 @@ export function Home() {
       </section>
 
       <section className="px-4 mt-16">
-        <div className="max-w-7xl mx-auto rounded-3xl border border-slate-700/70 bg-gradient-to-r from-slate-900/80 to-cyan-950/45 p-8 md:p-10">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-7 items-center">
-            <div className="lg:col-span-2">
-              <p className="text-xs tracking-[0.18em] text-cyan-200">LIMITED DROP</p>
-              <h2 className="mt-3 font-display text-4xl md:text-6xl leading-[0.95] text-slate-50 tracking-[0.08em]">
-                OWN THE NEXT
-                <br />
-                NEW ARRIVAL WAVE
-              </h2>
-              <p className="mt-5 text-slate-200 max-w-2xl">
-                Fresh pieces are moving fast. Secure your fit before sizes go.
-              </p>
-              <Link
-                to="/new-arrivals"
-                className="mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-cyan-400 text-slate-950 text-sm font-bold tracking-[0.12em] hover:bg-cyan-300"
-              >
-                SHOP NEW ARRIVALS
-                <Zap size={15} />
-              </Link>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {newArrivals.slice(0, 4).map((product) => (
-                <Link
-                  key={product.id}
-                  to={`/product/${product.id}`}
-                  className="relative rounded-2xl overflow-hidden border border-slate-700/70 h-36"
-                >
-                  <img
-                    src={product.image_url}
-                    alt={product.name}
-                    className="absolute inset-0 h-full w-full object-cover"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 to-transparent" />
-                  <span className="absolute bottom-2 left-2 right-2 text-xs text-white line-clamp-1">
-                    {product.name}
-                  </span>
-                </Link>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="px-4 mt-16">
         <div className="max-w-7xl mx-auto">
           <div className="flex items-end justify-between mb-7">
             <div>
@@ -645,7 +628,7 @@ export function Home() {
             </Link>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {newArrivals.map((product) => (
               <Link
                 key={product.id}
@@ -684,25 +667,31 @@ export function Home() {
             updates.
           </p>
 
-          <form
-            onSubmit={handleSubscribe}
-            className="mt-7 max-w-xl mx-auto flex flex-col sm:flex-row gap-3"
-          >
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@email.com"
-              className="flex-1 rounded-xl px-5 py-3 border border-slate-600/80 bg-slate-950/65 text-slate-100 focus:outline-none focus:border-cyan-300"
-              required
-            />
-            <button
-              type="submit"
-              className="rounded-xl px-6 py-3 luxe-button text-sm font-semibold tracking-[0.12em]"
+          {user && isCheckingSubscription ? (
+            <p className="mt-6 text-slate-300 text-sm">Checking subscription status...</p>
+          ) : user && isUserSubscribed ? (
+            <p className="mt-6 text-emerald-300 text-sm">You are already subscribed.</p>
+          ) : (
+            <form
+              onSubmit={handleSubscribe}
+              className="mt-7 max-w-xl mx-auto flex flex-col sm:flex-row gap-3"
             >
-              SUBSCRIBE
-            </button>
-          </form>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@email.com"
+                className="flex-1 rounded-xl px-5 py-3 border border-slate-600/80 bg-slate-950/65 text-slate-100 focus:outline-none focus:border-cyan-300"
+                required
+              />
+              <button
+                type="submit"
+                className="rounded-xl px-6 py-3 luxe-button text-sm font-semibold tracking-[0.12em]"
+              >
+                SUBSCRIBE
+              </button>
+            </form>
+          )}
 
           {subscribeStatus === "success" ? (
             <p className="mt-4 text-emerald-300 text-sm">You're in. Welcome to the circle.</p>

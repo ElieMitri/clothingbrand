@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import {
   ShoppingCart,
   Truck,
-  RotateCcw,
+  Banknote,
   Shield,
   ChevronLeft,
   ChevronRight,
@@ -23,6 +23,7 @@ import {
   getDocs,
   addDoc,
   updateDoc,
+  serverTimestamp,
 } from "firebase/firestore";
 import { useAuth } from "../contexts/AuthContext";
 import { toCategorySlug } from "../lib/category";
@@ -50,6 +51,16 @@ interface Product {
   care_instructions?: string;
 }
 
+interface ProductReview {
+  id: string;
+  product_id: string;
+  user_id?: string;
+  user_name: string;
+  rating: number;
+  comment: string;
+  created_at?: unknown;
+}
+
 export function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -62,11 +73,18 @@ export function ProductDetail() {
   const [selectedImage, setSelectedImage] = useState(0);
   const [adding, setAdding] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "description" | "details" | "reviews"
+    "description" | "details" | "size-guide" | "reviews"
   >("description");
   const [addedToCart, setAddedToCart] = useState(false);
-  const [showSizeGuide, setShowSizeGuide] = useState(false);
   const [relatedVariants, setRelatedVariants] = useState<Product[]>([]);
+  const [reviews, setReviews] = useState<ProductReview[]>([]);
+  const [loadingReviews, setLoadingReviews] = useState(false);
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [reviewForm, setReviewForm] = useState({
+    rating: 5,
+    comment: "",
+  });
+  const tabsSectionRef = useRef<HTMLDivElement | null>(null);
 
   const normalizeColorKey = (value: string) => value.trim().toLowerCase();
   const getNameSignature = (value: string) => {
@@ -177,6 +195,7 @@ export function ProductDetail() {
   useEffect(() => {
     if (id) {
       loadProduct();
+      loadReviews(id);
     }
   }, [id]);
 
@@ -240,6 +259,109 @@ export function ProductDetail() {
       console.error("Error loading product:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const toDateValue = (value: unknown) => {
+    if (value && typeof value === "object" && "toDate" in (value as object)) {
+      try {
+        return (value as { toDate: () => Date }).toDate();
+      } catch {
+        return new Date(0);
+      }
+    }
+    if (value instanceof Date) return value;
+    if (typeof value === "string" || typeof value === "number") {
+      const parsed = new Date(value);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+    return new Date(0);
+  };
+
+  const loadReviews = async (productId: string) => {
+    try {
+      setLoadingReviews(true);
+      const reviewsQuery = query(
+        collection(db, "product_reviews"),
+        where("product_id", "==", productId)
+      );
+      const reviewsSnap = await getDocs(reviewsQuery);
+      const parsed = reviewsSnap.docs
+        .map((entry) => ({
+          id: entry.id,
+          ...entry.data(),
+        }))
+        .filter(
+          (entry) =>
+            typeof entry.rating === "number" &&
+            typeof entry.comment === "string" &&
+            typeof entry.user_name === "string"
+        ) as ProductReview[];
+
+      parsed.sort(
+        (a, b) =>
+          toDateValue(b.created_at).getTime() - toDateValue(a.created_at).getTime()
+      );
+      setReviews(parsed);
+    } catch (error) {
+      console.error("Error loading reviews:", error);
+      setReviews([]);
+    } finally {
+      setLoadingReviews(false);
+    }
+  };
+
+  const submitReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!product || !id || !user) {
+      navigate("/login");
+      return;
+    }
+    const trimmedComment = reviewForm.comment.trim();
+    if (!trimmedComment) return;
+
+    try {
+      setSubmittingReview(true);
+      const userName =
+        user.displayName?.trim() || user.email?.split("@")[0] || "Customer";
+      await addDoc(collection(db, "product_reviews"), {
+        product_id: id,
+        user_id: user.uid,
+        user_name: userName,
+        rating: reviewForm.rating,
+        comment: trimmedComment,
+        created_at: serverTimestamp(),
+      });
+
+      const updatedReviews = [
+        ...reviews,
+        {
+          id: `temp-${Date.now()}`,
+          product_id: id,
+          user_id: user.uid,
+          user_name: userName,
+          rating: reviewForm.rating,
+          comment: trimmedComment,
+          created_at: new Date(),
+        },
+      ];
+      const avgRating =
+        updatedReviews.reduce((sum, entry) => sum + entry.rating, 0) /
+        updatedReviews.length;
+
+      await updateDoc(doc(db, "products", id), {
+        rating: Number(avgRating.toFixed(1)),
+        reviews_count: updatedReviews.length,
+      });
+
+      setReviewForm({ rating: 5, comment: "" });
+      await loadReviews(id);
+      await loadProduct();
+    } catch (error) {
+      console.error("Error submitting review:", error);
+      alert("Failed to submit review");
+    } finally {
+      setSubmittingReview(false);
     }
   };
 
@@ -443,7 +565,6 @@ export function ProductDetail() {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
-  const sizeGuideHeader = sizeGuideLines[0] || "Size Guide";
   const sizeGuideRows = sizeGuideLines
     .slice(1)
     .filter((line) => line.includes("|"))
@@ -472,6 +593,25 @@ export function ProductDetail() {
           })
         )
       : sizeGuideBodyRows;
+  const currentUserReview = user
+    ? reviews.find((review) => review.user_id && review.user_id === user.uid)
+    : null;
+  const formatReviewDate = (value: unknown) => {
+    const dateValue = toDateValue(value);
+    if (dateValue.getTime() === 0) return "";
+    return dateValue.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+  const openSizeGuideTab = () => {
+    setActiveTab("size-guide");
+    tabsSectionRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
 
   return (
     <div className="min-h-screen pt-24 pb-16 px-4 bg-gray-50">
@@ -671,7 +811,7 @@ export function ProductDetail() {
                   </span>
                 </label>
                 <button
-                  onClick={() => setShowSizeGuide(true)}
+                  onClick={openSizeGuideTab}
                   className="text-xs text-gray-600 underline hover:text-black transition-colors font-medium"
                 >
                   Size Guide
@@ -797,43 +937,48 @@ export function ProductDetail() {
               </div>
               <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
                 <div className="p-2 bg-white rounded-lg shadow-sm">
-                  <RotateCcw size={20} className="text-green-600" />
+                  <Banknote size={20} className="text-emerald-600" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold">Easy Returns</p>
+                  <p className="text-xs font-bold">Cash on Delivery</p>
                   <p className="text-[10px] text-gray-600">
-                    7-day return policy
+                    Pay when you receive your order
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
                 <div className="p-2 bg-white rounded-lg shadow-sm">
-                  <Shield size={20} className="text-purple-600" />
+                  <Shield size={20} className="text-rose-600" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold">Secure Payment</p>
+                  <p className="text-xs font-bold">Final Sale</p>
                   <p className="text-[10px] text-gray-600">
-                    100% secure checkout
+                    No returns or exchanges
                   </p>
                 </div>
               </div>
             </div>
 
             {/* Tabs */}
-            <div className="pt-4">
+            <div className="pt-4" ref={tabsSectionRef}>
               <div className="flex gap-4 border-b-2 border-gray-200">
-                {["description", "details", "reviews"].map((tab) => (
+                {[
+                  { key: "description", label: "description" },
+                  { key: "details", label: "details" },
+                  { key: "size-guide", label: "size guide" },
+                  { key: "reviews", label: "reviews" },
+                ].map((tab) => (
                   <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab as typeof activeTab)}
+                    key={tab.key}
+                    onClick={() => setActiveTab(tab.key as typeof activeTab)}
                     className={`pb-3 text-xs tracking-wider uppercase relative font-semibold transition-colors ${
-                      activeTab === tab
+                      activeTab === tab.key
                         ? "text-black"
                         : "text-gray-500 hover:text-black"
                     }`}
                   >
-                    {tab}
-                    {activeTab === tab && (
+                    {tab.label}
+                    {activeTab === tab.key && (
                       <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-black rounded-t-full" />
                     )}
                   </button>
@@ -850,14 +995,6 @@ export function ProductDetail() {
                 )}
                 {activeTab === "details" && (
                   <div className="space-y-3">
-                    <div className="py-2.5 px-3 bg-gray-50 rounded-xl">
-                      <span className="text-gray-600 font-medium block mb-1.5 text-xs">
-                        Size Guide:
-                      </span>
-                      <p className="text-gray-800 font-medium text-xs">
-                        {sizeGuideText}
-                      </p>
-                    </div>
                     {product.material && (
                       <div className="flex justify-between items-center py-2.5 px-3 bg-gray-50 rounded-xl">
                         <span className="text-gray-600 font-medium text-xs">
@@ -880,15 +1017,192 @@ export function ProductDetail() {
                     )}
                   </div>
                 )}
+                {activeTab === "size-guide" && (
+                  <div className="py-2.5 px-3 bg-gray-50 rounded-xl">
+                    <span className="text-gray-600 font-medium block mb-1.5 text-xs">
+                      Size Guide:
+                    </span>
+                    {hasStructuredSizeGuide ? (
+                      <div className="overflow-x-auto rounded-xl border border-slate-700 bg-slate-950">
+                        <table className="w-full min-w-[560px] text-xs">
+                          <thead className="bg-slate-800">
+                            <tr>
+                              {displaySizeGuideColumns.map((column, index) => (
+                                <th
+                                  key={`${column}-${index}`}
+                                  className="px-3 py-2 text-left font-semibold whitespace-nowrap text-cyan-100"
+                                >
+                                  {column}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {displaySizeGuideBodyRows.map((row, rowIndex) => (
+                              <tr
+                                key={`inline-row-${rowIndex}`}
+                                className={`border-t border-slate-700 ${
+                                  rowIndex % 2 === 0 ? "bg-slate-950" : "bg-slate-900"
+                                }`}
+                              >
+                                {row.map((cell, cellIndex) => (
+                                  <td
+                                    key={`inline-cell-${rowIndex}-${cellIndex}`}
+                                    className={`px-3 py-2 whitespace-nowrap ${
+                                      cellIndex === 0
+                                        ? "font-semibold text-slate-100"
+                                        : "text-slate-200"
+                                    }`}
+                                  >
+                                    {cell}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="text-gray-800 font-medium text-xs whitespace-pre-line">
+                        {sizeGuideText}
+                      </p>
+                    )}
+                  </div>
+                )}
                 {activeTab === "reviews" && (
-                  <div className="text-center py-8 bg-gray-50 rounded-xl">
-                    <Star size={36} className="mx-auto text-gray-300 mb-3" />
-                    <p className="text-gray-600 font-medium text-sm">
-                      No reviews yet
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Be the first to review this product!
-                    </p>
+                  <div className="space-y-4">
+                    {user && !currentUserReview ? (
+                      <form
+                        onSubmit={submitReview}
+                        className="bg-gray-50 rounded-xl p-4 border border-gray-200"
+                      >
+                        <p className="text-sm font-semibold mb-3">Write a review</p>
+                        <div className="flex items-center gap-2 mb-3">
+                          <label className="text-xs text-gray-600">Rating</label>
+                          <div className="flex items-center gap-1">
+                            {[1, 2, 3, 4, 5].map((ratingValue) => (
+                              <button
+                                key={ratingValue}
+                                type="button"
+                                onClick={() =>
+                                  setReviewForm((prev) => ({
+                                    ...prev,
+                                    rating: ratingValue,
+                                  }))
+                                }
+                                className="p-0.5"
+                                aria-label={`Rate ${ratingValue} star${ratingValue > 1 ? "s" : ""}`}
+                              >
+                                <Star
+                                  size={18}
+                                  className={
+                                    ratingValue <= reviewForm.rating
+                                      ? "fill-yellow-400 text-yellow-400"
+                                      : "fill-gray-200 text-gray-300"
+                                  }
+                                />
+                              </button>
+                            ))}
+                          </div>
+                          <span className="text-xs text-gray-500">
+                            {reviewForm.rating}/5
+                          </span>
+                        </div>
+                        <textarea
+                          value={reviewForm.comment}
+                          onChange={(e) =>
+                            setReviewForm((prev) => ({
+                              ...prev,
+                              comment: e.target.value,
+                            }))
+                          }
+                          placeholder="Share your experience with this product..."
+                          className="w-full min-h-[88px] p-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-black"
+                          required
+                        />
+                        <button
+                          type="submit"
+                          disabled={submittingReview || !reviewForm.comment.trim()}
+                          className="mt-3 px-4 py-2 bg-black text-white rounded-lg text-xs font-semibold tracking-wider disabled:opacity-50"
+                        >
+                          {submittingReview ? "SUBMITTING..." : "SUBMIT REVIEW"}
+                        </button>
+                      </form>
+                    ) : user && currentUserReview ? (
+                      <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200 text-sm text-emerald-800">
+                        You already submitted a review for this product.
+                      </div>
+                    ) : (
+                      <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 text-sm text-gray-600">
+                        Please{" "}
+                        <Link to="/login" className="underline text-black font-medium">
+                          sign in
+                        </Link>{" "}
+                        to leave a review.
+                      </div>
+                    )}
+
+                    {loadingReviews ? (
+                      <div className="text-center py-6 bg-gray-50 rounded-xl text-sm text-gray-500">
+                        Loading reviews...
+                      </div>
+                    ) : reviews.length === 0 ? (
+                      <div className="text-center py-8 bg-gray-50 rounded-xl">
+                        <Star size={36} className="mx-auto text-gray-300 mb-3" />
+                        <p className="text-gray-600 font-medium text-sm">
+                          No reviews yet
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Be the first to review this product!
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {reviews.map((review) => (
+                          <div
+                            key={review.id}
+                            className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                <div className="h-9 w-9 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs font-semibold">
+                                  {review.user_name
+                                    .split(" ")
+                                    .filter(Boolean)
+                                    .slice(0, 2)
+                                    .map((part) => part[0]?.toUpperCase() || "")
+                                    .join("")}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-semibold text-gray-900">
+                                    {review.user_name}
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    {formatReviewDate(review.created_at) || "Verified buyer"}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="inline-flex items-center gap-0.5 px-2 py-1 rounded-full bg-amber-50 border border-amber-200">
+                                {[...Array(5)].map((_, i) => (
+                                  <Star
+                                    key={`review-star-${review.id}-${i}`}
+                                    size={12}
+                                    className={
+                                      i < review.rating
+                                        ? "fill-amber-400 text-amber-400"
+                                        : "fill-gray-200 text-gray-200"
+                                    }
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                            <p className="mt-3 text-sm text-gray-700 leading-relaxed">
+                              {review.comment}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -897,79 +1211,6 @@ export function ProductDetail() {
         </div>
       </div>
 
-      {showSizeGuide && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white/95 backdrop-blur-sm w-full max-w-4xl rounded-2xl shadow-2xl border border-gray-200 p-6">
-            <div className="flex items-start justify-between mb-5 border-b border-gray-200 pb-4">
-              <div>
-                <h3 className="text-xl font-semibold text-gray-900">
-                  {sizeGuideHeader}
-                </h3>
-                <p className="text-xs tracking-[0.16em] uppercase text-gray-500 mt-1">
-                  Official Size Conversion
-                </p>
-              </div>
-              <button
-                onClick={() => setShowSizeGuide(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg"
-              >
-                <span className="text-base leading-none">x</span>
-              </button>
-            </div>
-            {hasStructuredSizeGuide ? (
-              <div className="overflow-auto rounded-xl border border-gray-200 max-h-[55vh]">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-100 sticky top-0 z-10">
-                    <tr>
-                      {displaySizeGuideColumns.map((column, index) => (
-                        <th
-                          key={`${column}-${index}`}
-                          className="px-4 py-3 text-left font-semibold whitespace-nowrap text-gray-800"
-                        >
-                          {column}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {displaySizeGuideBodyRows.map((row, rowIndex) => (
-                      <tr
-                        key={`row-${rowIndex}`}
-                        className={`border-t border-gray-200 ${
-                          rowIndex % 2 === 0 ? "bg-white" : "bg-gray-50/60"
-                        }`}
-                      >
-                        {row.map((cell, cellIndex) => (
-                          <td
-                            key={`cell-${rowIndex}-${cellIndex}`}
-                            className={`px-4 py-2.5 whitespace-nowrap ${
-                              cellIndex === 0
-                                ? "font-semibold text-gray-900"
-                                : "text-gray-700"
-                            }`}
-                          >
-                            {cell}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
-                {sizeGuideText}
-              </p>
-            )}
-            <button
-              onClick={() => setShowSizeGuide(false)}
-              className="mt-6 w-full py-2.5 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors text-sm font-semibold"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

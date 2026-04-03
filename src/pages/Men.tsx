@@ -201,8 +201,14 @@ export function Men() {
         {/* Filter Bar */}
         <div className="flex items-center justify-between mb-8 pb-4 border-b-2 border-gray-200">
           <button
+            type="button"
+            aria-pressed={showFilters}
             onClick={() => setShowFilters(!showFilters)}
-            className="flex items-center gap-2 px-5 py-2.5 bg-white border-2 border-gray-300 rounded-xl hover:border-black transition-all hover:shadow-md"
+            className={`relative z-10 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border-2 transition-all duration-200 ${
+              showFilters
+                ? "bg-black text-white border-black shadow-md"
+                : "bg-white text-gray-900 border-gray-300 hover:border-black hover:shadow-md"
+            }`}
           >
             <Filter size={18} />
             <span className="text-sm font-semibold tracking-wide">FILTERS</span>

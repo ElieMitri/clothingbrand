@@ -126,7 +126,7 @@ export function Login() {
             </Link>
           </div>
           <h1 className="mt-3 font-display text-3xl md:text-4xl tracking-[0.08em] text-slate-50">
-            SIGN IN TO ISHTARI 961
+            SIGN IN TO LBathletes
           </h1>
           <p className="mt-2 text-sm text-slate-300">
             Professional checkout, real-time orders, and premium member features.

@@ -14,40 +14,37 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const sendTelegramText = async (text) => {
-  const token = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
-  const chatId = String(process.env.TELEGRAM_CHAT_ID || "").trim();
+const truncate = (value, max) =>
+  String(value || "").length > max
+    ? `${String(value || "").slice(0, max - 3)}...`
+    : String(value || "");
 
-  if (!token || !chatId) {
-    throw new Error(
-      `Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID (tokenPresent=${Boolean(
-        token
-      )}, tokenLen=${token.length}, chatPresent=${Boolean(
-        chatId
-      )}, chatLen=${chatId.length})`
-    );
+const sendDiscordPayload = async (payload, webhookUrlOverride) => {
+  const webhookUrl = String(
+    webhookUrlOverride || process.env.DISCORD_ORDER_WEBHOOK_URL || ""
+  ).trim();
+  if (!webhookUrl) {
+    throw new Error("Missing DISCORD_ORDER_WEBHOOK_URL");
   }
 
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const response = await fetch(webhookUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      disable_web_page_preview: true,
+      ...payload,
+      username: "LBathletes",
     }),
   });
 
-  const data = await response.json().catch(() => null);
-  if (!response.ok || !data?.ok) {
-    const reason = data?.description || `HTTP ${response.status}`;
-    throw new Error(reason);
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(body || `HTTP ${response.status}`);
   }
 };
 
-const buildOrderTelegramMessage = (order) => {
+const buildOrderDiscordPayload = (order) => {
   const {
     orderId,
     name,
@@ -87,31 +84,48 @@ const buildOrderTelegramMessage = (order) => {
   const orderedAtText = Number.isNaN(orderedAt.getTime())
     ? String(orderedAtRaw)
     : orderedAt.toLocaleString("en-GB", { hour12: false });
+  const shortOrderId = String(orderId || "").toUpperCase().slice(0, 8) || "UNKNOWN";
 
-  return [
-    "New Order Received",
-    `Order ID: ${orderId}`,
-    `Ordered At: ${orderedAtText}`,
-    `Customer: ${name}`,
-    `Email: ${email}`,
-    `Phone: ${phone || "Not provided"}`,
-    `Subtotal: $${Number(subtotal || 0).toFixed(2)}`,
-    `Shipping: $${Number(shipping || 0).toFixed(2)}`,
-    `Tax: $${Number(tax || 0).toFixed(2)}`,
-    `Total: $${Number(total).toFixed(2)}`,
-    "",
-    "Delivery Address:",
-    `${address}`,
-    "",
-    `Directions: ${directions || "-"}`,
-    `City: ${city || "-"}`,
-    `State: ${state || "-"}`,
-    `ZIP: ${zipCode || "-"}`,
-    `Country: ${country || "-"}`,
-    "",
-    "Order Items:",
-    orderedItemsText,
-  ].join("\n");
+  return {
+    content:
+      "\n━━━━━━━━━━━━━━━━━━━━━━━━\n🧾 **NEW ORDER ALERT**\n━━━━━━━━━━━━━━━━━━━━━━━━\n",
+    embeds: [
+      {
+        color: 5763719,
+        title: `Order #${shortOrderId}`,
+        fields: [
+          { name: "Ordered At", value: orderedAtText, inline: true },
+          { name: "Customer", value: truncate(name, 256), inline: true },
+          { name: "Email", value: truncate(email, 256), inline: true },
+          { name: "Phone", value: truncate(phone || "Not provided", 256), inline: true },
+          { name: "Subtotal", value: `$${Number(subtotal || 0).toFixed(2)}`, inline: true },
+          { name: "Shipping", value: `$${Number(shipping || 0).toFixed(2)}`, inline: true },
+          { name: "Tax", value: `$${Number(tax || 0).toFixed(2)}`, inline: true },
+          { name: "Total", value: `$${Number(total).toFixed(2)}`, inline: true },
+        ],
+        description: truncate(
+          [
+            "**Delivery Address**",
+            address || "-",
+            "",
+            `**Directions:** ${directions || "-"}`,
+            `**City:** ${city || "-"}`,
+            `**State:** ${state || "-"}`,
+            `**ZIP:** ${zipCode || "-"}`,
+            `**Country:** ${country || "-"}`,
+          ].join("\n"),
+          4096
+        ),
+        footer: { text: `LBathletes Orders • ${shortOrderId}` },
+        timestamp: orderedAt.toISOString(),
+      },
+      {
+        color: 5793266,
+        title: "Order Items",
+        description: `\`\`\`\n${truncate(orderedItemsText, 3900)}\n\`\`\``,
+      },
+    ],
+  };
 };
 
 const sendNewsletter = async (req, res) => {
@@ -135,7 +149,7 @@ const sendNewsletter = async (req, res) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "Trivo <onboarding@resend.dev>",
+        from: "LBathletes <onboarding@resend.dev>",
         to: recipients,
         subject,
         html: `<p>${message.replace(/\n/g, "<br />")}</p>`,
@@ -156,7 +170,7 @@ const sendNewsletter = async (req, res) => {
   }
 };
 
-const sendOrderTelegram = async (req, res) => {
+const sendOrderDiscord = async (req, res) => {
   try {
     const {
       orderId,
@@ -180,7 +194,7 @@ const sendOrderTelegram = async (req, res) => {
       return res.status(400).json({ error: "Invalid payload" });
     }
 
-    const text = buildOrderTelegramMessage({
+    const payload = buildOrderDiscordPayload({
       orderId,
       name,
       email,
@@ -196,33 +210,254 @@ const sendOrderTelegram = async (req, res) => {
       tax,
       total,
       items,
+      orderedAt: req.body?.orderedAt,
     });
-    await sendTelegramText(text);
+    await sendDiscordPayload(payload);
     return res.status(200).json({ success: true });
   } catch (err) {
-    console.error("Telegram order notify error:", err);
+    console.error("Discord order notify error:", err);
     return res.status(500).json({
       error: err.message || "Unknown error",
     });
   }
 };
 
-const sendTestTelegram = async (req, res) => {
+const sendTestDiscord = async (req, res) => {
   try {
     const timestamp = new Date().toISOString();
-    await sendTelegramText(
-      [
-        "Telegram Notification Test",
-        "API endpoint is reachable and bot is configured.",
-        `Time: ${timestamp}`,
-      ].join("\n")
-    );
+    await sendDiscordPayload({
+      content: "━━━━━━━━━━━━━━━━━━━━━━━━\n✅ **DISCORD TEST**\n━━━━━━━━━━━━━━━━━━━━━━━━",
+      embeds: [
+        {
+          color: 5793266,
+          title: "Discord Notification Test",
+          description: `API endpoint is reachable.\nTime: ${timestamp}`,
+          timestamp,
+        },
+      ],
+    });
 
     return res.status(200).json({
       success: true,
     });
   } catch (err) {
-    console.error("Telegram test notify error:", err);
+    console.error("Discord test notify error:", err);
+    return res.status(500).json({
+      error: err.message || "Unknown error",
+    });
+  }
+};
+
+const getWebhookByAction = (action) => {
+  if (action === "cancelled") {
+    return String(process.env.DISCORD_CANCEL_WEBHOOK_URL || "").trim();
+  }
+  return "";
+};
+
+const buildStatusPayload = ({
+  action,
+  orderId,
+  name,
+  userEmail,
+  phone,
+  city,
+  state,
+  zipCode,
+  country,
+  total,
+  subtotal,
+  shipping,
+  tax,
+  createdAt,
+  itemCount,
+  items,
+  reason,
+}) => {
+  const shortOrderId = String(orderId || "").toUpperCase().slice(0, 8) || "UNKNOWN";
+  const now = new Date();
+  const created = new Date(String(createdAt || ""));
+  const createdText = Number.isNaN(created.getTime())
+    ? "-"
+    : created.toLocaleString("en-GB", { hour12: false });
+  const actionLabel = "ORDER CANCELLATION";
+  const accentColor = 15158332;
+  const normalizedItems = Array.isArray(items) ? items : [];
+  const itemsText =
+    normalizedItems.length > 0
+      ? normalizedItems
+          .map((item, index) => {
+            const itemName = String(item?.name || item?.product_name || "Item");
+            const sizePart = item?.size ? ` | Size ${item.size}` : "";
+            const qty = Number(item?.quantity || 0);
+            const unitPrice = Number(item?.unitPrice ?? item?.price ?? 0);
+            const lineTotal = unitPrice * qty;
+            return `${index + 1}) ${itemName}${sizePart} | Qty ${qty} | $${lineTotal.toFixed(
+              2
+            )}`;
+          })
+          .join("\n")
+      : "- No items";
+
+  return {
+    content: `\n━━━━━━━━━━━━━━━━━━━━━━━━\n⚠️ **${actionLabel}**\n━━━━━━━━━━━━━━━━━━━━━━━━\n`,
+    embeds: [
+      {
+        color: accentColor,
+        title: `Order #${shortOrderId}`,
+        fields: [
+          { name: "Action", value: actionLabel, inline: true },
+          { name: "Customer", value: truncate(name || "Not provided", 256), inline: true },
+          { name: "User Email", value: truncate(userEmail || "Unknown", 256), inline: true },
+          { name: "Phone", value: truncate(phone || "Not provided", 256), inline: true },
+          { name: "Subtotal", value: `$${Number(subtotal || 0).toFixed(2)}`, inline: true },
+          { name: "Shipping", value: `$${Number(shipping || 0).toFixed(2)}`, inline: true },
+          { name: "Tax", value: `$${Number(tax || 0).toFixed(2)}`, inline: true },
+          { name: "Total", value: `$${Number(total || 0).toFixed(2)}`, inline: true },
+          { name: "Items", value: String(Number(itemCount || 0)), inline: true },
+          { name: "Order Created", value: createdText, inline: true },
+          { name: "Action Time", value: now.toLocaleString("en-GB", { hour12: false }), inline: true },
+        ],
+        description: truncate(
+          [
+            "**Location Details**",
+            `City: ${city || "-"}`,
+            `State: ${state || "-"}`,
+            `ZIP: ${zipCode || "-"}`,
+            `Country: ${country || "-"}`,
+            reason ? "" : "",
+            reason ? `**Note:** ${reason}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          4000
+        ),
+        footer: { text: `LBathletes • ${shortOrderId}` },
+        timestamp: now.toISOString(),
+      },
+      {
+        color: 5793266,
+        title: "Order Items",
+        description: `\`\`\`\n${truncate(itemsText, 3900)}\n\`\`\``,
+      },
+    ],
+  };
+};
+
+const sendOrderStatusDiscord = async (req, res) => {
+  try {
+    const {
+      action,
+      orderId,
+      name,
+      userEmail,
+      phone,
+      city,
+      state,
+      zipCode,
+      country,
+      total,
+      subtotal,
+      shipping,
+      tax,
+      createdAt,
+      itemCount,
+      items,
+      reason,
+    } = req.body || {};
+
+    if (!action || !orderId || typeof total !== "number") {
+      return res.status(400).json({ error: "Invalid payload" });
+    }
+
+    if (action !== "cancelled") {
+      return res.status(400).json({ error: "Unsupported action" });
+    }
+
+    const webhookUrl = getWebhookByAction(action);
+    if (!webhookUrl) {
+      return res.status(500).json({ error: "Missing action-specific Discord webhook URL" });
+    }
+
+    const payload = buildStatusPayload({
+      action,
+      orderId,
+      name,
+      userEmail,
+      phone,
+      city,
+      state,
+      zipCode,
+      country,
+      total,
+      subtotal,
+      shipping,
+      tax,
+      createdAt,
+      itemCount,
+      items,
+      reason,
+    });
+    await sendDiscordPayload(payload, webhookUrl);
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("Discord order-status notify error:", err);
+    return res.status(500).json({
+      error: err.message || "Unknown error",
+    });
+  }
+};
+
+const sendUserCreatedDiscord = async (req, res) => {
+  try {
+    const { firstName, lastName, email, phone, address, source } = req.body || {};
+    if (!email) {
+      return res.status(400).json({ error: "Invalid payload" });
+    }
+
+    const webhookUrl = String(process.env.DISCORD_USER_CREATED_WEBHOOK_URL || "").trim();
+    if (!webhookUrl) {
+      return res.status(500).json({ error: "Missing DISCORD_USER_CREATED_WEBHOOK_URL" });
+    }
+
+    const now = new Date();
+    const payload = {
+      content:
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━\n👤 **NEW USER CREATED**\n━━━━━━━━━━━━━━━━━━━━━━━━\n",
+      embeds: [
+        {
+          color: 3447003,
+          title: "New Signup",
+          fields: [
+            {
+              name: "Name",
+              value: truncate(
+                `${String(firstName || "").trim()} ${String(lastName || "").trim()}`.trim() ||
+                  "Not provided",
+                256
+              ),
+              inline: true,
+            },
+            { name: "Email", value: truncate(String(email || ""), 256), inline: true },
+            { name: "Phone", value: truncate(String(phone || "Not provided"), 256), inline: true },
+            {
+              name: "Source",
+              value: truncate(String(source || "register"), 256),
+              inline: true,
+            },
+          ],
+          description: `**Address:** ${truncate(String(address || "Not provided"), 1000)}`,
+          footer: { text: "LBathletes • New User" },
+          timestamp: now.toISOString(),
+        },
+      ],
+    };
+    await sendDiscordPayload(payload, webhookUrl);
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("Discord user-created notify error:", err);
     return res.status(500).json({
       error: err.message || "Unknown error",
     });
@@ -231,18 +466,19 @@ const sendTestTelegram = async (req, res) => {
 
 app.post("/send-newsletter", sendNewsletter);
 app.post("/api/send-newsletter", sendNewsletter);
-app.post("/send-order-telegram", sendOrderTelegram);
-app.post("/api/send-order-telegram", sendOrderTelegram);
-app.post("/test-telegram", sendTestTelegram);
-app.post("/api/test-telegram", sendTestTelegram);
+app.post("/send-order-discord", sendOrderDiscord);
+app.post("/api/send-order-discord", sendOrderDiscord);
+app.post("/test-discord", sendTestDiscord);
+app.post("/api/test-discord", sendTestDiscord);
+app.post("/send-order-status-discord", sendOrderStatusDiscord);
+app.post("/api/send-order-status-discord", sendOrderStatusDiscord);
+app.post("/send-user-created-discord", sendUserCreatedDiscord);
+app.post("/api/send-user-created-discord", sendUserCreatedDiscord);
 
 app.listen(3001, () => {
-  const token = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
-  const chatId = String(process.env.TELEGRAM_CHAT_ID || "").trim();
+  const webhookUrl = String(process.env.DISCORD_ORDER_WEBHOOK_URL || "").trim();
   console.log("Email server running on http://localhost:3001");
   console.log(
-    `Telegram env loaded: tokenPresent=${Boolean(token)} tokenLen=${
-      token.length
-    } chatPresent=${Boolean(chatId)} chatLen=${chatId.length}`
+    `Discord env loaded: webhookPresent=${Boolean(webhookUrl)} webhookLen=${webhookUrl.length}`
   );
 });

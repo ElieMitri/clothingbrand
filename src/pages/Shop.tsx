@@ -84,13 +84,13 @@ export function Shop() {
   }, [products, selectedCategory, selectedAudience, sortBy]);
 
   return (
-    <div className="min-h-screen pt-24 pb-12 px-4 bg-white">
+    <div className="min-h-screen pt-20 pb-10 px-4 bg-white">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-5xl font-light text-center mb-12 tracking-wider">
+        <h1 className="text-4xl md:text-5xl font-light text-center mb-8 tracking-[0.14em]">
           SHOP
         </h1>
 
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-5">
           <div className="flex items-center gap-2 flex-wrap">
             <label className="text-sm text-gray-500">Audience</label>
             <select
@@ -98,7 +98,7 @@ export function Shop() {
               onChange={(e) =>
                 setSelectedAudience(e.target.value as ProductAudience | "all")
               }
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[150px]"
             >
               <option value="all">All</option>
               <option value="men">Men</option>
@@ -114,7 +114,7 @@ export function Shop() {
               onChange={(e) =>
                 setSortBy(e.target.value as "featured" | "price-low" | "price-high")
               }
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[190px]"
             >
               <option value="featured">Featured</option>
               <option value="price-low">Price: Low to High</option>
@@ -124,12 +124,12 @@ export function Shop() {
         </div>
 
         {/* Category Filter */}
-        <div className="flex justify-center gap-6 mb-12 flex-wrap">
+        <div className="flex justify-center gap-4 md:gap-6 mb-8 flex-wrap border-b border-gray-200 pb-2">
           {categories.map((category) => (
             <button
               key={category}
               onClick={() => setSelectedCategory(category)}
-              className={`text-sm tracking-widest uppercase transition-colors pb-2 ${
+              className={`text-sm tracking-[0.14em] uppercase transition-colors pb-2 ${
                 selectedCategory === category
                   ? "text-black border-b-2 border-black font-medium"
                   : "text-gray-400 hover:text-gray-600"
@@ -142,11 +142,11 @@ export function Shop() {
 
         {/* Products Grid */}
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 md:gap-6">
             {[...Array(8)].map((_, i) => (
               <div key={i} className="animate-pulse">
-                <div className="aspect-[3/4] bg-slate-800 rounded-lg mb-4" />
-                <div className="space-y-2">
+                <div className="aspect-[3/4] bg-slate-800 rounded-lg mb-3" />
+                <div className="space-y-1.5">
                   <div className="h-3 bg-slate-800 rounded w-1/4" />
                   <div className="h-4 bg-slate-800 rounded w-3/4" />
                   <div className="h-4 bg-slate-800 rounded w-1/3" />
@@ -155,8 +155,8 @@ export function Shop() {
             ))}
           </div>
         ) : filteredProducts.length === 0 ? (
-          <div className="text-center py-20">
-            <p className="text-gray-500 text-lg mb-4">
+          <div className="text-center py-14">
+            <p className="text-gray-500 text-lg mb-3">
               No products found in this category
             </p>
             <button
@@ -167,21 +167,21 @@ export function Shop() {
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 md:gap-6">
             {filteredProducts.map((product) => (
               <Link
                 key={product.id}
                 to={`/product/${product.id}`}
                 className="group"
               >
-                <div className="aspect-[3/4] bg-gray-100 mb-4 overflow-hidden rounded-lg p-2">
+                <div className="aspect-[3/4] bg-gray-100 mb-3 overflow-hidden rounded-lg p-2">
                   <img
                     src={product.image_url}
                     alt={product.name}
                     className="w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-500"
                   />
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <p className="text-xs tracking-wider text-gray-500 uppercase">
                     {product.category} •{" "}
                     {

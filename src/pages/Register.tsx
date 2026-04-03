@@ -135,6 +135,25 @@ export function Register() {
 
       await upsertNewsletter();
 
+      try {
+        await fetch("/api/send-user-created-discord", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            email: normalizedEmail,
+            phone: phone.trim(),
+            address: address.trim(),
+            source: "register",
+          }),
+        });
+      } catch (notifyError) {
+        console.error("User created webhook failed:", notifyError);
+      }
+
       setSuccess("Account created successfully. Redirecting to login...");
       setTimeout(() => {
         navigate("/login", {

@@ -16,12 +16,10 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
   onSnapshot,
   query,
   where,
 } from "firebase/firestore";
-import { toCategorySlug } from "../lib/category";
 
 function PeakLogo({ className = "" }: { className?: string }) {
   return (
@@ -29,23 +27,22 @@ function PeakLogo({ className = "" }: { className?: string }) {
       viewBox="0 0 128 128"
       className={className}
       role="img"
-      aria-label="Ishtari 961"
+      aria-label="LBathletes"
     >
       <defs>
-        <linearGradient id="peak-accent" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id="cedar-accent" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#67e8f9" />
           <stop offset="100%" stopColor="#22d3ee" />
         </linearGradient>
       </defs>
       <path
-        d="M18 92L44 44L64 76L84 30L110 92"
+        d="M64 16L88 40H74L100 66H82L108 92H20L46 66H28L54 40H40Z"
         fill="none"
-        stroke="url(#peak-accent)"
-        strokeWidth="10"
-        strokeLinecap="round"
+        stroke="url(#cedar-accent)"
+        strokeWidth="8"
         strokeLinejoin="round"
       />
-      <circle cx="84" cy="30" r="6" fill="#67e8f9" />
+      <rect x="58" y="92" width="12" height="20" rx="3" fill="#67e8f9" />
     </svg>
   );
 }
@@ -168,19 +165,6 @@ export function Navbar() {
         const homepageSettingsSnap = await getDoc(
           doc(db, "site_settings", "homepage")
         );
-        const fromHomeSettings = homepageSettingsSnap.exists()
-          ? Array.isArray(homepageSettingsSnap.data().home_categories)
-            ? homepageSettingsSnap
-                .data()
-                .home_categories.map(
-                  (entry: { name?: string; slug?: string } | null) => ({
-                    name: entry?.name?.trim() || "",
-                    slug: entry?.slug?.trim() || "",
-                  })
-                )
-                .filter((entry: { name: string; slug: string }) => entry.name)
-            : []
-          : [];
         const customShopMenu = homepageSettingsSnap.exists()
           ? Array.isArray(homepageSettingsSnap.data().shop_menu_items)
             ? homepageSettingsSnap
@@ -208,34 +192,8 @@ export function Navbar() {
           return;
         }
 
-        const productsSnap = await getDocs(collection(db, "products"));
-        const fromProducts = Array.from(
-          new Set(
-            productsSnap.docs
-              .map((item) => String(item.data().category || "").trim())
-              .filter(Boolean)
-          )
-        ).map((name) => ({ name, slug: toCategorySlug(name) }));
-
-        const dynamicMap = new Map<string, string>();
-        [...fromHomeSettings, ...fromProducts].forEach((entry) => {
-          const name = entry.name;
-          const slug = toCategorySlug(entry.slug || entry.name);
-          if (!name || !slug) return;
-          dynamicMap.set(name, slug);
-        });
-
-        const dynamicCategories = Array.from(dynamicMap.entries())
-          .map(([name, slug]) => ({
-            name,
-            path: `/category/${slug}`,
-            special: slug === "sale",
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-
         setShopCategories([
           { name: "New Arrivals", path: "/new-arrivals" },
-          ...dynamicCategories,
           { name: "Collections", path: "/collections" },
         ]);
       } catch (error) {
@@ -265,24 +223,25 @@ export function Navbar() {
           >
             <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(148,163,184,0.08),transparent_32%,rgba(56,189,248,0.08))]" />
             <div className="max-w-7xl mx-auto flex items-center justify-between px-3 sm:px-4 lg:px-5 xl:px-6">
+            <div className="relative z-10 flex items-center gap-2">
+              {/* Mobile Menu Button */}
+              <button
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                className="lg:hidden p-2.5 hover:bg-slate-800/70 rounded-xl transition-colors"
+                aria-label="Toggle menu"
+              >
+                {isMobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+              </button>
 
-            {/* Mobile Menu Button */}
-            <button
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="relative z-10 lg:hidden p-2.5 hover:bg-slate-800/70 rounded-xl transition-colors"
-              aria-label="Toggle menu"
-            >
-              {isMobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
-            </button>
-
-            {/* Logo */}
-            <Link
-              to="/"
-              className="relative z-10 inline-flex items-center justify-center h-11 w-11 rounded-xl border border-cyan-300/35 bg-slate-900/55 hover:bg-slate-800/70 transition-all duration-300"
-              aria-label="Ishtari 961 Home"
-            >
-              <PeakLogo className="h-7 w-7" />
-            </Link>
+              {/* Logo */}
+              <Link
+                to="/"
+                className="inline-flex items-center justify-center h-11 w-11 rounded-xl border border-cyan-300/35 bg-slate-900/55 hover:bg-slate-800/70 transition-all duration-300"
+                aria-label="LBathletes Home"
+              >
+                <PeakLogo className="h-7 w-7" />
+              </Link>
+            </div>
 
             {/* Desktop Navigation */}
             <div className="relative z-10 hidden lg:flex items-center gap-5 xl:gap-8">
@@ -500,21 +459,10 @@ export function Navbar() {
 
           {/* Menu Panel */}
           <div
-            className={`absolute top-3 right-3 bottom-3 w-[88%] max-w-sm bg-slate-950/92 backdrop-blur-2xl shadow-[0_22px_60px_rgba(2,6,23,0.82)] overflow-y-auto border border-cyan-400/25 rounded-3xl transition-transform duration-300 ease-out ${
+            className={`absolute top-[84px] right-3 bottom-3 w-[88%] max-w-sm bg-slate-950/92 backdrop-blur-2xl shadow-[0_22px_60px_rgba(2,6,23,0.82)] overflow-y-auto border border-cyan-400/25 rounded-3xl transition-transform duration-300 ease-out ${
               isMobileMenuOpen ? "translate-x-0" : "translate-x-8"
             }`}
           >
-            {/* Mobile Header */}
-            <div className="flex items-center justify-between px-5 py-5 border-b border-slate-700/70">
-              <Link
-                to="/"
-                className="inline-flex items-center justify-center h-10 w-10 rounded-xl border border-cyan-300/35 bg-slate-900/55"
-                aria-label="Ishtari 961 Home"
-              >
-                <PeakLogo className="h-6 w-6" />
-              </Link>
-            </div>
-
             <div className="px-4 py-5 space-y-2">
               {/* User Section (Mobile) */}
               {user && (

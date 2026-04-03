@@ -148,8 +148,14 @@ export function Accessories() {
         <div className="flex items-center justify-between mb-8 pb-4 border-b border-gray-200">
           <div className="flex items-center gap-4">
             <button
+              type="button"
+              aria-pressed={showFilters}
               onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:border-black transition-colors"
+              className={`relative z-10 inline-flex items-center gap-2 px-4 py-2 rounded-lg border transition-all duration-200 ${
+                showFilters
+                  ? "bg-black text-white border-black shadow-md"
+                  : "bg-white text-gray-900 border-gray-300 hover:border-black"
+              }`}
             >
               <Filter size={18} />
               <span className="text-sm tracking-wide">FILTERS</span>
