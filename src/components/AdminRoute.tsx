@@ -27,7 +27,9 @@ export function AdminRoute({ children }: AdminRouteProps) {
 
   // Check if user is admin
   const adminEmails = ["lbathletes@hotmail.com", "sammourdany@gmail.com"];
-  const isAdmin = user.email && adminEmails.includes(user.email);
+  const isAdmin =
+    Boolean(user.email) &&
+    adminEmails.includes(String(user.email).toLowerCase());
 
   if (!isAdmin) {
     return (

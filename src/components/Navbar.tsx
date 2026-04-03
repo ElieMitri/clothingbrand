@@ -59,8 +59,10 @@ export function Navbar() {
   const [shopCategories, setShopCategories] = useState<
     { name: string; path: string; special?: boolean }[]
   >([{ name: "New Arrivals", path: "/new-arrivals" }]);
-  const ADMIN_EMAIL = "eliegmitri7@gmail.com";
-  const isAdminUser = user?.email?.toLowerCase() === ADMIN_EMAIL;
+  const adminEmails = ["lbathletes@hotmail.com", "sammourdany@gmail.com"];
+  const isAdminUser =
+    Boolean(user?.email) &&
+    adminEmails.includes(String(user?.email).toLowerCase());
 
   // Handle scroll
   useEffect(() => {

@@ -473,13 +473,17 @@ export function AdminDashboard() {
 
   useEffect(() => {
     if (user === undefined) return;
+    const adminEmails = ["lbathletes@hotmail.com", "sammourdany@gmail.com"];
 
     if (!user) {
       navigate("/login");
       return;
     }
 
-    if (user.email !== "eliegmitri7@gmail.com") {
+    const isAdmin =
+      Boolean(user.email) &&
+      adminEmails.includes(String(user.email).toLowerCase());
+    if (!isAdmin) {
       navigate("/");
       return;
     }
