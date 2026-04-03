@@ -43,6 +43,17 @@ export function Register() {
   const [success, setSuccess] = useState("");
 
   const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email]);
+  const normalizedPhoneDigits = useMemo(
+    () => phone.replace(/\D/g, ""),
+    [phone]
+  );
+  const formatLebaneseLocalPhone = (digits: string) => {
+    const clean = digits.replace(/\D/g, "").slice(0, 8);
+    const a = clean.slice(0, 2);
+    const b = clean.slice(2, 5);
+    const c = clean.slice(5, 8);
+    return [a, b, c].filter(Boolean).join(" ");
+  };
 
   const passwordChecks = {
     minLength: password.length >= 8,
@@ -63,6 +74,9 @@ export function Register() {
     }
     if (!phone.trim()) {
       return "Please fill in your mobile number.";
+    }
+    if (normalizedPhoneDigits.length !== 8) {
+      return "Please enter a valid Lebanese mobile number (8 digits).";
     }
 
     if (!passwordChecks.minLength || !passwordChecks.upper || !passwordChecks.lower || !passwordChecks.number) {
@@ -96,6 +110,18 @@ export function Register() {
         sent_emails: 0,
         source: "register",
       });
+      try {
+        await fetch("/api/send-newsletter-subscriber-discord", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: normalizedEmail,
+            source: "register",
+          }),
+        });
+      } catch (notifyError) {
+        console.error("Newsletter Discord notify failed:", notifyError);
+      }
     }
   };
 
@@ -115,13 +141,16 @@ export function Register() {
 
     try {
       setLoading(true);
+      const normalizedPhone = `+961 ${formatLebaneseLocalPhone(
+        normalizedPhoneDigits
+      )}`;
 
       await signUp(
         normalizedEmail,
         password,
         firstName.trim(),
         lastName.trim(),
-        phone.trim()
+        normalizedPhone
       );
 
       await upsertNewsletter();
@@ -136,7 +165,7 @@ export function Register() {
             firstName: firstName.trim(),
             lastName: lastName.trim(),
             email: normalizedEmail,
-            phone: phone.trim(),
+            phone: normalizedPhone,
             source: "register",
           }),
         });
@@ -274,16 +303,24 @@ export function Register() {
                     size={16}
                     className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
                   />
+                  <span className="absolute left-9 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
+                    +961
+                  </span>
                   <input
                     type="tel"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="+961 70 123 456"
-                    className="w-full rounded-xl border border-slate-600/80 pl-10 pr-3 py-3 focus:outline-none focus:border-cyan-300"
+                    onChange={(e) =>
+                      setPhone(formatLebaneseLocalPhone(e.target.value))
+                    }
+                    placeholder="70 123 456"
+                    className="w-full rounded-xl border border-slate-600/80 pl-24 pr-3 py-3 focus:outline-none focus:border-cyan-300"
                     autoComplete="tel"
                     required
                   />
                 </div>
+                <p className="mt-2 text-xs text-slate-400">
+                  Lebanese numbers only (8 digits).
+                </p>
               </div>
 
               <div>

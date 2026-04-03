@@ -539,6 +539,61 @@ const sendUserCreatedDiscord = async (req, res) => {
   }
 };
 
+const sendNewsletterSubscriberDiscord = async (req, res) => {
+  try {
+    const { email, source } = req.body || {};
+    if (!email) {
+      return res.status(400).json({ error: "Invalid payload" });
+    }
+
+    const webhookUrl = String(
+      process.env.DISCORD_NEWSLETTER_WEBHOOK_URL ||
+        process.env.DISCORD_USER_CREATED_WEBHOOK_URL ||
+        ""
+    ).trim();
+    if (!webhookUrl) {
+      return res.status(500).json({
+        error:
+          "Missing DISCORD_NEWSLETTER_WEBHOOK_URL (or DISCORD_USER_CREATED_WEBHOOK_URL fallback)",
+      });
+    }
+
+    const now = new Date();
+    const payload = {
+      content:
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━\n📬 **NEW NEWSLETTER SUBSCRIBER**\n━━━━━━━━━━━━━━━━━━━━━━━━\n",
+      embeds: [
+        {
+          color: 5793266,
+          title: "Newsletter Opt-in",
+          fields: [
+            {
+              name: "Email",
+              value: truncate(String(email || ""), 256),
+              inline: true,
+            },
+            {
+              name: "Source",
+              value: truncate(String(source || "unknown"), 256),
+              inline: true,
+            },
+          ],
+          footer: { text: "LBathletes • Newsletter" },
+          timestamp: now.toISOString(),
+        },
+      ],
+    };
+
+    await sendDiscordPayload(payload, webhookUrl);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("Discord newsletter subscribe notify error:", err);
+    return res.status(500).json({
+      error: err.message || "Unknown error",
+    });
+  }
+};
+
 app.post("/send-newsletter", sendNewsletter);
 app.post("/api/send-newsletter", sendNewsletter);
 app.post("/send-order-discord", sendOrderDiscord);
@@ -549,6 +604,11 @@ app.post("/send-order-status-discord", sendOrderStatusDiscord);
 app.post("/api/send-order-status-discord", sendOrderStatusDiscord);
 app.post("/send-user-created-discord", sendUserCreatedDiscord);
 app.post("/api/send-user-created-discord", sendUserCreatedDiscord);
+app.post("/send-newsletter-subscriber-discord", sendNewsletterSubscriberDiscord);
+app.post(
+  "/api/send-newsletter-subscriber-discord",
+  sendNewsletterSubscriberDiscord
+);
 
 app.listen(3001, () => {
   const webhookUrl = String(process.env.DISCORD_ORDER_WEBHOOK_URL || "").trim();

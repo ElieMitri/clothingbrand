@@ -249,6 +249,18 @@ export function Home() {
           subscribed_at: serverTimestamp(),
           sent_emails: 0,
         });
+        try {
+          await fetch("/api/send-newsletter-subscriber-discord", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: normalizedEmail,
+              source: "home",
+            }),
+          });
+        } catch (notifyError) {
+          console.error("Newsletter Discord notify failed:", notifyError);
+        }
         setSubscribeStatus("success");
         if (user?.email && user.email.toLowerCase() === normalizedEmail) {
           setIsUserSubscribed(true);

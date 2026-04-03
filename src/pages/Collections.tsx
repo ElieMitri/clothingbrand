@@ -81,6 +81,18 @@ export function Collections() {
           subscribed_at: serverTimestamp(),
           sent_emails: 0,
         });
+        try {
+          await fetch("/api/send-newsletter-subscriber-discord", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: email.toLowerCase(),
+              source: "collections",
+            }),
+          });
+        } catch (notifyError) {
+          console.error("Newsletter Discord notify failed:", notifyError);
+        }
         setSubscribeStatus("success");
       } else {
         setSubscribeStatus("exists");
