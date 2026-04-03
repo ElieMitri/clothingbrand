@@ -68,7 +68,7 @@ export function Contact() {
                 <div>
                   <p className="text-xs tracking-[0.16em] text-slate-300">EMAIL</p>
                   <p className="mt-1 text-slate-100 font-medium">
-                    eliegmitri7@gmail.com
+                    lbathletes@hotmail.com
                   </p>
                 </div>
               </div>

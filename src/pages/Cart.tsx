@@ -65,18 +65,17 @@ export function Cart() {
     type: "success" | "error";
     text: string;
   } | null>(null);
-
-  const buildAddressLine = (profileData: Record<string, unknown>) => {
-    const parts = [
-      String(profileData.address || "").trim(),
-      String(profileData.addressDetails || "").trim(),
-      String(profileData.city || "").trim(),
-      String(profileData.state || "").trim(),
-      String(profileData.zipCode || "").trim(),
-      String(profileData.country || "").trim(),
-    ].filter(Boolean);
-    return parts.length > 0 ? parts.join(", ") : "Not provided";
-  };
+  const [showCheckoutForm, setShowCheckoutForm] = useState(false);
+  const [checkoutForm, setCheckoutForm] = useState({
+    fullName: "",
+    phone: "",
+    address: "",
+    directions: "",
+    city: "",
+    state: "",
+    zipCode: "",
+    country: "",
+  });
 
   useEffect(() => {
     if (user) {
@@ -182,8 +181,31 @@ export function Cart() {
     }
   };
 
+  const openCheckoutForm = () => {
+    if (!user || cartItems.length === 0) return;
+    setCheckoutForm((prev) => ({
+      ...prev,
+      fullName: prev.fullName || user.displayName || "",
+    }));
+    setShowCheckoutForm(true);
+  };
+
   const checkout = async () => {
     if (!user || cartItems.length === 0) return;
+
+    const fullName = checkoutForm.fullName.trim();
+    const phone = checkoutForm.phone.trim();
+    const address = checkoutForm.address.trim();
+    const directions = checkoutForm.directions.trim() || "-";
+    const city = checkoutForm.city.trim();
+    const state = checkoutForm.state.trim();
+    const zipCode = checkoutForm.zipCode.trim();
+    const country = checkoutForm.country.trim();
+
+    if (!fullName || !phone || !address || !city || !state || !zipCode || !country) {
+      alert("Please fill in all required shipping fields.");
+      return;
+    }
 
     try {
       setLoading(true);
@@ -221,27 +243,7 @@ export function Cart() {
         cartDocIds,
       });
 
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      const profileData = userDoc.exists()
-        ? (userDoc.data() as Record<string, unknown>)
-        : {};
-      const fullName = String(
-        `${profileData.firstName || ""} ${profileData.lastName || ""}`.trim() ||
-          profileData.displayName ||
-          user.displayName ||
-          "Customer"
-      );
-      const email = String(user.email || profileData.email || "Not provided");
-      const address = buildAddressLine(profileData);
-      const phone = String(
-        `${profileData.countryCode || ""} ${profileData.phone || ""}`.trim() ||
-          "Not provided"
-      );
-      const directions = String(profileData.addressDetails || "").trim() || "-";
-      const city = String(profileData.city || "").trim() || "-";
-      const state = String(profileData.state || "").trim() || "-";
-      const zipCode = String(profileData.zipCode || "").trim() || "-";
-      const country = String(profileData.country || "").trim() || "-";
+      const email = String(user.email || "Not provided");
       let notificationType: "success" | "error" = "success";
       let notificationText = "Order placed. Discord notification queued.";
 
@@ -306,6 +308,17 @@ export function Cart() {
       }
 
       setCheckoutNotice({ type: notificationType, text: notificationText });
+      setShowCheckoutForm(false);
+      setCheckoutForm({
+        fullName: "",
+        phone: "",
+        address: "",
+        directions: "",
+        city: "",
+        state: "",
+        zipCode: "",
+        country: "",
+      });
       setTimeout(() => navigate("/orders"), 1300);
     } catch (error) {
       console.error("Error placing order:", error);
@@ -574,7 +587,7 @@ export function Cart() {
                 </div>
 
                 <button
-                  onClick={checkout}
+                  onClick={openCheckoutForm}
                   disabled={loading}
                   className="w-full bg-black text-white py-4 px-6 rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium mb-4"
                 >
@@ -627,6 +640,162 @@ export function Cart() {
           </div>
         )}
       </div>
+
+      {showCheckoutForm ? (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <h2 className="text-xl font-semibold">Shipping Details</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Enter delivery information for this order.
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={checkoutForm.fullName}
+                    onChange={(e) =>
+                      setCheckoutForm((prev) => ({ ...prev, fullName: e.target.value }))
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                    placeholder="Your full name"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Phone *
+                  </label>
+                  <input
+                    type="tel"
+                    value={checkoutForm.phone}
+                    onChange={(e) =>
+                      setCheckoutForm((prev) => ({ ...prev, phone: e.target.value }))
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                    placeholder="+961 70 123 456"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Street Address *
+                </label>
+                <input
+                  type="text"
+                  value={checkoutForm.address}
+                  onChange={(e) =>
+                    setCheckoutForm((prev) => ({ ...prev, address: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                  placeholder="Street, building, floor..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Directions (optional)
+                </label>
+                <textarea
+                  value={checkoutForm.directions}
+                  onChange={(e) =>
+                    setCheckoutForm((prev) => ({ ...prev, directions: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                  placeholder="Landmark or delivery notes..."
+                  rows={2}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    City *
+                  </label>
+                  <input
+                    type="text"
+                    value={checkoutForm.city}
+                    onChange={(e) =>
+                      setCheckoutForm((prev) => ({ ...prev, city: e.target.value }))
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                    placeholder="City"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    State *
+                  </label>
+                  <input
+                    type="text"
+                    value={checkoutForm.state}
+                    onChange={(e) =>
+                      setCheckoutForm((prev) => ({ ...prev, state: e.target.value }))
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                    placeholder="State"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    ZIP Code *
+                  </label>
+                  <input
+                    type="text"
+                    value={checkoutForm.zipCode}
+                    onChange={(e) =>
+                      setCheckoutForm((prev) => ({ ...prev, zipCode: e.target.value }))
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                    placeholder="ZIP Code"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Country *
+                  </label>
+                  <input
+                    type="text"
+                    value={checkoutForm.country}
+                    onChange={(e) =>
+                      setCheckoutForm((prev) => ({ ...prev, country: e.target.value }))
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                    placeholder="Country"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-200 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setShowCheckoutForm(false)}
+                className="px-5 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={checkout}
+                disabled={loading}
+                className="px-5 py-2.5 rounded-xl bg-black text-white hover:bg-gray-800 disabled:opacity-50"
+              >
+                {loading ? "Processing..." : "Place Order"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -22,12 +22,6 @@ interface UserProfile {
   lastName?: string;
   countryCode?: string;
   phone?: string;
-  address?: string;
-  addressDetails?: string;
-  city?: string;
-  state?: string;
-  zipCode?: string;
-  country?: string;
 }
 
 export function Profile() {
@@ -96,11 +90,18 @@ export function Profile() {
     try {
       setSaving(true);
 
+      const profilePayload: UserProfile = {
+        firstName: editForm.firstName || "",
+        lastName: editForm.lastName || "",
+        countryCode: editForm.countryCode || "",
+        phone: editForm.phone || "",
+      };
+
       // Update Firestore user document
       await setDoc(
         doc(db, "users", user.uid),
         {
-          ...editForm,
+          ...profilePayload,
           updatedAt: new Date(),
         },
         { merge: true }
@@ -120,7 +121,7 @@ export function Profile() {
       }
 
       // Update local state
-      setProfile(editForm);
+      setProfile(profilePayload);
       setEditing(false);
 
       // Show success message
@@ -405,152 +406,6 @@ export function Profile() {
                 </div>
               </div>
 
-              {/* Address Info */}
-              <div>
-                <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">
-                  Address Information
-                </h3>
-                <div className="grid grid-cols-1 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Street Address
-                    </label>
-                    {editing ? (
-                      <input
-                        type="text"
-                        value={editForm.address || ""}
-                        onChange={(e) =>
-                          setEditForm({ ...editForm, address: e.target.value })
-                        }
-                        className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
-                        placeholder="Enter street address"
-                      />
-                    ) : (
-                      <p className="px-4 py-2.5 bg-gray-50 rounded-xl">
-                        {profile.address || "Not provided"}
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      More Details / Directions
-                    </label>
-                    {editing ? (
-                      <textarea
-                        value={editForm.addressDetails || ""}
-                        onChange={(e) =>
-                          setEditForm({
-                            ...editForm,
-                            addressDetails: e.target.value,
-                          })
-                        }
-                        className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
-                        placeholder="Landmark, building entrance, floor, delivery notes..."
-                        rows={3}
-                      />
-                    ) : (
-                      <p className="px-4 py-2.5 bg-gray-50 rounded-xl whitespace-pre-line">
-                        {profile.addressDetails || "Not provided"}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        City
-                      </label>
-                      {editing ? (
-                        <input
-                          type="text"
-                          value={editForm.city || ""}
-                          onChange={(e) =>
-                            setEditForm({ ...editForm, city: e.target.value })
-                          }
-                          className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
-                          placeholder="City"
-                        />
-                      ) : (
-                        <p className="px-4 py-2.5 bg-gray-50 rounded-xl">
-                          {profile.city || "Not provided"}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        State
-                      </label>
-                      {editing ? (
-                        <input
-                          type="text"
-                          value={editForm.state || ""}
-                          onChange={(e) =>
-                            setEditForm({ ...editForm, state: e.target.value })
-                          }
-                          className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
-                          placeholder="State"
-                        />
-                      ) : (
-                        <p className="px-4 py-2.5 bg-gray-50 rounded-xl">
-                          {profile.state || "Not provided"}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        ZIP Code
-                      </label>
-                      {editing ? (
-                        <input
-                          type="text"
-                          value={editForm.zipCode || ""}
-                          onChange={(e) =>
-                            setEditForm({
-                              ...editForm,
-                              zipCode: e.target.value,
-                            })
-                          }
-                          className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
-                          placeholder="ZIP"
-                        />
-                      ) : (
-                        <p className="px-4 py-2.5 bg-gray-50 rounded-xl">
-                          {profile.zipCode || "Not provided"}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Country
-                      </label>
-                      {editing ? (
-                        <input
-                          type="text"
-                          value={editForm.country || ""}
-                          onChange={(e) =>
-                            setEditForm({
-                              ...editForm,
-                              country: e.target.value,
-                            })
-                          }
-                          className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
-                          placeholder="Country"
-                        />
-                      ) : (
-                        <p className="px-4 py-2.5 bg-gray-50 rounded-xl">
-                          {profile.country || "Not provided"}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </div>

@@ -1104,6 +1104,19 @@ export function AdminDashboard() {
       return;
     }
 
+    const recipients = Array.from(
+      new Set(
+        subscribers
+          .map((s) => String(s.email || "").trim().toLowerCase())
+          .filter(Boolean)
+      )
+    );
+
+    if (recipients.length === 0) {
+      alert("No subscriber emails found.");
+      return;
+    }
+
     try {
       const response = await fetch("/api/send-newsletter", {
         method: "POST",
@@ -1111,21 +1124,34 @@ export function AdminDashboard() {
         body: JSON.stringify({
           subject: emailForm.subject,
           message: emailForm.message,
-          recipients: subscribers.map((s) => s.email),
+          recipients,
         }),
       });
 
+      const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const err = await response.text();
-        throw new Error(err);
+        const errMessage =
+          typeof body?.error === "string" && body.error
+            ? body.error
+            : "Error sending emails";
+        throw new Error(errMessage);
       }
 
-      alert(`Email sent to ${subscribers.length} subscribers!`);
+      const sentCount =
+        typeof body?.sent_count === "number" ? body.sent_count : recipients.length;
+      const failedCount =
+        typeof body?.failed_count === "number" ? body.failed_count : 0;
+
+      alert(
+        failedCount > 0
+          ? `Newsletter sent to ${sentCount} subscribers. ${failedCount} failed.`
+          : `Newsletter sent to ${sentCount} subscribers successfully!`
+      );
       setShowEmailModal(false);
       setEmailForm({ subject: "", message: "" });
     } catch (err) {
       console.error("Send newsletter error:", err);
-      alert("Error sending emails");
+      alert(err instanceof Error ? err.message : "Error sending emails");
     }
   };
 

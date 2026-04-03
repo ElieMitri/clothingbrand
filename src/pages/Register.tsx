@@ -8,7 +8,6 @@ import {
   EyeOff,
   Lock,
   Mail,
-  MapPin,
   Phone,
   Sparkles,
   User,
@@ -32,7 +31,6 @@ export function Register() {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -65,9 +63,6 @@ export function Register() {
     }
     if (!phone.trim()) {
       return "Please fill in your mobile number.";
-    }
-    if (!address.trim()) {
-      return "Please fill in your address.";
     }
 
     if (!passwordChecks.minLength || !passwordChecks.upper || !passwordChecks.lower || !passwordChecks.number) {
@@ -112,10 +107,7 @@ export function Register() {
     const validationError = validate();
     if (validationError) {
       setError(validationError);
-      if (
-        validationError.toLowerCase().includes("mobile number") ||
-        validationError.toLowerCase().includes("address")
-      ) {
+      if (validationError.toLowerCase().includes("mobile number")) {
         alert(validationError);
       }
       return;
@@ -129,8 +121,7 @@ export function Register() {
         password,
         firstName.trim(),
         lastName.trim(),
-        phone.trim(),
-        address.trim()
+        phone.trim()
       );
 
       await upsertNewsletter();
@@ -146,7 +137,6 @@ export function Register() {
             lastName: lastName.trim(),
             email: normalizedEmail,
             phone: phone.trim(),
-            address: address.trim(),
             source: "register",
           }),
         });
@@ -291,26 +281,6 @@ export function Register() {
                     placeholder="+961 70 123 456"
                     className="w-full rounded-xl border border-slate-600/80 pl-10 pr-3 py-3 focus:outline-none focus:border-cyan-300"
                     autoComplete="tel"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs tracking-[0.14em] text-slate-300 mb-2">
-                  ADDRESS
-                </label>
-                <div className="relative">
-                  <MapPin
-                    size={16}
-                    className="absolute left-3 top-4 text-slate-400"
-                  />
-                  <textarea
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="Street, building, city..."
-                    className="w-full rounded-xl border border-slate-600/80 pl-10 pr-3 py-3 focus:outline-none focus:border-cyan-300"
-                    rows={2}
                     required
                   />
                 </div>
