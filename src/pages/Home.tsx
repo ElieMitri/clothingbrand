@@ -675,7 +675,7 @@ export function Home() {
                 </div>
                 <div className="rounded-xl border border-slate-700/70 p-3 text-slate-200 inline-flex items-center gap-2">
                   <PackageCheck size={14} className="text-cyan-200" />
-                  Fast shipping 24-48h
+                  Fast shipping 24-72h
                 </div>
                 <div className="rounded-xl border border-slate-700/70 p-3 text-slate-200 inline-flex items-center gap-2">
                   <BadgeCheck size={14} className="text-cyan-200" />
@@ -694,7 +694,7 @@ export function Home() {
       <section className="px-4 mt-8">
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
-            { icon: Truck, label: "FREE EXPRESS", sub: "Orders over $100" },
+           { icon: Truck, label: "QUICK DELIVERY", sub: "Across Lebanon" },
             { icon: Banknote, label: "CASH ON DELIVERY", sub: "Pay when you receive" },
             { icon: Shield, label: "FINAL SALE", sub: "No refunds" },
           ].map((item) => (
