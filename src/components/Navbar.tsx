@@ -108,6 +108,9 @@ export function Navbar() {
     });
   const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
   const notificationPanelRef = useRef<HTMLDivElement | null>(null);
+  const notificationTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const notificationPanelBubbleRef = useRef<HTMLDivElement | null>(null);
+  const [bubblePointerLeft, setBubblePointerLeft] = useState(20);
   const [shopCategories, setShopCategories] = useState<
     { name: string; path: string; special?: boolean }[]
   >([{ name: "New Arrivals", path: "/new-arrivals" }]);
@@ -162,7 +165,7 @@ export function Navbar() {
   }, [location]);
 
   useEffect(() => {
-    if (isMobileMenuOpen) {
+    if (isMobileMenuOpen || isNotificationPanelOpen) {
       document.body.style.overflow = "hidden";
       document.body.style.touchAction = "none";
     } else {
@@ -174,7 +177,33 @@ export function Navbar() {
       document.body.style.overflow = "";
       document.body.style.touchAction = "";
     };
-  }, [isMobileMenuOpen]);
+  }, [isMobileMenuOpen, isNotificationPanelOpen]);
+
+  useEffect(() => {
+    if (!isNotificationPanelOpen) return;
+
+    const updateBubblePointer = () => {
+      const triggerRect = notificationTriggerRef.current?.getBoundingClientRect();
+      const panelRect = notificationPanelBubbleRef.current?.getBoundingClientRect();
+      if (!triggerRect || !panelRect) return;
+
+      const pointerSize = 16; // matches h-4 w-4
+      const triggerCenter = triggerRect.left + triggerRect.width / 2;
+      const minLeft = 12;
+      const maxLeft = Math.max(minLeft, panelRect.width - pointerSize - 12);
+      const computedLeft = triggerCenter - panelRect.left - pointerSize / 2;
+      const safeLeft = Math.min(maxLeft, Math.max(minLeft, computedLeft));
+      setBubblePointerLeft(safeLeft);
+    };
+
+    updateBubblePointer();
+    window.addEventListener("resize", updateBubblePointer);
+    window.addEventListener("scroll", updateBubblePointer, { passive: true });
+    return () => {
+      window.removeEventListener("resize", updateBubblePointer);
+      window.removeEventListener("scroll", updateBubblePointer);
+    };
+  }, [isNotificationPanelOpen]);
 
   // Close menus when clicking outside
   useEffect(() => {
@@ -408,7 +437,7 @@ export function Navbar() {
             }`}
           >
             <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(148,163,184,0.08),transparent_32%,rgba(56,189,248,0.08))]" />
-            <div className="max-w-7xl mx-auto flex items-center justify-between px-3 sm:px-4 lg:px-5 xl:px-6">
+            <div className="max-w-7xl mx-auto flex items-center justify-between px-3 py-1 sm:px-4 sm:py-2.5 lg:px-5 xl:px-6">
             <div className="relative z-10 flex items-center gap-2">
               {/* Mobile Menu Button */}
               <button
@@ -423,6 +452,7 @@ export function Navbar() {
               <div ref={notificationPanelRef} className="relative notification-menu">
                 {user ? (
                   <button
+                    ref={notificationTriggerRef}
                     onClick={() => setIsNotificationPanelOpen((prev) => !prev)}
                     className="relative inline-flex items-center justify-center h-11 w-11 rounded-xl border border-cyan-300/35 bg-slate-900/55 hover:bg-slate-800/70 transition-all duration-300"
                     aria-label="Open notifications"
@@ -447,7 +477,14 @@ export function Navbar() {
                 )}
 
                 {user && isNotificationPanelOpen && (
-                  <div className="fixed left-3 right-3 top-[78px] z-[75] rounded-2xl border border-cyan-300/20 bg-slate-950/95 backdrop-blur-xl shadow-[0_24px_70px_rgba(2,6,23,0.8)] p-3 max-h-[calc(100dvh-96px)] overflow-hidden sm:absolute sm:top-full sm:left-0 sm:right-auto sm:mt-3 sm:w-[min(92vw,380px)] sm:max-h-none">
+                  <div
+                    ref={notificationPanelBubbleRef}
+                    className="notification-bubble-enter fixed left-3 right-3 top-[92px] z-[75] rounded-2xl border border-cyan-300/20 bg-slate-950/95 backdrop-blur-xl shadow-[0_24px_70px_rgba(2,6,23,0.8)] p-3 max-h-[calc(100dvh-96px)] overflow-visible sm:absolute sm:top-full sm:left-0 sm:right-auto sm:mt-3 sm:w-[min(92vw,380px)] sm:max-h-none"
+                  >
+                    <div
+                      className="notification-bubble-tip-enter absolute -top-2 h-4 w-4 rotate-45 border-l border-t border-cyan-300/20 bg-slate-950/95"
+                      style={{ left: `${bubblePointerLeft}px` }}
+                    />
                     <div className="flex items-center justify-between px-1 pb-3 border-b border-slate-800/80">
                       <p className="text-base font-semibold text-slate-100 tracking-[0.01em]">
                         Notifications
