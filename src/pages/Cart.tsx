@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { createPortal } from "react-dom";
 import {
   Trash2,
   Plus,
@@ -94,6 +95,29 @@ export function Cart() {
     state: "",
     country: "",
   });
+
+  useEffect(() => {
+    if (!showCheckoutForm && !showAddAddressModal) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showCheckoutForm, showAddAddressModal]);
+
+  useEffect(() => {
+    if (!showCheckoutForm && !showAddAddressModal) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (showAddAddressModal) {
+        setShowAddAddressModal(false);
+        return;
+      }
+      setShowCheckoutForm(false);
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [showCheckoutForm, showAddAddressModal]);
 
   useEffect(() => {
     if (user) {
@@ -765,17 +789,28 @@ export function Cart() {
         )}
       </div>
 
-      {showCheckoutForm ? (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <h2 className="text-xl font-semibold">Shipping Details</h2>
-              <p className="text-sm text-gray-600 mt-1">
-                Enter delivery information for this order.
-              </p>
-            </div>
+      {showCheckoutForm && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[120] bg-black/55 p-3 sm:p-6"
+              onClick={() => setShowCheckoutForm(false)}
+            >
+              <div className="h-full w-full overflow-y-auto overscroll-contain">
+                <div className="mx-auto flex min-h-full w-full max-w-2xl items-center justify-center">
+                  <div
+                    role="dialog"
+                    aria-modal="true"
+                    className="w-full bg-white rounded-2xl shadow-xl border border-gray-200/60 max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-3rem)] flex flex-col"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="p-4 sm:p-6 border-b border-gray-200 shrink-0">
+                      <h2 className="text-xl font-semibold">Shipping Details</h2>
+                      <p className="text-sm text-gray-600 mt-1">
+                        Enter delivery information for this order.
+                      </p>
+                    </div>
 
-            <div className="p-6 space-y-4">
+                    <div className="p-4 sm:p-6 space-y-4 overflow-y-auto overscroll-contain">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -912,131 +947,150 @@ export function Cart() {
               </div>
             </div>
 
-            <div className="p-6 border-t border-gray-200 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setShowCheckoutForm(false)}
-                className="px-5 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={checkout}
-                disabled={loading}
-                className="px-5 py-2.5 rounded-xl bg-black text-white hover:bg-gray-800 disabled:opacity-50"
-              >
-                {loading ? "Processing..." : "Place Order"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+                    <div className="p-4 sm:p-6 border-t border-gray-200 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setShowCheckoutForm(false)}
+                        className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={checkout}
+                        disabled={loading}
+                        className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-black text-white hover:bg-gray-800 disabled:opacity-50"
+                      >
+                        {loading ? "Processing..." : "Place Order"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
 
-      {showAddAddressModal ? (
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-          <div className="w-full max-w-xl bg-white rounded-2xl shadow-xl">
-            <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold">Add New Address</h3>
-              <p className="text-sm text-gray-600 mt-1">
-                Save a named location for faster checkout.
-              </p>
-            </div>
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Location Name *
-                </label>
-                <input
-                  type="text"
-                  value={newAddressForm.label}
-                  onChange={(e) =>
-                    setNewAddressForm((prev) => ({ ...prev, label: e.target.value }))
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  placeholder="Home, Office..."
-                />
+      {showAddAddressModal && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[130] bg-black/55 p-3 sm:p-6"
+              onClick={() => setShowAddAddressModal(false)}
+            >
+              <div className="h-full w-full overflow-y-auto overscroll-contain">
+                <div className="mx-auto flex min-h-full w-full max-w-xl items-center justify-center">
+                  <div
+                    role="dialog"
+                    aria-modal="true"
+                    className="w-full bg-white rounded-2xl shadow-xl border border-gray-200/60 max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-3rem)] flex flex-col"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="p-4 sm:p-6 border-b border-gray-200 shrink-0">
+                      <h3 className="text-lg font-semibold">Add New Address</h3>
+                      <p className="text-sm text-gray-600 mt-1">
+                        Save a named location for faster checkout.
+                      </p>
+                    </div>
+                    <div className="p-4 sm:p-6 space-y-4 overflow-y-auto overscroll-contain">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Location Name *
+                        </label>
+                        <input
+                          type="text"
+                          value={newAddressForm.label}
+                          onChange={(e) =>
+                            setNewAddressForm((prev) => ({ ...prev, label: e.target.value }))
+                          }
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                          placeholder="Home, Office..."
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Street Address *
+                        </label>
+                        <input
+                          type="text"
+                          value={newAddressForm.address}
+                          onChange={(e) =>
+                            setNewAddressForm((prev) => ({ ...prev, address: e.target.value }))
+                          }
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                          placeholder="Street, building, floor..."
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Directions (optional)
+                        </label>
+                        <textarea
+                          value={newAddressForm.directions}
+                          onChange={(e) =>
+                            setNewAddressForm((prev) => ({
+                              ...prev,
+                              directions: e.target.value,
+                            }))
+                          }
+                          rows={2}
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                          placeholder="Landmark or delivery notes..."
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <input
+                          type="text"
+                          value={newAddressForm.city}
+                          onChange={(e) =>
+                            setNewAddressForm((prev) => ({ ...prev, city: e.target.value }))
+                          }
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                          placeholder="City *"
+                        />
+                        <input
+                          type="text"
+                          value={newAddressForm.state}
+                          onChange={(e) =>
+                            setNewAddressForm((prev) => ({ ...prev, state: e.target.value }))
+                          }
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                          placeholder="State *"
+                        />
+                        <input
+                          type="text"
+                          value={newAddressForm.country}
+                          onChange={(e) =>
+                            setNewAddressForm((prev) => ({ ...prev, country: e.target.value }))
+                          }
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                          placeholder="Country *"
+                        />
+                      </div>
+                    </div>
+                    <div className="p-4 sm:p-6 border-t border-gray-200 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddAddressModal(false)}
+                        className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveNewAddress}
+                        className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-black text-white hover:bg-gray-800"
+                      >
+                        Save Address
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Street Address *
-                </label>
-                <input
-                  type="text"
-                  value={newAddressForm.address}
-                  onChange={(e) =>
-                    setNewAddressForm((prev) => ({ ...prev, address: e.target.value }))
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  placeholder="Street, building, floor..."
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Directions (optional)
-                </label>
-                <textarea
-                  value={newAddressForm.directions}
-                  onChange={(e) =>
-                    setNewAddressForm((prev) => ({
-                      ...prev,
-                      directions: e.target.value,
-                    }))
-                  }
-                  rows={2}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  placeholder="Landmark or delivery notes..."
-                />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <input
-                  type="text"
-                  value={newAddressForm.city}
-                  onChange={(e) =>
-                    setNewAddressForm((prev) => ({ ...prev, city: e.target.value }))
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  placeholder="City *"
-                />
-                <input
-                  type="text"
-                  value={newAddressForm.state}
-                  onChange={(e) =>
-                    setNewAddressForm((prev) => ({ ...prev, state: e.target.value }))
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  placeholder="State *"
-                />
-                <input
-                  type="text"
-                  value={newAddressForm.country}
-                  onChange={(e) =>
-                    setNewAddressForm((prev) => ({ ...prev, country: e.target.value }))
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  placeholder="Country *"
-                />
-              </div>
-            </div>
-            <div className="p-6 border-t border-gray-200 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setShowAddAddressModal(false)}
-                className="px-5 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveNewAddress}
-                className="px-5 py-2.5 rounded-xl bg-black text-white hover:bg-gray-800"
-              >
-                Save Address
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
