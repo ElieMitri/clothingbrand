@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Mail, MapPin, Phone, Send } from "lucide-react";
+import { Instagram, Mail, Phone, Send } from "lucide-react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../lib/firebase";
+import LbLogo from "../assets/lbathletes-logo.png";
 
 export function Contact() {
   const [formData, setFormData] = useState({
@@ -80,6 +81,32 @@ export function Contact() {
                 <div>
                   <p className="text-xs tracking-[0.16em] text-slate-300">PHONE</p>
                   <p className="mt-1 text-slate-100 font-medium">+961 81 107 752</p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-4">
+                <div className="h-10 w-10 rounded-xl bg-cyan-500/20 border border-cyan-400/35 text-cyan-100 flex items-center justify-center">
+                  <Instagram size={18} />
+                </div>
+                <div>
+                  <p className="text-xs tracking-[0.16em] text-slate-300">INSTAGRAM</p>
+                  <p className="mt-1 text-slate-300 text-sm">
+                    Follow our latest drops, launches, and brand updates.
+                  </p>
+                  {/* <img
+                    src={LbLogo}
+                    alt="LBathletes"
+                    className="mt-3 h-14 w-14 md:h-16 md:w-16 rounded-2xl object-cover ring-1 ring-cyan-300/35"
+                  /> */}
+                  <a
+                    href="https://instagram.com/lbathletes"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-3 inline-flex items-center gap-1 rounded-xl border border-cyan-300/45 bg-cyan-500/10 px-4 py-2 text-cyan-100 hover:bg-cyan-500/20 transition-colors font-semibold text-sm"
+                  >
+                    <Instagram size={16} />
+                    @lbathletes
+                  </a>
                 </div>
               </div>
 

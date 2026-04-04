@@ -44,6 +44,16 @@ export function Login() {
         : "";
 
     if (navNotice) setNotice(navNotice);
+
+    const prefillEmail =
+      typeof location.state === "object" &&
+      location.state !== null &&
+      "prefillEmail" in location.state &&
+      typeof (location.state as { prefillEmail?: unknown }).prefillEmail ===
+        "string"
+        ? (location.state as { prefillEmail: string }).prefillEmail
+        : "";
+    if (prefillEmail) setEmail(prefillEmail);
   }, [location.state]);
 
   const validate = () => {
@@ -220,6 +230,7 @@ export function Login() {
                   </button>
                 </div>
               </div>
+
             </div>
 
             <div className="mt-auto pt-6 space-y-4">

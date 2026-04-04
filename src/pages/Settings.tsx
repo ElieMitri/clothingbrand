@@ -2,13 +2,19 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { db, auth } from "../lib/firebase";
+import { getFirebaseFriendlyError } from "../lib/firebaseError";
 import {
+  addDoc,
   doc,
   getDoc,
   setDoc,
   collection,
   getDocs,
   deleteDoc,
+  query,
+  where,
+  writeBatch,
+  serverTimestamp,
 } from "firebase/firestore";
 import {
   updatePassword,
@@ -31,6 +37,16 @@ interface NotificationSettings {
   orderUpdates: boolean;
   promotions: boolean;
   newsletter: boolean;
+}
+
+interface SavedAddress {
+  id: string;
+  label: string;
+  address: string;
+  directions?: string;
+  city: string;
+  state: string;
+  country: string;
 }
 
 export function Settings() {
@@ -60,6 +76,19 @@ export function Settings() {
     type: "success" | "error";
     text: string;
   } | null>(null);
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
+  const [addressForm, setAddressForm] = useState({
+    label: "",
+    address: "",
+    directions: "",
+    city: "",
+    state: "",
+    country: "",
+  });
+  const [addressMessage, setAddressMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
 
   // Delete account
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -74,20 +103,84 @@ export function Settings() {
     loadSettings();
   }, [user, navigate]);
 
+  const normalizeAddressBook = (raw: unknown): SavedAddress[] => {
+    if (!Array.isArray(raw)) return [];
+
+    return raw
+      .map((entry, index) => {
+        if (!entry || typeof entry !== "object") return null;
+        const candidate = entry as Partial<SavedAddress>;
+        const label = String(candidate.label || "").trim();
+        const address = String(candidate.address || "").trim();
+        const city = String(candidate.city || "").trim();
+        const state = String(candidate.state || "").trim();
+        const country = String(candidate.country || "").trim();
+        if (!label || !address || !city || !state || !country) return null;
+        return {
+          id: String(candidate.id || `address-${index + 1}`),
+          label,
+          address,
+          directions: String(candidate.directions || "").trim(),
+          city,
+          state,
+          country,
+        } as SavedAddress;
+      })
+      .filter((entry: SavedAddress | null): entry is SavedAddress => entry !== null);
+  };
+
   const loadSettings = async () => {
     if (!user) return;
 
     try {
-      const settingsDoc = await getDoc(
-        doc(db, "users", user.uid, "settings", "preferences")
-      );
-      if (settingsDoc.exists()) {
-        const data = settingsDoc.data();
-        setNotifications({
-          orderUpdates: data.orderUpdates ?? true,
-          promotions: data.promotions ?? true,
-          newsletter: data.newsletter ?? true,
-        });
+      const [settingsDoc, userDoc] = await Promise.all([
+        getDoc(doc(db, "users", user.uid, "settings", "preferences")),
+        getDoc(doc(db, "users", user.uid)),
+      ]);
+
+      const settingsData = settingsDoc.exists() ? settingsDoc.data() : {};
+      const userData = userDoc.exists() ? userDoc.data() : {};
+      const profilePreferences =
+        userData.notificationPreferences &&
+        typeof userData.notificationPreferences === "object"
+          ? (userData.notificationPreferences as Partial<NotificationSettings>)
+          : {};
+
+      setNotifications({
+        orderUpdates:
+          settingsData.orderUpdates ?? profilePreferences.orderUpdates ?? true,
+        promotions:
+          settingsData.promotions ?? profilePreferences.promotions ?? true,
+        newsletter:
+          settingsData.newsletter ??
+          profilePreferences.newsletter ??
+          userData.subscribeNewsletter ??
+          true,
+      });
+
+      const addressBook = normalizeAddressBook(userData.addressBook);
+      if (addressBook.length > 0) {
+        setSavedAddresses(addressBook);
+      } else {
+        const legacyAddress = String(userData.address || "").trim();
+        const legacyCity = String(userData.city || "").trim();
+        const legacyState = String(userData.state || "").trim();
+        const legacyCountry = String(userData.country || "").trim();
+        if (legacyAddress && legacyCity && legacyState && legacyCountry) {
+          setSavedAddresses([
+            {
+              id: "legacy-primary",
+              label: "Primary",
+              address: legacyAddress,
+              directions: String(userData.addressDetails || "").trim(),
+              city: legacyCity,
+              state: legacyState,
+              country: legacyCountry,
+            },
+          ]);
+        } else {
+          setSavedAddresses([]);
+        }
       }
     } catch (error) {
       console.error("Error loading settings:", error);
@@ -139,24 +232,10 @@ export function Settings() {
       setTimeout(() => setPasswordMessage(null), 3000);
     } catch (error) {
       console.error("Error changing password:", error);
-      const errorCode =
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        typeof (error as { code?: unknown }).code === "string"
-          ? (error as { code: string }).code
-          : "";
-      if (errorCode === "auth/wrong-password") {
-        setPasswordMessage({
-          type: "error",
-          text: "Current password is incorrect",
-        });
-      } else {
-        setPasswordMessage({
-          type: "error",
-          text: "Failed to update password",
-        });
-      }
+      setPasswordMessage({
+        type: "error",
+        text: getFirebaseFriendlyError(error, "Failed to update password"),
+      });
       setTimeout(() => setPasswordMessage(null), 3000);
     } finally {
       setSaving(false);
@@ -164,31 +243,137 @@ export function Settings() {
   };
 
   const handleNotificationSave = async () => {
-    if (!user) return;
+    if (!user || !user.email) return;
 
     try {
       setSaving(true);
 
+      const normalizedEmail = user.email.trim().toLowerCase();
+      const newsletterRef = collection(db, "newsletter");
+      const existingNewsletterSnap = await getDocs(
+        query(newsletterRef, where("email", "==", normalizedEmail))
+      );
+
       await setDoc(doc(db, "users", user.uid, "settings", "preferences"), {
         ...notifications,
-        updatedAt: new Date(),
+        updatedAt: serverTimestamp(),
       });
+
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          subscribeNewsletter: notifications.newsletter,
+          notificationPreferences: {
+            orderUpdates: notifications.orderUpdates,
+            promotions: notifications.promotions,
+            newsletter: notifications.newsletter,
+          },
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      if (notifications.newsletter) {
+        if (existingNewsletterSnap.empty) {
+          await addDoc(newsletterRef, {
+            email: normalizedEmail,
+            subscribed_at: serverTimestamp(),
+            sent_emails: 0,
+          });
+        }
+      } else if (!existingNewsletterSnap.empty) {
+        const batch = writeBatch(db);
+        existingNewsletterSnap.docs.forEach((entry) => batch.delete(entry.ref));
+        await batch.commit();
+      }
 
       setNotificationMessage({
         type: "success",
-        text: "Notification preferences saved",
+        text: "Notification preferences updated successfully.",
       });
       setTimeout(() => setNotificationMessage(null), 3000);
     } catch (error) {
       console.error("Error saving notifications:", error);
       setNotificationMessage({
         type: "error",
-        text: "Failed to save preferences",
+        text: getFirebaseFriendlyError(error, "Failed to save preferences"),
       });
       setTimeout(() => setNotificationMessage(null), 3000);
     } finally {
       setSaving(false);
     }
+  };
+
+  const saveAddressBook = async (nextAddresses: SavedAddress[]) => {
+    if (!user) return;
+
+    try {
+      setSaving(true);
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          addressBook: nextAddresses,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      setSavedAddresses(nextAddresses);
+      setAddressMessage({
+        type: "success",
+        text: "Addresses updated successfully.",
+      });
+      setTimeout(() => setAddressMessage(null), 2500);
+    } catch (error) {
+      console.error("Error saving addresses:", error);
+      setAddressMessage({
+        type: "error",
+        text: getFirebaseFriendlyError(error, "Failed to save addresses"),
+      });
+      setTimeout(() => setAddressMessage(null), 3000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAddAddress = async () => {
+    const nextAddress: SavedAddress = {
+      id: `addr-${Date.now()}`,
+      label: addressForm.label.trim(),
+      address: addressForm.address.trim(),
+      directions: addressForm.directions.trim(),
+      city: addressForm.city.trim(),
+      state: addressForm.state.trim(),
+      country: addressForm.country.trim(),
+    };
+
+    if (
+      !nextAddress.label ||
+      !nextAddress.address ||
+      !nextAddress.city ||
+      !nextAddress.state ||
+      !nextAddress.country
+    ) {
+      setAddressMessage({
+        type: "error",
+        text: "Please fill all required address fields.",
+      });
+      setTimeout(() => setAddressMessage(null), 2500);
+      return;
+    }
+
+    await saveAddressBook([...savedAddresses, nextAddress]);
+    setAddressForm({
+      label: "",
+      address: "",
+      directions: "",
+      city: "",
+      state: "",
+      country: "",
+    });
+  };
+
+  const handleDeleteAddress = async (addressId: string) => {
+    await saveAddressBook(savedAddresses.filter((entry) => entry.id !== addressId));
   };
 
   const handleDeleteAccount = async () => {
@@ -225,18 +410,7 @@ export function Settings() {
       navigate("/");
     } catch (error) {
       console.error("Error deleting account:", error);
-      const errorCode =
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        typeof (error as { code?: unknown }).code === "string"
-          ? (error as { code: string }).code
-          : "";
-      if (errorCode === "auth/wrong-password") {
-        alert("Incorrect password. Please try again.");
-      } else {
-        alert("Failed to delete account. Please try again.");
-      }
+      alert(getFirebaseFriendlyError(error, "Failed to delete account. Please try again."));
     } finally {
       setDeleting(false);
       setShowDeleteConfirm(false);
@@ -365,6 +539,169 @@ export function Settings() {
                 {saving ? "Updating..." : "Update Password"}
               </button>
             </form>
+          </div>
+
+          {/* Saved Addresses */}
+          <div className="bg-white rounded-2xl shadow-sm p-8">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-2 bg-emerald-50 rounded-lg">
+                <Save className="text-emerald-600" size={20} />
+              </div>
+              <h2 className="text-2xl font-semibold">Saved Addresses</h2>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-5">
+              Add multiple delivery locations and name each one for faster checkout.
+            </p>
+
+            <div className="space-y-3 mb-6">
+              {savedAddresses.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-gray-300 px-4 py-5 text-sm text-gray-500">
+                  No saved addresses yet.
+                </div>
+              ) : (
+                savedAddresses.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="rounded-xl border border-gray-200 p-4 flex flex-col md:flex-row md:items-start md:justify-between gap-3"
+                  >
+                    <div>
+                      <p className="font-semibold text-gray-900">{entry.label}</p>
+                      <p className="text-sm text-gray-700 mt-1">{entry.address}</p>
+                      {entry.directions ? (
+                        <p className="text-xs text-gray-500 mt-1">
+                          Directions: {entry.directions}
+                        </p>
+                      ) : null}
+                      <p className="text-xs text-gray-500 mt-1">
+                        {entry.city}, {entry.state}, {entry.country}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteAddress(entry.id)}
+                      disabled={saving}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-60"
+                    >
+                      <Trash2 size={16} />
+                      Delete
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Location Name *
+                </label>
+                <input
+                  type="text"
+                  value={addressForm.label}
+                  onChange={(e) =>
+                    setAddressForm((prev) => ({ ...prev, label: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
+                  placeholder="Home, Office, Parents..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Country *
+                </label>
+                <input
+                  type="text"
+                  value={addressForm.country}
+                  onChange={(e) =>
+                    setAddressForm((prev) => ({ ...prev, country: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
+                  placeholder="Country"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Street Address *
+                </label>
+                <input
+                  type="text"
+                  value={addressForm.address}
+                  onChange={(e) =>
+                    setAddressForm((prev) => ({ ...prev, address: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
+                  placeholder="Street, building, floor..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  City *
+                </label>
+                <input
+                  type="text"
+                  value={addressForm.city}
+                  onChange={(e) =>
+                    setAddressForm((prev) => ({ ...prev, city: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
+                  placeholder="City"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  State *
+                </label>
+                <input
+                  type="text"
+                  value={addressForm.state}
+                  onChange={(e) =>
+                    setAddressForm((prev) => ({ ...prev, state: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
+                  placeholder="State"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Directions (optional)
+                </label>
+                <textarea
+                  value={addressForm.directions}
+                  onChange={(e) =>
+                    setAddressForm((prev) => ({ ...prev, directions: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
+                  rows={2}
+                  placeholder="Landmark or delivery notes..."
+                />
+              </div>
+            </div>
+
+            {addressMessage ? (
+              <div
+                className={`mt-4 flex items-center gap-2 p-4 rounded-xl ${
+                  addressMessage.type === "success"
+                    ? "bg-green-50 text-green-700"
+                    : "bg-red-50 text-red-700"
+                }`}
+              >
+                {addressMessage.type === "success" ? (
+                  <Check size={20} />
+                ) : (
+                  <AlertCircle size={20} />
+                )}
+                <span className="text-sm font-medium">{addressMessage.text}</span>
+              </div>
+            ) : null}
+
+            <button
+              onClick={handleAddAddress}
+              disabled={saving}
+              className="mt-5 flex items-center gap-2 px-6 py-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 font-semibold"
+            >
+              <Save size={18} />
+              {saving ? "Saving..." : "Add Address"}
+            </button>
           </div>
 
           {/* Notification Preferences */}

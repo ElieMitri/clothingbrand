@@ -84,6 +84,7 @@ export function Profile() {
     }
   };
 
+
   const handleSave = async () => {
     if (!user) return;
 
@@ -408,6 +409,7 @@ export function Profile() {
 
             </div>
           </div>
+
         </div>
       </div>
     </div>

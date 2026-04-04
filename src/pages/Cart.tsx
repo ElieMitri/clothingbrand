@@ -21,6 +21,8 @@ import {
   getDoc,
   updateDoc,
   deleteDoc,
+  setDoc,
+  serverTimestamp,
 } from "firebase/firestore";
 import { useAuth } from "../contexts/AuthContext";
 import { placeOrderWithInventory } from "../lib/orderLogic";
@@ -55,16 +57,22 @@ interface RawCartItem {
   };
 }
 
+interface SavedAddress {
+  id: string;
+  label: string;
+  address: string;
+  directions?: string;
+  city: string;
+  state: string;
+  country: string;
+}
+
 export function Cart() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
-  const [checkoutNotice, setCheckoutNotice] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
   const [showCheckoutForm, setShowCheckoutForm] = useState(false);
   const [checkoutForm, setCheckoutForm] = useState({
     fullName: "",
@@ -73,7 +81,17 @@ export function Cart() {
     directions: "",
     city: "",
     state: "",
-    zipCode: "",
+    country: "",
+  });
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState("");
+  const [showAddAddressModal, setShowAddAddressModal] = useState(false);
+  const [newAddressForm, setNewAddressForm] = useState({
+    label: "",
+    address: "",
+    directions: "",
+    city: "",
+    state: "",
     country: "",
   });
 
@@ -84,6 +102,42 @@ export function Cart() {
       setLoading(false);
     }
   }, [user]);
+
+  const normalizeAddressBook = (raw: unknown): SavedAddress[] => {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((entry, index) => {
+        if (!entry || typeof entry !== "object") return null;
+        const candidate = entry as Partial<SavedAddress>;
+        const label = String(candidate.label || "").trim();
+        const address = String(candidate.address || "").trim();
+        const city = String(candidate.city || "").trim();
+        const state = String(candidate.state || "").trim();
+        const country = String(candidate.country || "").trim();
+        if (!label || !address || !city || !state || !country) return null;
+        return {
+          id: String(candidate.id || `address-${index + 1}`),
+          label,
+          address,
+          directions: String(candidate.directions || "").trim(),
+          city,
+          state,
+          country,
+        } as SavedAddress;
+      })
+      .filter((entry: SavedAddress | null): entry is SavedAddress => entry !== null);
+  };
+
+  const applySavedAddress = (address: SavedAddress) => {
+    setCheckoutForm((prev) => ({
+      ...prev,
+      address: address.address,
+      directions: address.directions || "",
+      city: address.city,
+      state: address.state,
+      country: address.country,
+    }));
+  };
 
   const loadCart = async () => {
     try {
@@ -181,13 +235,41 @@ export function Cart() {
     }
   };
 
-  const openCheckoutForm = () => {
+  const openCheckoutForm = async () => {
     if (!user || cartItems.length === 0) return;
-    setCheckoutForm((prev) => ({
-      ...prev,
-      fullName: prev.fullName || user.displayName || "",
-    }));
-    setShowCheckoutForm(true);
+    try {
+      const userSnap = await getDoc(doc(db, "users", user.uid));
+      const userData = userSnap.exists() ? userSnap.data() : {};
+      const fullName = String(
+        `${userData.firstName || ""} ${userData.lastName || ""}`.trim() ||
+          userData.displayName ||
+          user.displayName ||
+          ""
+      );
+      const phone = String(
+        `${userData.countryCode || ""} ${userData.phone || ""}`.trim()
+      );
+      const addressBook = normalizeAddressBook(userData.addressBook);
+      setSavedAddresses(addressBook);
+
+      setCheckoutForm((prev) => ({
+        ...prev,
+        fullName: prev.fullName || fullName,
+        phone: prev.phone || phone,
+      }));
+
+      if (addressBook.length > 0) {
+        const pickedAddress =
+          addressBook.find((entry) => entry.id === selectedAddressId) ||
+          addressBook[0];
+        setSelectedAddressId(pickedAddress.id);
+        applySavedAddress(pickedAddress);
+      }
+      setShowCheckoutForm(true);
+    } catch (error) {
+      console.error("Error loading saved addresses:", error);
+      setShowCheckoutForm(true);
+    }
   };
 
   const checkout = async () => {
@@ -199,10 +281,10 @@ export function Cart() {
     const directions = checkoutForm.directions.trim() || "-";
     const city = checkoutForm.city.trim();
     const state = checkoutForm.state.trim();
-    const zipCode = checkoutForm.zipCode.trim();
+    const zipCode = "-";
     const country = checkoutForm.country.trim();
 
-    if (!fullName || !phone || !address || !city || !state || !zipCode || !country) {
+    if (!fullName || !phone || !address || !city || !state || !country) {
       alert("Please fill in all required shipping fields.");
       return;
     }
@@ -244,8 +326,6 @@ export function Cart() {
       });
 
       const email = String(user.email || "Not provided");
-      let notificationType: "success" | "error" = "success";
-      let notificationText = "Order placed. Discord notification queued.";
 
       try {
         const notificationPayload = {
@@ -285,8 +365,6 @@ export function Cart() {
             const reason = await response.text();
             throw new Error(reason || `HTTP ${response.status}`);
           }
-          notificationType = "success";
-          notificationText = "Order placed. Discord notification sent.";
         } catch (endpointError) {
           const failureReason =
             endpointError instanceof Error
@@ -296,18 +374,11 @@ export function Cart() {
             "Failed to send Discord order notification via API:",
             failureReason
           );
-          notificationType = "error";
-          notificationText =
-            "Order placed, but Discord notification failed to send.";
         }
       } catch (notificationError) {
         console.error("Discord order notification request failed:", notificationError);
-        notificationType = "error";
-        notificationText =
-          "Order placed, but Discord notification request failed.";
       }
 
-      setCheckoutNotice({ type: notificationType, text: notificationText });
       setShowCheckoutForm(false);
       setCheckoutForm({
         fullName: "",
@@ -316,7 +387,6 @@ export function Cart() {
         directions: "",
         city: "",
         state: "",
-        zipCode: "",
         country: "",
       });
       setTimeout(() => navigate("/orders"), 1300);
@@ -329,6 +399,72 @@ export function Cart() {
       alert(message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAddressSelect = (value: string) => {
+    if (value === "__add_new__") {
+      setShowAddAddressModal(true);
+      return;
+    }
+
+    setSelectedAddressId(value);
+    const selected = savedAddresses.find((entry) => entry.id === value);
+    if (selected) {
+      applySavedAddress(selected);
+    }
+  };
+
+  const handleSaveNewAddress = async () => {
+    if (!user) return;
+    const newAddress: SavedAddress = {
+      id: `addr-${Date.now()}`,
+      label: newAddressForm.label.trim(),
+      address: newAddressForm.address.trim(),
+      directions: newAddressForm.directions.trim(),
+      city: newAddressForm.city.trim(),
+      state: newAddressForm.state.trim(),
+      country: newAddressForm.country.trim(),
+    };
+
+    if (
+      !newAddress.label ||
+      !newAddress.address ||
+      !newAddress.city ||
+      !newAddress.state ||
+      !newAddress.country
+    ) {
+      alert("Please fill all required address fields.");
+      return;
+    }
+
+    const nextAddresses = [...savedAddresses, newAddress];
+
+    try {
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          addressBook: nextAddresses,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setSavedAddresses(nextAddresses);
+      setSelectedAddressId(newAddress.id);
+      applySavedAddress(newAddress);
+      setShowAddAddressModal(false);
+      setNewAddressForm({
+        label: "",
+        address: "",
+        directions: "",
+        city: "",
+        state: "",
+        country: "",
+      });
+    } catch (error) {
+      console.error("Error saving new address:", error);
+      alert("Failed to save address. Please try again.");
     }
   };
 
@@ -396,18 +532,6 @@ export function Cart() {
             your cart
           </p>
         </div>
-
-        {checkoutNotice ? (
-          <div
-            className={`mb-6 rounded-xl px-4 py-3 text-sm ${
-              checkoutNotice.type === "success"
-                ? "bg-emerald-50 border border-emerald-200 text-emerald-700"
-                : "bg-rose-50 border border-rose-200 text-rose-700"
-            }`}
-          >
-            {checkoutNotice.text}
-          </div>
-        ) : null}
 
         {cartItems.length === 0 ? (
           <div className="bg-white rounded-2xl shadow-sm p-12 text-center">
@@ -685,6 +809,34 @@ export function Cart() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Saved Location
+                </label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <select
+                    value={selectedAddressId}
+                    onChange={(e) => handleAddressSelect(e.target.value)}
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                  >
+                    <option value="">Select a saved location</option>
+                    {savedAddresses.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.label} — {entry.city}, {entry.country}
+                      </option>
+                    ))}
+                    <option value="__add_new__">+ Add address</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddAddressModal(true)}
+                    className="px-4 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50 whitespace-nowrap"
+                  >
+                    Add address
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
                   Street Address *
                 </label>
                 <input
@@ -744,35 +896,19 @@ export function Cart() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    ZIP Code *
-                  </label>
-                  <input
-                    type="text"
-                    value={checkoutForm.zipCode}
-                    onChange={(e) =>
-                      setCheckoutForm((prev) => ({ ...prev, zipCode: e.target.value }))
-                    }
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                    placeholder="ZIP Code"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Country *
-                  </label>
-                  <input
-                    type="text"
-                    value={checkoutForm.country}
-                    onChange={(e) =>
-                      setCheckoutForm((prev) => ({ ...prev, country: e.target.value }))
-                    }
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                    placeholder="Country"
-                  />
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Country *
+                </label>
+                <input
+                  type="text"
+                  value={checkoutForm.country}
+                  onChange={(e) =>
+                    setCheckoutForm((prev) => ({ ...prev, country: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                  placeholder="Country"
+                />
               </div>
             </div>
 
@@ -791,6 +927,111 @@ export function Cart() {
                 className="px-5 py-2.5 rounded-xl bg-black text-white hover:bg-gray-800 disabled:opacity-50"
               >
                 {loading ? "Processing..." : "Place Order"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showAddAddressModal ? (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-white rounded-2xl shadow-xl">
+            <div className="p-6 border-b border-gray-200">
+              <h3 className="text-lg font-semibold">Add New Address</h3>
+              <p className="text-sm text-gray-600 mt-1">
+                Save a named location for faster checkout.
+              </p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Location Name *
+                </label>
+                <input
+                  type="text"
+                  value={newAddressForm.label}
+                  onChange={(e) =>
+                    setNewAddressForm((prev) => ({ ...prev, label: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                  placeholder="Home, Office..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Street Address *
+                </label>
+                <input
+                  type="text"
+                  value={newAddressForm.address}
+                  onChange={(e) =>
+                    setNewAddressForm((prev) => ({ ...prev, address: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                  placeholder="Street, building, floor..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Directions (optional)
+                </label>
+                <textarea
+                  value={newAddressForm.directions}
+                  onChange={(e) =>
+                    setNewAddressForm((prev) => ({
+                      ...prev,
+                      directions: e.target.value,
+                    }))
+                  }
+                  rows={2}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                  placeholder="Landmark or delivery notes..."
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <input
+                  type="text"
+                  value={newAddressForm.city}
+                  onChange={(e) =>
+                    setNewAddressForm((prev) => ({ ...prev, city: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                  placeholder="City *"
+                />
+                <input
+                  type="text"
+                  value={newAddressForm.state}
+                  onChange={(e) =>
+                    setNewAddressForm((prev) => ({ ...prev, state: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                  placeholder="State *"
+                />
+                <input
+                  type="text"
+                  value={newAddressForm.country}
+                  onChange={(e) =>
+                    setNewAddressForm((prev) => ({ ...prev, country: e.target.value }))
+                  }
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                  placeholder="Country *"
+                />
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-200 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setShowAddAddressModal(false)}
+                className="px-5 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveNewAddress}
+                className="px-5 py-2.5 rounded-xl bg-black text-white hover:bg-gray-800"
+              >
+                Save Address
               </button>
             </div>
           </div>

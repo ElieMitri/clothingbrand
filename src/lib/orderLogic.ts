@@ -49,6 +49,13 @@ const STOCK_CONSUMING_STATUSES = new Set<OrderStatus>([
   "shipped",
   "delivered",
 ]);
+const STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  pending: ["pending", "processing", "cancelled"],
+  processing: ["processing", "shipped"],
+  shipped: ["shipped", "delivered"],
+  delivered: ["delivered"],
+  cancelled: ["cancelled"],
+};
 
 const normalizeSizeKey = (size?: string) => (size || "").trim();
 
@@ -195,8 +202,11 @@ export async function updateOrderStatusWithInventory({
     const stockRestored = Boolean(orderData.stock_restored);
     const now = Timestamp.now();
 
-    if (newStatus === "cancelled" && currentStatus !== "pending") {
-      throw new Error("Orders can only be cancelled while they are pending.");
+    const allowedTransitions = STATUS_TRANSITIONS[currentStatus] || [currentStatus];
+    if (!allowedTransitions.includes(newStatus)) {
+      throw new Error(
+        `Invalid status transition from "${currentStatus}" to "${newStatus}".`
+      );
     }
 
     const shouldRestock =

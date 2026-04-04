@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Plus,
   Edit,
   Trash2,
+  Menu,
   Search,
   DollarSign,
   ShoppingBag,
@@ -17,6 +18,7 @@ import {
   Sparkles,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Mail,
   AlertCircle,
   Download,
@@ -34,6 +36,7 @@ import {
   Timestamp,
   getDoc,
   getDocs,
+  limit,
   setDoc,
   onSnapshot,
   writeBatch,
@@ -83,6 +86,8 @@ interface Product {
 interface OrderLineItem {
   product_id: string;
   product_name?: string;
+  product_image?: string;
+  category?: string;
   size?: string;
   price: number;
   quantity: number;
@@ -90,7 +95,7 @@ interface OrderLineItem {
 
 interface Order {
   id: string;
-  user_id: string;
+  user_id?: string;
   user_email?: string;
   items: OrderLineItem[];
   total: number;
@@ -108,6 +113,69 @@ interface Subscriber {
   email: string;
   subscribed_at: DateField;
   sent_emails: number;
+}
+
+interface AdminUser {
+  id: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  displayName?: string;
+  phone?: string;
+  countryCode?: string;
+  address?: string;
+  addressDetails?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  country?: string;
+  provider?: string;
+  subscribeNewsletter?: boolean;
+  notificationPreferences?: Partial<NotificationPreferences>;
+  createdAt?: DateField;
+  updatedAt?: DateField;
+}
+
+interface AdminUserRow {
+  id: string;
+  email: string;
+  fullName: string;
+  phone: string;
+  location: string;
+  provider: string;
+  ordersCount: number;
+  totalSpent: number;
+  lastOrderDate: Date | null;
+  subscribedNewsletter: boolean;
+  preferences: NotificationPreferences;
+  createdAt?: DateField;
+  updatedAt?: DateField;
+  address?: string;
+  addressDetails?: string;
+}
+
+interface NotificationPreferences {
+  orderUpdates: boolean;
+  promotions: boolean;
+  newsletter: boolean;
+}
+
+type WebNotificationCategory =
+  | "general"
+  | "orderUpdates"
+  | "promotions"
+  | "newsletter";
+
+interface WebNotificationTemplate {
+  id: string;
+  label: string;
+  category: WebNotificationCategory;
+  title: string;
+  message: string;
+}
+
+interface SubscriberView extends Subscriber {
+  preferences: NotificationPreferences;
 }
 
 interface CollectionEntry {
@@ -174,14 +242,21 @@ export function AdminDashboard() {
     | "overview"
     | "products"
     | "orders"
+    | "users"
     | "featured"
     | "collections"
     | "subscribers"
   >("overview");
+  const [isSideNavOpen, setIsSideNavOpen] = useState(false);
+  const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
+  const [userPreferencesByEmail, setUserPreferencesByEmail] = useState<
+    Record<string, NotificationPreferences>
+  >({});
   const [collectionsData, setCollectionsData] = useState<CollectionEntry[]>([]);
   const [analytics, setAnalytics] = useState<Analytics>({
     totalRevenue: 0,
@@ -203,6 +278,7 @@ export function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [orderSearchTerm, setOrderSearchTerm] = useState("");
+  const [userSearchTerm, setUserSearchTerm] = useState("");
   const [subscriberSearchTerm, setSubscriberSearchTerm] = useState("");
   const [collectionSearchTerm, setCollectionSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
@@ -286,6 +362,12 @@ export function AdminDashboard() {
     subject: "",
     message: "",
   });
+  const [showWebNotificationModal, setShowWebNotificationModal] = useState(false);
+  const [webNotificationForm, setWebNotificationForm] = useState({
+    title: "",
+    message: "",
+    category: "general" as WebNotificationCategory,
+  });
   const [sendingDiscordTest, setSendingDiscordTest] = useState(false);
   const [discordTestMessage, setDiscordTestMessage] = useState<{
     type: "success" | "error";
@@ -293,6 +375,58 @@ export function AdminDashboard() {
   } | null>(null);
   const [featuredToAddId, setFeaturedToAddId] = useState("");
   const [newArrivalToAddId, setNewArrivalToAddId] = useState("");
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+
+  const getSaleReminderText = () => {
+    if (!saleSettings.end_at_input) return "Our sale is live now for a limited time.";
+    const endAt = new Date(saleSettings.end_at_input);
+    if (Number.isNaN(endAt.getTime())) {
+      return "Our sale is live now for a limited time.";
+    }
+    return `Our sale ends on ${endAt.toLocaleString()}.`;
+  };
+
+  const notificationTemplates: WebNotificationTemplate[] = [
+    {
+      id: "sale-reminder",
+      label: "Sale Reminder",
+      category: "promotions",
+      title: saleSettings.sale_title || "Sale Reminder",
+      message: `${saleSettings.sale_subtitle || "Limited-time offer"}. ${getSaleReminderText()}`,
+    },
+    {
+      id: "last-chance-sale",
+      label: "Last Chance Sale",
+      category: "promotions",
+      title: "Last Chance: Sale Ending Soon",
+      message:
+        "Final hours to shop your favorites at discounted prices. Tap Sale now before it ends.",
+    },
+    {
+      id: "new-drop",
+      label: "New Drop",
+      category: "promotions",
+      title: "New Arrivals Just Dropped",
+      message:
+        "Fresh pieces are now live. Open the store to shop sizes before they sell out.",
+    },
+    {
+      id: "restock",
+      label: "Restock Alert",
+      category: "promotions",
+      title: "Popular Items Restocked",
+      message:
+        "Requested styles are back in stock. Shop now while inventory lasts.",
+    },
+    {
+      id: "order-delay",
+      label: "Order Delay Update",
+      category: "orderUpdates",
+      title: "Shipping Timeline Update",
+      message:
+        "Some orders may take a little longer than expected. Thanks for your patience while we prepare each package.",
+    },
+  ];
 
   // Confirmation Modal
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -543,6 +677,40 @@ export function AdminDashboard() {
         })) as Subscriber[];
 
         setSubscribers(data);
+      })
+    );
+
+    // USER NOTIFICATION PREFERENCES
+    unsubs.push(
+      onSnapshot(collection(db, "users"), (snap) => {
+        const preferencesByEmail: Record<string, NotificationPreferences> = {};
+        const usersData = snap.docs.map((entry) => ({
+          id: entry.id,
+          ...(entry.data() as Omit<AdminUser, "id">),
+        })) as AdminUser[];
+
+        snap.docs.forEach((entry) => {
+          const data = entry.data() as {
+            email?: string;
+            subscribeNewsletter?: boolean;
+            notificationPreferences?: Partial<NotificationPreferences>;
+          };
+
+          const email = (data.email || "").trim().toLowerCase();
+          if (!email) return;
+
+          preferencesByEmail[email] = {
+            orderUpdates: data.notificationPreferences?.orderUpdates ?? true,
+            promotions: data.notificationPreferences?.promotions ?? true,
+            newsletter:
+              data.notificationPreferences?.newsletter ??
+              data.subscribeNewsletter ??
+              true,
+          };
+        });
+
+        setAdminUsers(usersData);
+        setUserPreferencesByEmail(preferencesByEmail);
       })
     );
 
@@ -1043,6 +1211,107 @@ export function AdminDashboard() {
     }
   };
 
+  const applyNotificationTemplate = (templateId: string) => {
+    const selectedTemplate = notificationTemplates.find(
+      (entry) => entry.id === templateId
+    );
+    if (!selectedTemplate) return;
+
+    setWebNotificationForm({
+      title: selectedTemplate.title,
+      message: selectedTemplate.message,
+      category: selectedTemplate.category,
+    });
+  };
+
+  const getOrderStatusNotificationCopy = (
+    newStatus: OrderStatus
+  ): { title: string; message: string } => {
+    switch (newStatus) {
+      case "pending":
+        return {
+          title: "Order Update: Pending",
+          message:
+            "Your order was received and is pending confirmation. We will notify you once preparation starts.",
+        };
+      case "processing":
+        return {
+          title: "Order Update: Processing",
+          message:
+            "Great news. Your order is now being prepared by our team.",
+        };
+      case "shipped":
+        return {
+          title: "Order Update: Shipped",
+          message: "Your order is on the way. Keep an eye out for delivery.",
+        };
+      case "delivered":
+        return {
+          title: "Order Update: Delivered",
+          message: "Your order has been marked as delivered. Enjoy your items.",
+        };
+      case "cancelled":
+        return {
+          title: "Order Update: Cancelled",
+          message:
+            "Your order has been cancelled. If this seems wrong, contact support.",
+        };
+      default:
+        return {
+          title: "Order Update",
+          message: "There is a new update on your order.",
+        };
+    }
+  };
+
+  const resolveOrderRecipientUserId = async (
+    providedUserId?: string,
+    providedEmail?: string
+  ) => {
+    if (providedUserId) return providedUserId;
+
+    const normalizedEmail = String(providedEmail || "").trim().toLowerCase();
+    if (!normalizedEmail) return "";
+
+    const match = await getDocs(
+      query(collection(db, "users"), where("email", "==", normalizedEmail), limit(1))
+    );
+
+    if (!match.empty) return match.docs[0].id;
+    return "";
+  };
+
+  const createOrderStatusNotification = async ({
+    orderId,
+    userId,
+    userEmail,
+    newStatus,
+    itemCount,
+  }: {
+    orderId: string;
+    userId?: string;
+    userEmail?: string;
+    newStatus: OrderStatus;
+    itemCount: number;
+  }) => {
+    const recipientUserId = await resolveOrderRecipientUserId(userId, userEmail);
+    const normalizedEmail = String(userEmail || "").trim().toLowerCase();
+    if (!recipientUserId && !normalizedEmail) return;
+    const copy = getOrderStatusNotificationCopy(newStatus);
+
+    await addDoc(collection(db, "web_notifications"), {
+      title: `${copy.title} • #${orderId.slice(0, 8).toUpperCase()}`,
+      message: `${copy.message} (${itemCount} item${itemCount === 1 ? "" : "s"})`,
+      category: "orderUpdates",
+      created_at: Timestamp.now(),
+      created_by: user?.email || "admin",
+      recipient_user_id: recipientUserId || null,
+      recipient_email: normalizedEmail || null,
+      order_id: orderId,
+      order_status: newStatus,
+    });
+  };
+
   const saveOrder = async () => {
     try {
       if (!editingOrder) return;
@@ -1079,6 +1348,20 @@ export function AdminDashboard() {
           newStatus: nextStatus,
           statusNote: "Updated by admin dashboard",
         });
+        try {
+          await createOrderStatusNotification({
+            orderId: editingOrder.id,
+            userId: editingOrder.user_id,
+            userEmail: editingOrder.user_email || orderForm.user_email,
+            newStatus: nextStatus,
+            itemCount: cleanedItems.reduce(
+              (sum, item) => sum + Number(item.quantity || 0),
+              0
+            ),
+          });
+        } catch (notificationError) {
+          console.error("Failed to send order status web notification:", notificationError);
+        }
       }
 
       await updateDoc(doc(db, "orders", editingOrder.id), orderData);
@@ -1193,6 +1476,34 @@ export function AdminDashboard() {
       });
     } finally {
       setSendingDiscordTest(false);
+    }
+  };
+
+  const sendWebNotification = async () => {
+    if (!webNotificationForm.title.trim() || !webNotificationForm.message.trim()) {
+      alert("Please fill in notification title and message");
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, "web_notifications"), {
+        title: webNotificationForm.title.trim(),
+        message: webNotificationForm.message.trim(),
+        category: webNotificationForm.category,
+        created_at: Timestamp.now(),
+        created_by: user?.email || "admin",
+      });
+
+      alert("Web notification sent successfully.");
+      setShowWebNotificationModal(false);
+      setWebNotificationForm({
+        title: "",
+        message: "",
+        category: "general",
+      });
+    } catch (error) {
+      console.error("Send web notification error:", error);
+      alert("Failed to send web notification");
     }
   };
 
@@ -1615,7 +1926,7 @@ export function AdminDashboard() {
 
   const updateOrderStatus = async (
     orderId: string,
-    newStatus: string,
+    newStatus: OrderStatus,
     statusNote?: string
   ) => {
     try {
@@ -1625,15 +1936,36 @@ export function AdminDashboard() {
         orderId,
         userId: order.user_id,
         items: order.items,
-        newStatus: newStatus as OrderStatus,
+        newStatus,
         statusNote,
       });
+      try {
+        await createOrderStatusNotification({
+          orderId,
+          userId: order.user_id,
+          userEmail: order.user_email,
+          newStatus,
+          itemCount: Array.isArray(order.items)
+            ? order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+            : 0,
+        });
+      } catch (notificationError) {
+        console.error("Failed to send order status web notification:", notificationError);
+      }
     } catch (error) {
       console.error("Error updating order status:", error);
       alert(
         error instanceof Error ? error.message : "Failed to update order status"
       );
     }
+  };
+
+  const getAllowedStatusOptions = (currentStatus: OrderStatus): OrderStatus[] => {
+    if (currentStatus === "pending") return ["pending", "processing", "cancelled"];
+    if (currentStatus === "processing") return ["processing", "shipped"];
+    if (currentStatus === "shipped") return ["shipped", "delivered"];
+    if (currentStatus === "delivered") return ["delivered"];
+    return ["cancelled"];
   };
 
   const deleteSubscriber = async (subscriberId: string) => {
@@ -1705,6 +2037,7 @@ export function AdminDashboard() {
               matchedUserDocs.forEach((userDoc) => {
                 batch.update(userDoc.ref, {
                   subscribeNewsletter: false,
+                  "notificationPreferences.newsletter": false,
                   updatedAt: Timestamp.now(),
                 });
               });
@@ -1715,6 +2048,79 @@ export function AdminDashboard() {
         } catch (error) {
           console.error("Error deleting subscriber:", error);
           alert("Failed to remove subscriber");
+        }
+      },
+    });
+    setShowConfirmModal(true);
+  };
+
+  const deleteUser = async (userId: string) => {
+    const userToDelete = adminUsers.find((entry) => entry.id === userId);
+    const normalizedEmail = String(userToDelete?.email || "")
+      .trim()
+      .toLowerCase();
+
+    if (!userToDelete) {
+      alert("User not found.");
+      return;
+    }
+
+    if (user?.uid && user.uid === userId) {
+      alert("You cannot delete your own admin user from this panel.");
+      return;
+    }
+
+    setConfirmAction({
+      title: "Delete User",
+      message:
+        "This will permanently remove this user profile and related Firestore data (orders, carts, notification states, newsletter records). Continue?",
+      danger: true,
+      onConfirm: async () => {
+        try {
+          const batch = writeBatch(db);
+
+          // Delete main user document
+          batch.delete(doc(db, "users", userId));
+
+          // Delete user orders in subcollection
+          const userOrdersSnapshot = await getDocs(
+            collection(db, "users", userId, "orders")
+          );
+          userOrdersSnapshot.forEach((entry) => batch.delete(entry.ref));
+
+          // Delete user notification states
+          const userNotiStatesSnapshot = await getDocs(
+            collection(db, "users", userId, "web_notification_states")
+          );
+          userNotiStatesSnapshot.forEach((entry) => batch.delete(entry.ref));
+
+          // Delete global orders linked to this user id
+          const globalOrdersSnapshot = await getDocs(
+            query(collection(db, "orders"), where("user_id", "==", userId))
+          );
+          globalOrdersSnapshot.forEach((entry) => batch.delete(entry.ref));
+
+          // Delete carts linked to this user
+          const cartsSnapshot = await getDocs(
+            query(collection(db, "carts"), where("user_id", "==", userId))
+          );
+          cartsSnapshot.forEach((entry) => batch.delete(entry.ref));
+
+          // Delete newsletter docs for matching email
+          if (normalizedEmail) {
+            const newsletterSnapshot = await getDocs(
+              query(collection(db, "newsletter"), where("email", "==", normalizedEmail))
+            );
+            newsletterSnapshot.forEach((entry) => batch.delete(entry.ref));
+          }
+
+          await batch.commit();
+          alert(
+            "User data deleted from Firestore. Note: Firebase Auth account deletion requires backend admin privileges."
+          );
+        } catch (error) {
+          console.error("Error deleting user:", error);
+          alert("Failed to delete user.");
         }
       },
     });
@@ -1837,8 +2243,113 @@ export function AdminDashboard() {
     );
   });
 
-  const filteredSubscribers = subscribers.filter((sub) =>
+  const userRows: AdminUserRow[] = adminUsers.map((entry) => {
+    const email = String(entry.email || "").trim().toLowerCase();
+    const relatedOrders = orders.filter((order) => {
+      if (order.user_id && order.user_id === entry.id) return true;
+      if (!email) return false;
+      return String(order.user_email || "").trim().toLowerCase() === email;
+    });
+    const lastOrderDate =
+      relatedOrders.length > 0
+        ? relatedOrders.reduce<Date | null>((latest, order) => {
+            const orderDate = toDate(order.created_at);
+            if (!latest || orderDate.getTime() > latest.getTime()) return orderDate;
+            return latest;
+          }, null)
+        : null;
+    const totalSpent = relatedOrders.reduce(
+      (sum, order) => sum + Number(order.total || 0),
+      0
+    );
+    const fullName = String(
+      `${entry.firstName || ""} ${entry.lastName || ""}`.trim() ||
+        entry.displayName ||
+        "Not provided"
+    );
+    const phone = String(
+      `${entry.countryCode || ""} ${entry.phone || ""}`.trim() || "Not provided"
+    );
+    const locationParts = [entry.city, entry.state, entry.country]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean);
+    const location = locationParts.length > 0 ? locationParts.join(", ") : "-";
+    const mappedPrefs = userPreferencesByEmail[email];
+    const subscriberMatch = subscribers.some(
+      (sub) => String(sub.email || "").trim().toLowerCase() === email
+    );
+
+    return {
+      id: entry.id,
+      email: email || "-",
+      fullName,
+      phone,
+      location,
+      provider: String(entry.provider || "email/password"),
+      ordersCount: relatedOrders.length,
+      totalSpent,
+      lastOrderDate,
+      subscribedNewsletter: Boolean(
+        entry.subscribeNewsletter ?? subscriberMatch ?? false
+      ),
+      preferences: {
+        orderUpdates:
+          mappedPrefs?.orderUpdates ??
+          entry.notificationPreferences?.orderUpdates ??
+          true,
+        promotions:
+          mappedPrefs?.promotions ??
+          entry.notificationPreferences?.promotions ??
+          true,
+        newsletter:
+          mappedPrefs?.newsletter ??
+          entry.notificationPreferences?.newsletter ??
+          Boolean(entry.subscribeNewsletter ?? subscriberMatch ?? false),
+      },
+      createdAt: entry.createdAt,
+      updatedAt: entry.updatedAt,
+      address: entry.address,
+      addressDetails: entry.addressDetails,
+    };
+  });
+
+  const filteredUsers = userRows.filter((row) => {
+    const term = userSearchTerm.toLowerCase();
+    return (
+      row.email.toLowerCase().includes(term) ||
+      row.fullName.toLowerCase().includes(term) ||
+      row.phone.toLowerCase().includes(term) ||
+      row.location.toLowerCase().includes(term) ||
+      row.id.toLowerCase().includes(term)
+    );
+  });
+
+  const subscriberRows: SubscriberView[] = subscribers.map((subscriber) => {
+    const email = subscriber.email?.toLowerCase?.() || "";
+    const mappedPrefs = userPreferencesByEmail[email];
+
+    return {
+      ...subscriber,
+      preferences: {
+        orderUpdates: mappedPrefs?.orderUpdates ?? true,
+        promotions: mappedPrefs?.promotions ?? true,
+        newsletter: mappedPrefs?.newsletter ?? true,
+      },
+    };
+  });
+
+  const filteredSubscribers = subscriberRows.filter((sub) =>
     sub.email.toLowerCase().includes(subscriberSearchTerm.toLowerCase())
+  );
+
+  const renderPreferenceBadge = (enabled: boolean) => (
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+        enabled ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-600"
+      }`}
+    >
+      {enabled ? "Yes" : "No"}
+    </span>
   );
   const filteredCollections = collectionsData.filter((entry) => {
     const term = collectionSearchTerm.toLowerCase();
@@ -1869,6 +2380,7 @@ export function AdminDashboard() {
       | "overview"
       | "products"
       | "orders"
+      | "users"
       | "featured"
       | "collections"
       | "subscribers";
@@ -1878,51 +2390,153 @@ export function AdminDashboard() {
     { id: "overview", label: "Overview", icon: TrendingUp },
     { id: "products", label: "Products", icon: Package },
     { id: "orders", label: "Orders", icon: ShoppingBag },
+    { id: "users", label: "Users", icon: Users },
     { id: "featured", label: "Featured & New", icon: Star },
     { id: "collections", label: "Collections", icon: Sparkles },
     { id: "subscribers", label: "Subscribers", icon: Mail },
   ];
+  const activeTabMeta = tabs.find((tab) => tab.id === activeTab) || tabs[0];
+  const handleTabSelect = (tabId: (typeof tabs)[number]["id"]) => {
+    setActiveTab(tabId);
+    setIsSideNavOpen(false);
+  };
 
   return (
     <div className="min-h-screen pt-24 pb-16 px-3 sm:px-4 bg-gray-50">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl sm:text-4xl font-light tracking-wider mb-2">
-              ADMIN DASHBOARD
-            </h1>
-            <p className="text-gray-600">
-              Manage your store, products, orders, and subscribers
-            </p>
-          </div>
+        <div className="lg:hidden mb-4">
           <button
-            onClick={resetAllOrders}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+            onClick={() => setIsSideNavOpen(true)}
+            className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 shadow-sm flex items-center justify-between"
           >
-            <RefreshCw size={20} />
-            Reset Revenue
+            <span className="inline-flex items-center gap-2 text-sm font-medium text-gray-800">
+              <Menu size={18} />
+              Sections
+            </span>
+            <span className="inline-flex items-center gap-2 text-sm text-gray-600">
+              <activeTabMeta.icon size={16} />
+              {activeTabMeta.label}
+            </span>
           </button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-2 sm:gap-4 mb-8 border-b border-gray-200 overflow-x-auto pb-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-3 sm:px-6 py-3 border-b-2 transition-colors whitespace-nowrap text-sm sm:text-base ${
-                activeTab === tab.id
-                  ? "border-black text-black"
-                  : "border-transparent text-gray-500 hover:text-black"
-              }`}
-            >
-              <tab.icon size={20} />
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        {isSideNavOpen && (
+          <div
+            className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+            onClick={() => setIsSideNavOpen(false)}
+          />
+        )}
 
+        <aside
+          className={`fixed top-0 left-0 h-full w-72 bg-white border-r border-gray-200 z-50 transform transition-transform duration-300 lg:hidden ${
+            isSideNavOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
+          <div className="flex items-center justify-between px-4 py-4 border-b border-gray-200">
+            <p className="text-sm font-semibold tracking-wide">Dashboard Menu</p>
+            <button
+              onClick={() => setIsSideNavOpen(false)}
+              className="p-2 rounded-lg hover:bg-gray-100"
+              aria-label="Close menu"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="p-4 border-b border-gray-200">
+            <h1 className="text-2xl font-light tracking-wider leading-tight mb-2">
+              ADMIN DASHBOARD
+            </h1>
+            <p className="text-sm text-gray-600 mb-4">
+              Manage your store, products, orders, and subscribers
+            </p>
+            <button
+              onClick={resetAllOrders}
+              className="w-full flex items-center justify-center gap-2 bg-red-600 text-white px-4 py-2.5 rounded-lg hover:bg-red-700 transition-colors"
+            >
+              <RefreshCw size={18} />
+              Reset Revenue
+            </button>
+          </div>
+          <div className="p-3 space-y-1">
+            {tabs.map((tab) => (
+              <button
+                key={`mobile-${tab.id}`}
+                onClick={() => handleTabSelect(tab.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  activeTab === tab.id
+                    ? "bg-black text-white"
+                    : "text-gray-700 hover:bg-gray-100"
+                }`}
+              >
+                <tab.icon size={18} />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        {isDesktopSidebarOpen && (
+          <aside className="hidden lg:block fixed left-0 top-24 bottom-0 w-72 z-30 px-3 pb-4">
+            <div className="h-full bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+              <div className="p-5 border-b border-gray-200">
+                <div className="flex items-center justify-between mb-3">
+                  <h1 className="text-2xl font-light tracking-wider leading-tight">
+                    ADMIN DASHBOARD
+                  </h1>
+                  <button
+                    onClick={() => setIsDesktopSidebarOpen(false)}
+                    className="inline-flex items-center justify-center h-9 w-9 rounded-lg border border-gray-300 hover:bg-gray-100"
+                    aria-label="Close sidebar"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <p className="text-sm text-gray-600 mb-4">
+                  Manage your store, products, orders, and subscribers
+                </p>
+                <button
+                  onClick={resetAllOrders}
+                  className="w-full flex items-center justify-center gap-2 bg-red-600 text-white px-4 py-2.5 rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  <RefreshCw size={18} />
+                  Reset Revenue
+                </button>
+              </div>
+              <div className="p-2 overflow-y-auto">
+                {tabs.map((tab) => (
+                  <button
+                    key={`desktop-${tab.id}`}
+                    onClick={() => handleTabSelect(tab.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                      activeTab === tab.id
+                        ? "bg-black text-white"
+                        : "text-gray-700 hover:bg-gray-100"
+                    }`}
+                  >
+                    <tab.icon size={18} />
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </aside>
+        )}
+
+        <button
+          onClick={() => setIsDesktopSidebarOpen((prev) => !prev)}
+          className="hidden lg:inline-flex fixed left-3 top-[6.8rem] z-40 items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm hover:bg-gray-50"
+          aria-label={isDesktopSidebarOpen ? "Close sidebar" : "Open sidebar"}
+        >
+          <Menu size={16} />
+          {isDesktopSidebarOpen ? "Close" : "Open"}
+        </button>
+
+        <div
+          className={`min-w-0 transition-all duration-300 ${
+            isDesktopSidebarOpen ? "lg:ml-72" : "lg:ml-0"
+          }`}
+        >
+          <div className="flex-1 min-w-0">
         {/* Overview Tab */}
         {activeTab === "overview" && (
           <div className="space-y-6">
@@ -2133,7 +2747,7 @@ export function AdminDashboard() {
                         Order #{order.id.slice(0, 8).toUpperCase()}
                       </p>
                       <p className="text-sm text-gray-500">
-                        {order.user_email || order.user_id} •{" "}
+                        {order.user_email || order.user_id || "Guest"} •{" "}
                         {order.items.length} items
                       </p>
                     </div>
@@ -2438,9 +3052,12 @@ export function AdminDashboard() {
 
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[920px]">
+                <table className="w-full min-w-[1020px]">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Details
+                      </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Order ID
                       </th>
@@ -2466,13 +3083,37 @@ export function AdminDashboard() {
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {filteredOrders.map((order) => (
-                      <tr key={order.id} className="hover:bg-gray-50">
+                      <Fragment key={order.id}>
+                        <tr className="hover:bg-gray-50">
+                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedOrderId((prev) =>
+                                prev === order.id ? null : order.id
+                              )
+                            }
+                            className="inline-flex items-center justify-center h-8 w-8 rounded-full border border-gray-300 hover:bg-gray-100 transition-colors"
+                            aria-label={
+                              expandedOrderId === order.id
+                                ? "Hide order details"
+                                : "Show order details"
+                            }
+                          >
+                            <ChevronDown
+                              size={16}
+                              className={`transition-transform ${
+                                expandedOrderId === order.id ? "rotate-180" : ""
+                              }`}
+                            />
+                          </button>
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           #{order.id.slice(0, 8).toUpperCase()}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                           {order.user_email ||
-                            `User ${order.user_id.slice(0, 8)}`}
+                            `User ${(order.user_id || "guest").slice(0, 8)}`}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                           {toDate(order.created_at).toLocaleDateString()}
@@ -2498,7 +3139,7 @@ export function AdminDashboard() {
                           <select
                             value={order.status}
                             onChange={(e) =>
-                              updateOrderStatus(order.id, e.target.value)
+                              updateOrderStatus(order.id, e.target.value as OrderStatus)
                             }
                             className={`px-3 py-1 text-xs font-semibold rounded-full border-0 cursor-pointer ${
                               order.status === "pending"
@@ -2512,14 +3153,11 @@ export function AdminDashboard() {
                                 : "bg-red-100 text-red-800"
                             }`}
                           >
-                            <option value="pending">Pending</option>
-                            <option value="processing">Processing</option>
-                            <option value="shipped">Shipped</option>
-                            <option value="delivered">Delivered</option>
-                            {(order.status === "pending" ||
-                              order.status === "cancelled") && (
-                              <option value="cancelled">Cancelled</option>
-                            )}
+                            {getAllowedStatusOptions(order.status).map((status) => (
+                              <option key={status} value={status}>
+                                {status.charAt(0).toUpperCase() + status.slice(1)}
+                              </option>
+                            ))}
                           </select>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -2553,6 +3191,100 @@ export function AdminDashboard() {
                           </div>
                         </td>
                       </tr>
+                      {expandedOrderId === order.id && (
+                        <tr className="bg-gray-50/70">
+                          <td colSpan={8} className="px-6 py-5">
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                              <div className="lg:col-span-2 space-y-3">
+                                <h4 className="text-sm font-semibold text-gray-900">
+                                  Order Items
+                                </h4>
+                                <div className="space-y-3">
+                                  {order.items.map((item, index) => (
+                                    <div
+                                      key={`${order.id}-${item.product_id}-${index}`}
+                                      className="bg-white border border-gray-200 rounded-xl p-3 flex gap-3"
+                                    >
+                                      <div className="h-16 w-16 rounded-lg overflow-hidden bg-gray-100 shrink-0">
+                                        {item.product_image ? (
+                                          <img
+                                            src={item.product_image}
+                                            alt={item.product_name || "Product"}
+                                            className="h-full w-full object-cover"
+                                          />
+                                        ) : (
+                                          <div className="h-full w-full flex items-center justify-center text-[10px] text-gray-500">
+                                            No image
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-semibold text-gray-900 truncate">
+                                          {item.product_name || "Unnamed product"}
+                                        </p>
+                                        <div className="mt-1 text-xs text-gray-600 space-y-0.5">
+                                          <p>Product ID: {item.product_id || "-"}</p>
+                                          <p>Size: {item.size || "-"}</p>
+                                          <p>Category: {item.category || "-"}</p>
+                                          <p>Qty: {item.quantity}</p>
+                                          <p>Unit: ${Number(item.price || 0).toFixed(2)}</p>
+                                        </div>
+                                      </div>
+                                      <div className="text-right shrink-0">
+                                        <p className="text-sm font-semibold text-gray-900">
+                                          $
+                                          {(
+                                            Number(item.price || 0) *
+                                            Number(item.quantity || 0)
+                                          ).toFixed(2)}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="bg-white border border-gray-200 rounded-xl p-4">
+                                <h4 className="text-sm font-semibold text-gray-900 mb-3">
+                                  Summary
+                                </h4>
+                                <div className="space-y-2 text-sm">
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Order ID</span>
+                                    <span className="font-medium">#{order.id.slice(0, 8).toUpperCase()}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Customer</span>
+                                    <span className="font-medium text-right">
+                                      {order.user_email || order.user_id || "Guest"}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Status</span>
+                                    <span className="font-medium capitalize">
+                                      {order.status}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Date</span>
+                                    <span className="font-medium">
+                                      {toDate(order.created_at).toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div className="pt-2 border-t border-gray-200 flex justify-between">
+                                    <span className="text-gray-700 font-medium">
+                                      Total
+                                    </span>
+                                    <span className="text-gray-900 font-semibold">
+                                      ${Number(order.total || 0).toFixed(2)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -3292,6 +4024,166 @@ export function AdminDashboard() {
           </div>
         )}
 
+        {/* Users Tab */}
+        {activeTab === "users" && (
+          <div className="space-y-6">
+            <div className="bg-white p-6 rounded-xl shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-2xl font-light mb-2">Users</h2>
+                  <p className="text-gray-600">
+                    Full user profiles, contact details, preferences, and order activity
+                  </p>
+                </div>
+                <button
+                  onClick={() => exportData(filteredUsers, "users.csv")}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gray-200 text-black px-4 py-2 rounded-lg hover:bg-gray-300"
+                >
+                  <Download size={18} />
+                  Export
+                </button>
+              </div>
+
+              <div className="relative">
+                <Search
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+                  size={20}
+                />
+                <input
+                  type="text"
+                  placeholder="Search users by name, email, phone, location, or ID..."
+                  value={userSearchTerm}
+                  onChange={(e) => setUserSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                />
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1220px]">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        User
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Contact
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Address
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Preferences
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Orders
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Account
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {filteredUsers.map((row) => (
+                      <tr key={row.id} className="hover:bg-gray-50 align-top">
+                        <td className="px-6 py-4 text-sm">
+                          <p className="font-semibold text-gray-900">{row.fullName}</p>
+                          <p className="text-gray-600">{row.email}</p>
+                          <p className="text-xs text-gray-500 mt-1">ID: {row.id}</p>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-700">
+                          <p>{row.phone}</p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Provider: {row.provider}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Location: {row.location}
+                          </p>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-700">
+                          <p>{row.address || "-"}</p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {row.addressDetails || "-"}
+                          </p>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-700">
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-gray-500">Order updates</span>
+                              {renderPreferenceBadge(row.preferences.orderUpdates)}
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-gray-500">Promotions</span>
+                              {renderPreferenceBadge(row.preferences.promotions)}
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-gray-500">Newsletter</span>
+                              {renderPreferenceBadge(row.preferences.newsletter)}
+                            </div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-gray-500">Subscribed</span>
+                              {renderPreferenceBadge(row.subscribedNewsletter)}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-700">
+                          <p>
+                            <span className="font-semibold">{row.ordersCount}</span>{" "}
+                            orders
+                          </p>
+                          <p className="mt-1">
+                            Spent:{" "}
+                            <span className="font-semibold">
+                              ${row.totalSpent.toFixed(2)}
+                            </span>
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Last:{" "}
+                            {row.lastOrderDate
+                              ? row.lastOrderDate.toLocaleDateString()
+                              : "-"}
+                          </p>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-700">
+                          <p>
+                            Created:{" "}
+                            {row.createdAt
+                              ? toDate(row.createdAt).toLocaleDateString()
+                              : "-"}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Updated:{" "}
+                            {row.updatedAt
+                              ? toDate(row.updatedAt).toLocaleDateString()
+                              : "-"}
+                          </p>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-700">
+                          <button
+                            onClick={() => deleteUser(row.id)}
+                            className="inline-flex items-center gap-1 text-red-600 hover:text-red-800 font-medium"
+                          >
+                            <Trash2 size={16} />
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {filteredUsers.length === 0 && (
+                <div className="p-8 text-center text-gray-500">No users found.</div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Subscribers Tab */}
         {activeTab === "subscribers" && (
           <div className="space-y-6">
@@ -3306,12 +4198,11 @@ export function AdminDashboard() {
                 </div>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
                   <button
-                    onClick={sendDiscordTest}
-                    disabled={sendingDiscordTest}
-                    className="w-full sm:w-auto flex items-center justify-center gap-2 border border-gray-300 px-4 py-3 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    onClick={() => setShowWebNotificationModal(true)}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 border border-gray-300 px-4 py-3 rounded-lg hover:bg-gray-50 transition-colors"
                   >
-                    <RefreshCw size={18} className={sendingDiscordTest ? "animate-spin" : ""} />
-                    {sendingDiscordTest ? "Testing..." : "Test Discord"}
+                    <AlertCircle size={18} />
+                    Web Notification
                   </button>
                   <button
                     onClick={() => setShowEmailModal(true)}
@@ -3365,6 +4256,15 @@ export function AdminDashboard() {
                         Subscribed
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Order Updates
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Promotions
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Newsletter
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Campaigns Sent
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -3380,6 +4280,17 @@ export function AdminDashboard() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                           {toDate(subscriber.subscribed_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                          {renderPreferenceBadge(
+                            subscriber.preferences.orderUpdates
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                          {renderPreferenceBadge(subscriber.preferences.promotions)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                          {renderPreferenceBadge(subscriber.preferences.newsletter)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                           {subscriber.sent_emails || 0}
@@ -3407,6 +4318,8 @@ export function AdminDashboard() {
             </div>
           </div>
         )}
+          </div>
+        </div>
       </div>
 
       {/* Product Modal */}
@@ -4103,14 +5016,11 @@ export function AdminDashboard() {
                   }
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
                 >
-                  <option value="pending">Pending</option>
-                  <option value="processing">Processing</option>
-                  <option value="shipped">Shipped</option>
-                  <option value="delivered">Delivered</option>
-                  {(editingOrder.status === "pending" ||
-                    editingOrder.status === "cancelled") && (
-                    <option value="cancelled">Cancelled</option>
-                  )}
+                  {getAllowedStatusOptions(editingOrder.status).map((status) => (
+                    <option key={status} value={status}>
+                      {status.charAt(0).toUpperCase() + status.slice(1)}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -4377,6 +5287,114 @@ We're excited to announce..."
               >
                 <Mail size={20} />
                 Send Campaign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Web Notification Modal */}
+      {showWebNotificationModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
+              <h2 className="text-2xl font-light">Send Web Notification</h2>
+              <button
+                onClick={() => setShowWebNotificationModal(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Quick Templates
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {notificationTemplates.map((template) => (
+                    <button
+                      key={template.id}
+                      type="button"
+                      onClick={() => applyNotificationTemplate(template.id)}
+                      className="px-3 py-1.5 rounded-full text-xs font-medium border border-gray-300 hover:bg-gray-100"
+                    >
+                      {template.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Notification Type
+                </label>
+                <select
+                  value={webNotificationForm.category}
+                  onChange={(e) =>
+                    setWebNotificationForm({
+                      ...webNotificationForm,
+                      category: e.target.value as WebNotificationCategory,
+                    })
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                >
+                  <option value="general">General</option>
+                  <option value="orderUpdates">Order Updates</option>
+                  <option value="promotions">Promotions</option>
+                  <option value="newsletter">Newsletter</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Title</label>
+                <input
+                  type="text"
+                  value={webNotificationForm.title}
+                  onChange={(e) =>
+                    setWebNotificationForm({
+                      ...webNotificationForm,
+                      title: e.target.value,
+                    })
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                  placeholder="Important update"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Message
+                </label>
+                <textarea
+                  value={webNotificationForm.message}
+                  onChange={(e) =>
+                    setWebNotificationForm({
+                      ...webNotificationForm,
+                      message: e.target.value,
+                    })
+                  }
+                  rows={6}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                  placeholder="Write the notification users should receive..."
+                />
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-3 sticky bottom-0 bg-white">
+              <button
+                onClick={() => setShowWebNotificationModal(false)}
+                className="flex-1 px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={sendWebNotification}
+                className="flex-1 px-6 py-3 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
+              >
+                <AlertCircle size={20} />
+                Send Notification
               </button>
             </div>
           </div>

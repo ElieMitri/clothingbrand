@@ -953,7 +953,7 @@ export function ProductDetail() {
                 <div>
                   <p className="text-xs font-bold">Final Sale</p>
                   <p className="text-[10px] text-gray-600">
-                    No returns or exchanges
+                    No refunds, no exchange
                   </p>
                 </div>
               </div>

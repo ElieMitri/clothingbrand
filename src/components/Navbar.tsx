@@ -1,6 +1,9 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
+  Bell,
+  Check,
+  Clock3,
   ShoppingCart,
   User,
   LogOut,
@@ -16,10 +19,45 @@ import {
   collection,
   doc,
   getDoc,
+  limit,
   onSnapshot,
+  orderBy,
   query,
+  serverTimestamp,
+  setDoc,
+  Timestamp,
   where,
 } from "firebase/firestore";
+
+type DateField = Timestamp | Date | string | null | undefined;
+type WebNotificationCategory =
+  | "general"
+  | "orderUpdates"
+  | "promotions"
+  | "newsletter";
+
+interface WebNotificationEntry {
+  id: string;
+  title: string;
+  message: string;
+  category: WebNotificationCategory;
+  recipient_user_id?: string | null;
+  recipient_email?: string | null;
+  created_at?: DateField;
+}
+
+interface WebNotificationState {
+  status?: "read" | "remind_later";
+  remind_at?: DateField;
+}
+
+interface NotificationPreferences {
+  orderUpdates?: boolean;
+  promotions?: boolean;
+  newsletter?: boolean;
+}
+
+const REMIND_LATER_HOURS = 24;
 
 function PeakLogo({ className = "" }: { className?: string }) {
   return (
@@ -56,6 +94,20 @@ export function Navbar() {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isShopMenuOpen, setIsShopMenuOpen] = useState(false);
   const [cartItemCount, setCartItemCount] = useState(0);
+  const [webNotifications, setWebNotifications] = useState<
+    WebNotificationEntry[]
+  >([]);
+  const [notificationStates, setNotificationStates] = useState<
+    Record<string, WebNotificationState>
+  >({});
+  const [notificationPreferences, setNotificationPreferences] =
+    useState<NotificationPreferences>({
+      orderUpdates: true,
+      promotions: true,
+      newsletter: true,
+    });
+  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
+  const notificationPanelRef = useRef<HTMLDivElement | null>(null);
   const [shopCategories, setShopCategories] = useState<
     { name: string; path: string; special?: boolean }[]
   >([{ name: "New Arrivals", path: "/new-arrivals" }]);
@@ -106,6 +158,7 @@ export function Navbar() {
     setIsMobileMenuOpen(false);
     setIsUserMenuOpen(false);
     setIsShopMenuOpen(false);
+    setIsNotificationPanelOpen(false);
   }, [location]);
 
   useEffect(() => {
@@ -126,17 +179,22 @@ export function Navbar() {
   // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (isUserMenuOpen || isShopMenuOpen) {
+      if (isUserMenuOpen || isShopMenuOpen || isNotificationPanelOpen) {
         const target = e.target as HTMLElement;
-        if (!target.closest(".user-menu") && !target.closest(".shop-menu")) {
+        if (
+          !target.closest(".user-menu") &&
+          !target.closest(".shop-menu") &&
+          !target.closest(".notification-menu")
+        ) {
           setIsUserMenuOpen(false);
           setIsShopMenuOpen(false);
+          setIsNotificationPanelOpen(false);
         }
       }
     };
     document.addEventListener("click", handleClickOutside);
     return () => document.removeEventListener("click", handleClickOutside);
-  }, [isUserMenuOpen, isShopMenuOpen]);
+  }, [isUserMenuOpen, isShopMenuOpen, isNotificationPanelOpen]);
 
   const handleSignOut = async () => {
     try {
@@ -210,6 +268,132 @@ export function Navbar() {
     loadShopCategories();
   }, []);
 
+  useEffect(() => {
+    if (!user) {
+      setWebNotifications([]);
+      setNotificationStates({});
+      setNotificationPreferences({
+        orderUpdates: true,
+        promotions: true,
+        newsletter: true,
+      });
+      return;
+    }
+
+    const notificationsQuery = query(
+      collection(db, "web_notifications"),
+      orderBy("created_at", "desc"),
+      limit(100)
+    );
+    const statesRef = collection(db, "users", user.uid, "web_notification_states");
+    const userRef = doc(db, "users", user.uid);
+
+    const unsubNotifications = onSnapshot(notificationsQuery, (snapshot) => {
+      const items = snapshot.docs.map((entry) => ({
+        id: entry.id,
+        ...entry.data(),
+      })) as WebNotificationEntry[];
+      setWebNotifications(items);
+    });
+
+    const unsubStates = onSnapshot(statesRef, (snapshot) => {
+      const stateById: Record<string, WebNotificationState> = {};
+      snapshot.docs.forEach((entry) => {
+        stateById[entry.id] = entry.data() as WebNotificationState;
+      });
+      setNotificationStates(stateById);
+    });
+
+    const unsubUser = onSnapshot(userRef, (snapshot) => {
+      const data = snapshot.exists() ? snapshot.data() : {};
+      const prefs =
+        data.notificationPreferences &&
+        typeof data.notificationPreferences === "object"
+          ? (data.notificationPreferences as NotificationPreferences)
+          : {};
+      setNotificationPreferences({
+        orderUpdates: prefs.orderUpdates ?? true,
+        promotions: prefs.promotions ?? true,
+        newsletter: prefs.newsletter ?? true,
+      });
+    });
+
+    return () => {
+      unsubNotifications();
+      unsubStates();
+      unsubUser();
+    };
+  }, [user?.uid]);
+
+  const toDate = (value?: DateField) => {
+    if (value instanceof Timestamp) return value.toDate();
+    if (value instanceof Date) return value;
+    if (typeof value === "string") return new Date(value);
+    return null;
+  };
+
+  const isCategoryEnabled = (category: WebNotificationCategory) => {
+    if (category === "general") return true;
+    if (category === "orderUpdates") return notificationPreferences.orderUpdates ?? true;
+    if (category === "promotions") return notificationPreferences.promotions ?? true;
+    if (category === "newsletter") return notificationPreferences.newsletter ?? true;
+    return true;
+  };
+
+  const visibleNotifications = useMemo(() => {
+    const now = new Date();
+    const normalizedUserEmail = String(user?.email || "")
+      .trim()
+      .toLowerCase();
+    return webNotifications.filter((notification) => {
+      if (!isCategoryEnabled(notification.category)) return false;
+      const targetUserId = String(notification.recipient_user_id || "").trim();
+      const targetEmail = String(notification.recipient_email || "")
+        .trim()
+        .toLowerCase();
+      const isTargeted = Boolean(targetUserId || targetEmail);
+      if (isTargeted) {
+        if (targetUserId && targetUserId !== user?.uid) return false;
+        if (targetEmail && targetEmail !== normalizedUserEmail) return false;
+      }
+      const state = notificationStates[notification.id];
+      if (!state) return true;
+      if (state.status === "read") return false;
+      if (state.status === "remind_later") {
+        const remindAt = toDate(state.remind_at);
+        if (remindAt && remindAt > now) return false;
+      }
+      return true;
+    });
+  }, [webNotifications, notificationStates, notificationPreferences, user?.uid, user?.email]);
+
+  const markNotificationAsRead = async (notificationId: string) => {
+    if (!user) return;
+    await setDoc(
+      doc(db, "users", user.uid, "web_notification_states", notificationId),
+      {
+        status: "read",
+        read_at: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  };
+
+  const remindNotificationLater = async (notificationId: string) => {
+    if (!user) return;
+    const remindAt = new Date(Date.now() + REMIND_LATER_HOURS * 60 * 60 * 1000);
+    await setDoc(
+      doc(db, "users", user.uid, "web_notification_states", notificationId),
+      {
+        status: "remind_later",
+        remind_at: Timestamp.fromDate(remindAt),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  };
+
   return (
     <>
       <nav
@@ -235,14 +419,98 @@ export function Navbar() {
                 {isMobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
               </button>
 
-              {/* Logo */}
-              <Link
-                to="/"
-                className="inline-flex items-center justify-center h-11 w-11 rounded-xl border border-cyan-300/35 bg-slate-900/55 hover:bg-slate-800/70 transition-all duration-300"
-                aria-label="LBathletes Home"
-              >
-                <PeakLogo className="h-7 w-7" />
-              </Link>
+              {/* Logo + Notifications */}
+              <div ref={notificationPanelRef} className="relative notification-menu">
+                {user ? (
+                  <button
+                    onClick={() => setIsNotificationPanelOpen((prev) => !prev)}
+                    className="relative inline-flex items-center justify-center h-11 w-11 rounded-xl border border-cyan-300/35 bg-slate-900/55 hover:bg-slate-800/70 transition-all duration-300"
+                    aria-label="Open notifications"
+                  >
+                    <PeakLogo className="h-7 w-7" />
+                    {visibleNotifications.length > 0 && (
+                      <span className="absolute -top-1 -right-2.5 min-w-[22px] h-[22px] px-1.5 rounded-full bg-red-600 text-white text-[11px] font-semibold inline-flex items-center justify-center ring-2 ring-slate-950">
+                        {visibleNotifications.length > 99
+                          ? "99+"
+                          : visibleNotifications.length}
+                      </span>
+                    )}
+                  </button>
+                ) : (
+                  <Link
+                    to="/"
+                    className="inline-flex items-center justify-center h-11 w-11 rounded-xl border border-cyan-300/35 bg-slate-900/55 hover:bg-slate-800/70 transition-all duration-300"
+                    aria-label="LBathletes Home"
+                  >
+                    <PeakLogo className="h-7 w-7" />
+                  </Link>
+                )}
+
+                {user && isNotificationPanelOpen && (
+                  <div className="fixed left-3 right-3 top-[78px] z-[75] rounded-2xl border border-cyan-300/20 bg-slate-950/95 backdrop-blur-xl shadow-[0_24px_70px_rgba(2,6,23,0.8)] p-3 max-h-[calc(100dvh-96px)] overflow-hidden sm:absolute sm:top-full sm:left-0 sm:right-auto sm:mt-3 sm:w-[min(92vw,380px)] sm:max-h-none">
+                    <div className="flex items-center justify-between px-1 pb-3 border-b border-slate-800/80">
+                      <p className="text-base font-semibold text-slate-100 tracking-[0.01em]">
+                        Notifications
+                      </p>
+                      <span className="text-xs text-slate-300">
+                        {visibleNotifications.length} unread
+                      </span>
+                    </div>
+                    {visibleNotifications.length === 0 ? (
+                      <div className="mt-3 rounded-xl border border-slate-700/80 bg-slate-900/60 px-3 py-4 text-sm text-slate-400">
+                        No new notifications.
+                      </div>
+                    ) : (
+                      <div className="mt-3 max-h-[calc(100dvh-180px)] overflow-y-auto space-y-2 pr-1 sm:max-h-[60vh]">
+                        {visibleNotifications.map((notification) => (
+                          <div
+                            key={notification.id}
+                            className="rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-3.5 shadow-[inset_0_1px_0_rgba(148,163,184,0.06)]"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                {notification.category !== "general" ? (
+                                  <p className="text-[10px] uppercase tracking-[0.16em] text-cyan-200/85 font-medium">
+                                    {notification.category}
+                                  </p>
+                                ) : null}
+                                <p className="mt-1 text-[15px] font-semibold text-slate-100 leading-snug">
+                                  {notification.title}
+                                </p>
+                                <p className="mt-1.5 text-sm text-slate-300 leading-relaxed">
+                                  {notification.message}
+                                </p>
+                                <p className="mt-2.5 text-[11px] text-slate-500">
+                                  {toDate(notification.created_at)?.toLocaleString() || ""}
+                                </p>
+                              </div>
+                              <div className="h-7 w-7 rounded-full bg-slate-800/80 border border-slate-700 flex items-center justify-center shrink-0 mt-0.5">
+                                <Bell size={13} className="text-slate-400" />
+                              </div>
+                            </div>
+                            <div className="mt-3 grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
+                              <button
+                                onClick={() => markNotificationAsRead(notification.id)}
+                                className="inline-flex w-full sm:w-auto items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-cyan-500/15 text-cyan-100 text-xs border border-cyan-400/35 hover:bg-cyan-500/25 transition-colors"
+                              >
+                                <Check size={13} />
+                                Mark as read
+                              </button>
+                              <button
+                                onClick={() => remindNotificationLater(notification.id)}
+                                className="inline-flex w-full sm:w-auto items-center justify-center gap-1.5 px-3 py-2 rounded-md border border-slate-600 text-slate-200 text-xs hover:bg-slate-800 transition-colors"
+                              >
+                                <Clock3 size={13} />
+                                Remind me later
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Desktop Navigation */}

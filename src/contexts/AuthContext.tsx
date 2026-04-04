@@ -16,7 +16,6 @@ import {
   GoogleAuthProvider,
   FacebookAuthProvider,
   signInWithPopup,
-  sendEmailVerification,
 } from "firebase/auth";
 import { auth, db } from "../lib/firebase";
 import {
@@ -26,6 +25,7 @@ import {
   serverTimestamp,
   onSnapshot,
 } from "firebase/firestore";
+import { getFirebaseFriendlyError } from "../lib/firebaseError";
 
 interface AuthContextType {
   user: User | null;
@@ -48,8 +48,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const getErrorMessage = (error: unknown, fallback: string) =>
-  error instanceof Error ? error.message : fallback;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -142,9 +140,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
       }
 
-      // Send email verification
-      await sendEmailVerification(user);
-
       // Create user document in Firestore
       await setDoc(doc(db, "users", user.uid), {
         email: user.email,
@@ -155,34 +150,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         addressDetails: addressDetails || "",
         displayName: `${firstName} ${lastName}`,
         photoURL: user.photoURL,
+        subscribeNewsletter: true,
+        notificationPreferences: {
+          orderUpdates: true,
+          promotions: true,
+          newsletter: true,
+        },
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-        emailVerified: false,
       });
 
       // Force re-render by creating new user object
       setUser({ ...user });
     } catch (error) {
       console.error("Sign up error:", error);
-      const errorCode =
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        typeof (error as { code?: unknown }).code === "string"
-          ? (error as { code: string }).code
-          : "";
-
-      if (errorCode === "auth/email-already-in-use") {
-        throw new Error("This email is already registered.");
-      }
-      if (errorCode === "auth/invalid-email") {
-        throw new Error("Invalid email address.");
-      }
-      if (errorCode === "auth/weak-password") {
-        throw new Error("Password is too weak.");
-      }
-
-      throw new Error(getErrorMessage(error, "Failed to create account"));
+      throw new Error(getFirebaseFriendlyError(error, "Failed to create account"));
     }
   };
 
@@ -191,27 +173,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
     } catch (error) {
       console.error("Sign in error:", error);
-      const errorCode =
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        typeof (error as { code?: unknown }).code === "string"
-          ? (error as { code: string }).code
-          : "";
-
-      // Handle Firebase error codes
-      if (
-        errorCode === "auth/user-not-found" ||
-        errorCode === "auth/wrong-password"
-      ) {
-        throw new Error("Invalid login credentials");
-      } else if (errorCode === "auth/too-many-requests") {
-        throw new Error("Too many requests. Please try again later.");
-      } else if (errorCode === "auth/user-disabled") {
-        throw new Error("This account has been disabled");
-      }
-
-      throw new Error(getErrorMessage(error, "Failed to sign in"));
+      throw new Error(getFirebaseFriendlyError(error, "Failed to sign in"));
     }
   };
 
@@ -220,7 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await firebaseSignOut(auth);
     } catch (error) {
       console.error("Sign out error:", error);
-      throw new Error(getErrorMessage(error, "Failed to sign out"));
+      throw new Error(getFirebaseFriendlyError(error, "Failed to sign out"));
     }
   };
 
@@ -249,7 +211,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser({ ...user });
     } catch (error) {
       console.error("Google sign in error:", error);
-      throw new Error(getErrorMessage(error, "Failed to sign in with Google"));
+      throw new Error(
+        getFirebaseFriendlyError(error, "Failed to sign in with Google")
+      );
     }
   };
 
@@ -279,7 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error("Facebook sign in error:", error);
       throw new Error(
-        getErrorMessage(error, "Failed to sign in with Facebook")
+        getFirebaseFriendlyError(error, "Failed to sign in with Facebook")
       );
     }
   };
@@ -290,7 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error("Reset password error:", error);
       throw new Error(
-        getErrorMessage(error, "Failed to send password reset email")
+        getFirebaseFriendlyError(error, "Failed to send password reset email")
       );
     }
   };
@@ -326,7 +290,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(updatedUser);
     } catch (error) {
       console.error("Update profile error:", error);
-      throw new Error(getErrorMessage(error, "Failed to update profile"));
+      throw new Error(getFirebaseFriendlyError(error, "Failed to update profile"));
     }
   };
 
