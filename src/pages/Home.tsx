@@ -703,7 +703,7 @@ export function Home() {
             <div className="flex items-end justify-between gap-4 mb-7">
               <div>
                 <p className="text-xs tracking-[0.18em] text-cyan-200">DISCOVER</p>
-                <h2 className="font-display text-4xl md:text-5xl tracking-[0.08em] text-slate-50">
+                <h2 className="font-display text-3xl md:text-4xl tracking-[0.08em] text-slate-50">
                   SHOP BY CATEGORY
                 </h2>
               </div>
@@ -901,7 +901,7 @@ export function Home() {
           <div className="flex items-end justify-between mb-7">
             <div>
               <p className="text-xs tracking-[0.18em] text-cyan-200">JUST IN</p>
-              <h2 className="font-display text-4xl md:text-5xl tracking-[0.08em] text-slate-50">
+              <h2 className="font-display text-3xl md:text-4xl tracking-[0.08em] text-slate-50">
                 NEW ARRIVALS
               </h2>
             </div>
