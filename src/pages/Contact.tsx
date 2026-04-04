@@ -52,7 +52,7 @@ export function Contact() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 gap-8">
           <div className="surface-card rounded-3xl p-7 md:p-9 border border-slate-700/70">
             <h2 className="font-display text-2xl tracking-[0.06em] text-slate-50">
               Contact Details
@@ -111,79 +111,6 @@ export function Contact() {
               </div>
 
             </div>
-          </div>
-
-          <div className="surface-card rounded-3xl p-7 md:p-9 border border-slate-700/70">
-            <h2 className="font-display text-2xl tracking-[0.06em] text-slate-50">
-              Send Message
-            </h2>
-
-            <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-              {status === "success" ? (
-                <div className="rounded-xl border border-emerald-400/40 bg-emerald-500/10 text-emerald-200 px-4 py-3 text-sm">
-                  Message sent successfully. We will get back to you soon.
-                </div>
-              ) : null}
-              {status === "error" ? (
-                <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 text-rose-200 px-4 py-3 text-sm">
-                  Failed to send message. Please try again.
-                </div>
-              ) : null}
-
-              <div>
-                <label className="block text-xs tracking-[0.14em] text-slate-300 mb-2">
-                  NAME
-                </label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, name: e.target.value }))
-                  }
-                  required
-                  className="w-full rounded-xl border border-slate-600/80 px-4 py-3 focus:outline-none focus:border-cyan-300"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs tracking-[0.14em] text-slate-300 mb-2">
-                  EMAIL
-                </label>
-                <input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, email: e.target.value }))
-                  }
-                  required
-                  className="w-full rounded-xl border border-slate-600/80 px-4 py-3 focus:outline-none focus:border-cyan-300"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs tracking-[0.14em] text-slate-300 mb-2">
-                  MESSAGE
-                </label>
-                <textarea
-                  value={formData.message}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, message: e.target.value }))
-                  }
-                  required
-                  rows={6}
-                  className="w-full rounded-xl border border-slate-600/80 px-4 py-3 focus:outline-none focus:border-cyan-300 resize-none"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={status === "sending"}
-                className="w-full rounded-xl px-6 py-3 luxe-button text-sm font-semibold tracking-[0.12em] inline-flex items-center justify-center gap-2 disabled:opacity-60"
-              >
-                {status === "sending" ? "SENDING..." : "SEND MESSAGE"}
-                <Send size={15} />
-              </button>
-            </form>
           </div>
         </div>
       </div>
