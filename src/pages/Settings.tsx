@@ -77,6 +77,7 @@ export function Settings() {
     text: string;
   } | null>(null);
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
+  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
   const [addressForm, setAddressForm] = useState({
     label: "",
     address: "",
@@ -337,7 +338,7 @@ export function Settings() {
 
   const handleAddAddress = async () => {
     const nextAddress: SavedAddress = {
-      id: `addr-${Date.now()}`,
+      id: editingAddressId || `addr-${Date.now()}`,
       label: addressForm.label.trim(),
       address: addressForm.address.trim(),
       directions: addressForm.directions.trim(),
@@ -361,7 +362,13 @@ export function Settings() {
       return;
     }
 
-    await saveAddressBook([...savedAddresses, nextAddress]);
+    const nextAddresses = editingAddressId
+      ? savedAddresses.map((entry) =>
+          entry.id === editingAddressId ? nextAddress : entry
+        )
+      : [...savedAddresses, nextAddress];
+
+    await saveAddressBook(nextAddresses);
     setAddressForm({
       label: "",
       address: "",
@@ -370,10 +377,35 @@ export function Settings() {
       state: "",
       country: "",
     });
+    setEditingAddressId(null);
   };
 
   const handleDeleteAddress = async (addressId: string) => {
     await saveAddressBook(savedAddresses.filter((entry) => entry.id !== addressId));
+  };
+
+  const handleEditAddress = (entry: SavedAddress) => {
+    setEditingAddressId(entry.id);
+    setAddressForm({
+      label: entry.label,
+      address: entry.address,
+      directions: entry.directions || "",
+      city: entry.city,
+      state: entry.state,
+      country: entry.country,
+    });
+  };
+
+  const cancelAddressEdit = () => {
+    setEditingAddressId(null);
+    setAddressForm({
+      label: "",
+      address: "",
+      directions: "",
+      city: "",
+      state: "",
+      country: "",
+    });
   };
 
   const handleDeleteAccount = async () => {
@@ -577,14 +609,23 @@ export function Settings() {
                         {entry.city}, {entry.state}, {entry.country}
                       </p>
                     </div>
-                    <button
-                      onClick={() => handleDeleteAddress(entry.id)}
-                      disabled={saving}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-60"
-                    >
-                      <Trash2 size={16} />
-                      Delete
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleEditAddress(entry)}
+                        disabled={saving}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteAddress(entry.id)}
+                        disabled={saving}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-60"
+                      >
+                        <Trash2 size={16} />
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -694,14 +735,30 @@ export function Settings() {
               </div>
             ) : null}
 
-            <button
-              onClick={handleAddAddress}
-              disabled={saving}
-              className="mt-5 flex items-center gap-2 px-6 py-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 font-semibold"
-            >
-              <Save size={18} />
-              {saving ? "Saving..." : "Add Address"}
-            </button>
+            <div className="mt-5 flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <button
+                onClick={handleAddAddress}
+                disabled={saving}
+                className="flex items-center gap-2 px-6 py-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 font-semibold"
+              >
+                <Save size={18} />
+                {saving
+                  ? "Saving..."
+                  : editingAddressId
+                    ? "Update Address"
+                    : "Add Address"}
+              </button>
+              {editingAddressId ? (
+                <button
+                  type="button"
+                  onClick={cancelAddressEdit}
+                  disabled={saving}
+                  className="px-5 py-3 rounded-xl border border-gray-300 hover:bg-gray-50 disabled:opacity-60"
+                >
+                  Cancel Edit
+                </button>
+              ) : null}
+            </div>
           </div>
 
           {/* Notification Preferences */}

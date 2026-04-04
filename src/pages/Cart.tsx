@@ -64,8 +64,8 @@ interface SavedAddress {
   address: string;
   directions?: string;
   city: string;
-  state: string;
-  country: string;
+  state?: string;
+  country?: string;
 }
 
 export function Cart() {
@@ -81,19 +81,16 @@ export function Cart() {
     address: "",
     directions: "",
     city: "",
-    state: "",
-    country: "",
   });
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState("");
   const [showAddAddressModal, setShowAddAddressModal] = useState(false);
+  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
   const [newAddressForm, setNewAddressForm] = useState({
     label: "",
     address: "",
     directions: "",
     city: "",
-    state: "",
-    country: "",
   });
 
   useEffect(() => {
@@ -110,7 +107,7 @@ export function Cart() {
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (showAddAddressModal) {
-        setShowAddAddressModal(false);
+        closeAddAddressModal();
         return;
       }
       setShowCheckoutForm(false);
@@ -137,8 +134,7 @@ export function Cart() {
         const address = String(candidate.address || "").trim();
         const city = String(candidate.city || "").trim();
         const state = String(candidate.state || "").trim();
-        const country = String(candidate.country || "").trim();
-        if (!label || !address || !city || !state || !country) return null;
+        if (!label || !address || !city) return null;
         return {
           id: String(candidate.id || `address-${index + 1}`),
           label,
@@ -146,7 +142,7 @@ export function Cart() {
           directions: String(candidate.directions || "").trim(),
           city,
           state,
-          country,
+          country: String(candidate.country || "").trim() || "Lebanon",
         } as SavedAddress;
       })
       .filter((entry: SavedAddress | null): entry is SavedAddress => entry !== null);
@@ -158,9 +154,39 @@ export function Cart() {
       address: address.address,
       directions: address.directions || "",
       city: address.city,
-      state: address.state,
-      country: address.country,
     }));
+  };
+
+  const resetNewAddressForm = () => {
+    setNewAddressForm({
+      label: "",
+      address: "",
+      directions: "",
+      city: "",
+    });
+  };
+
+  const closeAddAddressModal = () => {
+    setShowAddAddressModal(false);
+    setEditingAddressId(null);
+    resetNewAddressForm();
+  };
+
+  const openAddAddressModal = () => {
+    setEditingAddressId(null);
+    resetNewAddressForm();
+    setShowAddAddressModal(true);
+  };
+
+  const openEditAddressModal = (address: SavedAddress) => {
+    setEditingAddressId(address.id);
+    setNewAddressForm({
+      label: address.label,
+      address: address.address,
+      directions: address.directions || "",
+      city: address.city,
+    });
+    setShowAddAddressModal(true);
   };
 
   const loadCart = async () => {
@@ -304,11 +330,11 @@ export function Cart() {
     const address = checkoutForm.address.trim();
     const directions = checkoutForm.directions.trim() || "-";
     const city = checkoutForm.city.trim();
-    const state = checkoutForm.state.trim();
+    const state = "-";
     const zipCode = "-";
-    const country = checkoutForm.country.trim();
+    const country = "Lebanon";
 
-    if (!fullName || !phone || !address || !city || !state || !country) {
+    if (!fullName || !phone || !address || !city) {
       alert("Please fill in all required shipping fields.");
       return;
     }
@@ -410,8 +436,6 @@ export function Cart() {
         address: "",
         directions: "",
         city: "",
-        state: "",
-        country: "",
       });
       setTimeout(() => navigate("/orders"), 1300);
     } catch (error) {
@@ -428,7 +452,7 @@ export function Cart() {
 
   const handleAddressSelect = (value: string) => {
     if (value === "__add_new__") {
-      setShowAddAddressModal(true);
+      openAddAddressModal();
       return;
     }
 
@@ -439,30 +463,28 @@ export function Cart() {
     }
   };
 
-  const handleSaveNewAddress = async () => {
+  const handleSaveAddress = async () => {
     if (!user) return;
-    const newAddress: SavedAddress = {
-      id: `addr-${Date.now()}`,
+    const addressPayload: SavedAddress = {
+      id: editingAddressId || `addr-${Date.now()}`,
       label: newAddressForm.label.trim(),
       address: newAddressForm.address.trim(),
       directions: newAddressForm.directions.trim(),
       city: newAddressForm.city.trim(),
-      state: newAddressForm.state.trim(),
-      country: newAddressForm.country.trim(),
+      state: "-",
+      country: "Lebanon",
     };
 
-    if (
-      !newAddress.label ||
-      !newAddress.address ||
-      !newAddress.city ||
-      !newAddress.state ||
-      !newAddress.country
-    ) {
+    if (!addressPayload.label || !addressPayload.address || !addressPayload.city) {
       alert("Please fill all required address fields.");
       return;
     }
 
-    const nextAddresses = [...savedAddresses, newAddress];
+    const nextAddresses = editingAddressId
+      ? savedAddresses.map((entry) =>
+          entry.id === editingAddressId ? addressPayload : entry
+        )
+      : [...savedAddresses, addressPayload];
 
     try {
       await setDoc(
@@ -475,20 +497,57 @@ export function Cart() {
       );
 
       setSavedAddresses(nextAddresses);
-      setSelectedAddressId(newAddress.id);
-      applySavedAddress(newAddress);
-      setShowAddAddressModal(false);
-      setNewAddressForm({
-        label: "",
-        address: "",
-        directions: "",
-        city: "",
-        state: "",
-        country: "",
-      });
+      setSelectedAddressId(addressPayload.id);
+      applySavedAddress(addressPayload);
+      closeAddAddressModal();
     } catch (error) {
       console.error("Error saving new address:", error);
       alert("Failed to save address. Please try again.");
+    }
+  };
+
+  const handleDeleteAddress = async (addressId: string) => {
+    if (!user) return;
+    const target = savedAddresses.find((entry) => entry.id === addressId);
+    if (!target) return;
+
+    const confirmed = window.confirm(
+      `Delete "${target.label}" from saved addresses?`
+    );
+    if (!confirmed) return;
+
+    const nextAddresses = savedAddresses.filter((entry) => entry.id !== addressId);
+
+    try {
+      await setDoc(
+        doc(db, "users", user.uid),
+        {
+          addressBook: nextAddresses,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      setSavedAddresses(nextAddresses);
+
+      if (selectedAddressId !== addressId) return;
+
+      if (nextAddresses.length > 0) {
+        const fallback = nextAddresses[0];
+        setSelectedAddressId(fallback.id);
+        applySavedAddress(fallback);
+      } else {
+        setSelectedAddressId("");
+        setCheckoutForm((prev) => ({
+          ...prev,
+          address: "",
+          directions: "",
+          city: "",
+        }));
+      }
+    } catch (error) {
+      console.error("Error deleting address:", error);
+      alert("Failed to delete address. Please try again.");
     }
   };
 
@@ -855,19 +914,63 @@ export function Cart() {
                     <option value="">Select a saved location</option>
                     {savedAddresses.map((entry) => (
                       <option key={entry.id} value={entry.id}>
-                        {entry.label} — {entry.city}, {entry.country}
+                        {entry.label} — {entry.city}
                       </option>
                     ))}
                     <option value="__add_new__">+ Add address</option>
                   </select>
                   <button
                     type="button"
-                    onClick={() => setShowAddAddressModal(true)}
+                    onClick={openAddAddressModal}
                     className="px-4 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50 whitespace-nowrap"
                   >
                     Add address
                   </button>
                 </div>
+                {savedAddresses.length > 0 ? (
+                  <div className="mt-3 space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {savedAddresses.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className={`rounded-xl border p-3 ${
+                          selectedAddressId === entry.id
+                            ? "border-cyan-400/70 bg-cyan-500/10"
+                            : "border-gray-200"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-gray-900">
+                              {entry.label}
+                            </p>
+                            <p className="text-xs text-gray-600 truncate mt-0.5">
+                              {entry.address}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              {entry.city}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => openEditAddressModal(entry)}
+                              className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-300 hover:bg-gray-50"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteAddress(entry.id)}
+                              className="px-2.5 py-1.5 text-xs rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <div>
@@ -900,51 +1003,21 @@ export function Cart() {
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    City *
-                  </label>
-                  <input
-                    type="text"
-                    value={checkoutForm.city}
-                    onChange={(e) =>
-                      setCheckoutForm((prev) => ({ ...prev, city: e.target.value }))
-                    }
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                    placeholder="City"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    State *
-                  </label>
-                  <input
-                    type="text"
-                    value={checkoutForm.state}
-                    onChange={(e) =>
-                      setCheckoutForm((prev) => ({ ...prev, state: e.target.value }))
-                    }
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                    placeholder="State"
-                  />
-                </div>
-              </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Country *
+                  City *
                 </label>
                 <input
                   type="text"
-                  value={checkoutForm.country}
+                  value={checkoutForm.city}
                   onChange={(e) =>
-                    setCheckoutForm((prev) => ({ ...prev, country: e.target.value }))
+                    setCheckoutForm((prev) => ({ ...prev, city: e.target.value }))
                   }
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  placeholder="Country"
+                  placeholder="City"
                 />
               </div>
+
             </div>
 
                     <div className="p-4 sm:p-6 border-t border-gray-200 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end shrink-0">
@@ -976,7 +1049,7 @@ export function Cart() {
         ? createPortal(
             <div
               className="fixed inset-0 z-[130] bg-black/55 p-3 sm:p-6"
-              onClick={() => setShowAddAddressModal(false)}
+              onClick={closeAddAddressModal}
             >
               <div className="h-full w-full overflow-y-auto overscroll-contain">
                 <div className="mx-auto flex min-h-full w-full max-w-xl items-center justify-center">
@@ -987,9 +1060,13 @@ export function Cart() {
                     onClick={(event) => event.stopPropagation()}
                   >
                     <div className="p-4 sm:p-6 border-b border-gray-200 shrink-0">
-                      <h3 className="text-lg font-semibold">Add New Address</h3>
+                      <h3 className="text-lg font-semibold">
+                        {editingAddressId ? "Edit Address" : "Add New Address"}
+                      </h3>
                       <p className="text-sm text-gray-600 mt-1">
-                        Save a named location for faster checkout.
+                        {editingAddressId
+                          ? "Update this saved location."
+                          : "Save a named location for faster checkout."}
                       </p>
                     </div>
                     <div className="p-4 sm:p-6 space-y-4 overflow-y-auto overscroll-contain">
@@ -1038,7 +1115,7 @@ export function Cart() {
                           placeholder="Landmark or delivery notes..."
                         />
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
                         <input
                           type="text"
                           value={newAddressForm.city}
@@ -1048,40 +1125,22 @@ export function Cart() {
                           className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
                           placeholder="City *"
                         />
-                        <input
-                          type="text"
-                          value={newAddressForm.state}
-                          onChange={(e) =>
-                            setNewAddressForm((prev) => ({ ...prev, state: e.target.value }))
-                          }
-                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                          placeholder="State *"
-                        />
-                        <input
-                          type="text"
-                          value={newAddressForm.country}
-                          onChange={(e) =>
-                            setNewAddressForm((prev) => ({ ...prev, country: e.target.value }))
-                          }
-                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                          placeholder="Country *"
-                        />
                       </div>
                     </div>
                     <div className="p-4 sm:p-6 border-t border-gray-200 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end shrink-0">
                       <button
                         type="button"
-                        onClick={() => setShowAddAddressModal(false)}
+                        onClick={closeAddAddressModal}
                         className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50"
                       >
                         Cancel
                       </button>
                       <button
                         type="button"
-                        onClick={handleSaveNewAddress}
+                        onClick={handleSaveAddress}
                         className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-black text-white hover:bg-gray-800"
                       >
-                        Save Address
+                        {editingAddressId ? "Update Address" : "Save Address"}
                       </button>
                     </div>
                   </div>
