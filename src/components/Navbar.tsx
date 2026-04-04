@@ -28,6 +28,7 @@ import {
   Timestamp,
   where,
 } from "firebase/firestore";
+import Logo from "../assets/logo-transparent.png";
 
 type DateField = Timestamp | Date | string | null | undefined;
 type WebNotificationCategory =
@@ -61,30 +62,9 @@ const REMIND_LATER_HOURS = 24;
 
 function PeakLogo({ className = "" }: { className?: string }) {
   return (
-    <svg
-      viewBox="0 0 128 128"
-      className={className}
-      role="img"
-      aria-label="LBathletes"
-    >
-      <defs>
-        <linearGradient id="cedar-accent" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#67e8f9" />
-          <stop offset="100%" stopColor="#22d3ee" />
-        </linearGradient>
-      </defs>
-      <path
-        d="M64 16L88 40H74L100 66H82L108 92H20L46 66H28L54 40H40Z"
-        fill="none"
-        stroke="url(#cedar-accent)"
-        strokeWidth="8"
-        strokeLinejoin="round"
-      />
-      <rect x="58" y="92" width="12" height="20" rx="3" fill="#67e8f9" />
-    </svg>
+    <img src={Logo} alt="LBathletes" className={`${className} mix-blend-screen`} />
   );
 }
-
 export function Navbar() {
   const { user, signOut } = useAuth();
   const location = useLocation();
@@ -107,6 +87,7 @@ export function Navbar() {
       newsletter: true,
     });
   const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
+  const [isMarkingAllAsRead, setIsMarkingAllAsRead] = useState(false);
   const notificationPanelRef = useRef<HTMLDivElement | null>(null);
   const notificationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const notificationPanelBubbleRef = useRef<HTMLDivElement | null>(null);
@@ -409,6 +390,29 @@ export function Navbar() {
     );
   };
 
+  const markAllVisibleNotificationsAsRead = async () => {
+    if (!user || visibleNotifications.length === 0 || isMarkingAllAsRead) return;
+
+    setIsMarkingAllAsRead(true);
+    try {
+      await Promise.all(
+        visibleNotifications.map((notification) =>
+          setDoc(
+            doc(db, "users", user.uid, "web_notification_states", notification.id),
+            {
+              status: "read",
+              read_at: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          )
+        )
+      );
+    } finally {
+      setIsMarkingAllAsRead(false);
+    }
+  };
+
   const remindNotificationLater = async (notificationId: string) => {
     if (!user) return;
     const remindAt = new Date(Date.now() + REMIND_LATER_HOURS * 60 * 60 * 1000);
@@ -454,12 +458,12 @@ export function Navbar() {
                   <button
                     ref={notificationTriggerRef}
                     onClick={() => setIsNotificationPanelOpen((prev) => !prev)}
-                    className="relative inline-flex items-center justify-center h-11 w-11 rounded-xl border border-cyan-300/35 bg-slate-900/55 hover:bg-slate-800/70 transition-all duration-300"
+                    className="relative inline-flex items-center justify-center h-12 w-12 rounded-xl transition-all duration-300"
                     aria-label="Open notifications"
                   >
-                    <PeakLogo className="h-7 w-7" />
+                    <PeakLogo className="h-11 w-11" />
                     {visibleNotifications.length > 0 && (
-                      <span className="absolute -top-1 -right-2.5 min-w-[22px] h-[22px] px-1.5 rounded-full bg-red-600 text-white text-[11px] font-semibold inline-flex items-center justify-center ring-2 ring-slate-950">
+                      <span className="absolute top-0 right-0 translate-x-[8%] -translate-y-[8%] min-w-4.5 h-4.5 px-1 rounded-full bg-cyan-300 text-slate-950 text-[9px] font-bold inline-flex items-center justify-center shadow-[0_0_10px_rgba(103,232,249,0.4)]">
                         {visibleNotifications.length > 99
                           ? "99+"
                           : visibleNotifications.length}
@@ -469,10 +473,10 @@ export function Navbar() {
                 ) : (
                   <Link
                     to="/"
-                    className="inline-flex items-center justify-center h-11 w-11 rounded-xl border border-cyan-300/35 bg-slate-900/55 hover:bg-slate-800/70 transition-all duration-300"
+                    className="inline-flex items-center justify-center h-12 w-12 rounded-xl transition-all duration-300"
                     aria-label="LBathletes Home"
                   >
-                    <PeakLogo className="h-7 w-7" />
+                    <PeakLogo className="h-11 w-11" />
                   </Link>
                 )}
 
@@ -485,13 +489,22 @@ export function Navbar() {
                       className="notification-bubble-tip-enter absolute -top-2 h-4 w-4 rotate-45 border-l border-t border-cyan-300/20 bg-slate-950/95"
                       style={{ left: `${bubblePointerLeft}px` }}
                     />
-                    <div className="flex items-center justify-between px-1 pb-3 border-b border-slate-800/80">
-                      <p className="text-base font-semibold text-slate-100 tracking-[0.01em]">
-                        Notifications
-                      </p>
-                      <span className="text-xs text-slate-300">
-                        {visibleNotifications.length} unread
-                      </span>
+                    <div className="flex items-start justify-between gap-3 px-1 pb-3 border-b border-slate-800/80">
+                      <div>
+                        <p className="text-base font-semibold text-slate-100 tracking-[0.01em]">
+                          Notifications
+                        </p>
+                        <span className="mt-1 inline-flex text-xs text-slate-300">
+                          {visibleNotifications.length} unread
+                        </span>
+                      </div>
+                      <button
+                        onClick={markAllVisibleNotificationsAsRead}
+                        disabled={visibleNotifications.length === 0 || isMarkingAllAsRead}
+                        className="inline-flex items-center justify-center px-2.5 py-1.5 rounded-md bg-cyan-500/15 text-cyan-100 text-[11px] font-medium border border-cyan-400/35 hover:bg-cyan-500/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isMarkingAllAsRead ? "Marking..." : "Mark all as read"}
+                      </button>
                     </div>
                     {visibleNotifications.length === 0 ? (
                       <div className="mt-3 rounded-xl border border-slate-700/80 bg-slate-900/60 px-3 py-4 text-sm text-slate-400">

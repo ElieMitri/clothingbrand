@@ -38,6 +38,7 @@ import { useAuth } from "../contexts/AuthContext";
 
 import Photo from "../assets/photo.png"
 import LbLogo from "../assets/lbathletes-logo.png";
+import Logo from "../assets/logo-transparent.png";
 
 interface Product {
   id: string;
@@ -102,27 +103,7 @@ const REMIND_LATER_HOURS = 24;
 
 function CedarLogo({ className = "" }: { className?: string }) {
   return (
-    <svg
-      viewBox="0 0 128 128"
-      className={className}
-      role="img"
-      aria-label="Notifications"
-    >
-      <defs>
-        <linearGradient id="home-cedar-accent" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#67e8f9" />
-          <stop offset="100%" stopColor="#22d3ee" />
-        </linearGradient>
-      </defs>
-      <path
-        d="M64 16L88 40H74L100 66H82L108 92H20L46 66H28L54 40H40Z"
-        fill="none"
-        stroke="url(#home-cedar-accent)"
-        strokeWidth="8"
-        strokeLinejoin="round"
-      />
-      <rect x="58" y="92" width="12" height="20" rx="3" fill="#67e8f9" />
-    </svg>
+    <img src={Logo} alt="LBathletes" className={className} />
   );
 }
 
