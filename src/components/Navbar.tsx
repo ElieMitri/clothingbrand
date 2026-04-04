@@ -496,13 +496,6 @@ export function Navbar() {
                                 <Check size={13} />
                                 Mark as read
                               </button>
-                              <button
-                                onClick={() => remindNotificationLater(notification.id)}
-                                className="inline-flex w-full sm:w-auto items-center justify-center gap-1.5 px-3 py-2 rounded-md border border-slate-600 text-slate-200 text-xs hover:bg-slate-800 transition-colors"
-                              >
-                                <Clock3 size={13} />
-                                Remind me later
-                              </button>
                             </div>
                           </div>
                         ))}

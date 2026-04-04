@@ -582,13 +582,6 @@ export function Home() {
                           <Check size={13} />
                           Mark as read
                         </button>
-                        <button
-                          onClick={() => remindNotificationLater(notification.id)}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-slate-600 text-slate-200 text-xs hover:bg-slate-800"
-                        >
-                          <Clock3 size={13} />
-                          Remind me later
-                        </button>
                       </div>
                     </div>
                   ))}
