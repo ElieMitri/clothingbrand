@@ -293,11 +293,11 @@ export function ProductDetail() {
     try {
       setAdding(true);
       const availableStock = getAvailableStockForSize(product, selectedSize);
-      if (hasPerSizeStock && availableStock < 1) {
+      if (availableStock < 1) {
         alert(`Size ${selectedSize} is currently out of stock.`);
         return;
       }
-      if (availableStock > 0 && quantity > availableStock) {
+      if (quantity > availableStock) {
         alert(`Only ${availableStock} units are currently in stock.`);
         return;
       }
@@ -437,6 +437,9 @@ export function ProductDetail() {
     getDefaultSizeGuideByCategory(buildSizingContext(product));
   const hasPerSizeStock = Object.keys(product.size_stock || {}).length > 0;
   const selectedSizeStock = getAvailableStockForSize(product, selectedSize);
+  const availableForSelection = hasPerSizeStock
+    ? selectedSizeStock
+    : Number(product.stock || 0);
   const sizeGuideLines = sizeGuideText
     .split("\n")
     .map((line) => line.trim())
@@ -699,7 +702,15 @@ export function ProductDetail() {
                   </button>
                   <span className="px-6 font-bold text-base">{quantity}</span>
                   <button
-                    onClick={() => setQuantity(quantity + 1)}
+                    onClick={() =>
+                      setQuantity((prev) =>
+                        Math.min(
+                          availableForSelection > 0 ? availableForSelection : 1,
+                          prev + 1
+                        )
+                      )
+                    }
+                    disabled={availableForSelection <= 0 || quantity >= availableForSelection}
                     className="p-3 hover:bg-gray-100 transition-colors rounded-r-xl"
                   >
                     <Plus size={16} />
@@ -722,7 +733,7 @@ export function ProductDetail() {
             <div className="pt-3">
               <button
                 onClick={addToCart}
-                disabled={adding || (hasPerSizeStock && selectedSizeStock <= 0)}
+                disabled={adding || availableForSelection <= 0}
                 className="w-full bg-black text-white py-3.5 px-6 rounded-xl hover:bg-gray-800 transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 text-xs tracking-wider font-bold shadow-lg hover:shadow-xl"
               >
                 {adding ? (
