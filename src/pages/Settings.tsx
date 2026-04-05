@@ -583,7 +583,7 @@ export function Settings() {
             </div>
 
             <p className="text-sm text-gray-600 mb-5">
-              Add multiple delivery locations and name each one for faster checkout.
+              Add multiple saved locations and name each one for faster checkout.
             </p>
 
             <div className="space-y-3 mb-6">
@@ -713,7 +713,7 @@ export function Settings() {
                   }
                   className="w-full px-4 py-2.5 border-2 border-gray-300 rounded-xl focus:outline-none focus:border-black transition-colors"
                   rows={2}
-                  placeholder="Landmark or delivery notes..."
+                  placeholder="Landmark or order notes..."
                 />
               </div>
             </div>

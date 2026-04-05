@@ -31,6 +31,10 @@ import {
   ProductAuthenticity,
   toProductAuthenticityLabel,
 } from "../lib/productAuthenticity";
+import {
+  getDefaultSizeGuideByCategory,
+  getDefaultSizesByCategory,
+} from "../lib/productSizing";
 
 interface Product {
   id: string;
@@ -41,6 +45,8 @@ interface Product {
   description: string;
   image_url: string;
   category: string;
+  subcategory?: string;
+  product_type?: string;
   authenticity?: ProductAuthenticity;
   images?: string[];
   colors?: string[];
@@ -66,6 +72,41 @@ interface ProductReview {
   created_at?: unknown;
 }
 
+const GUEST_CART_STORAGE_KEY = "guest_cart_items_v1";
+
+interface GuestCartEntry {
+  product_id: string;
+  size: string;
+  quantity: number;
+}
+
+const readGuestCart = (): GuestCartEntry[] => {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = window.localStorage.getItem(GUEST_CART_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((entry) => ({
+        product_id: String(entry?.product_id || "").trim(),
+        size: String(entry?.size || "").trim(),
+        quantity: Number(entry?.quantity || 0),
+      }))
+      .filter((entry) => entry.product_id && entry.size && entry.quantity > 0);
+  } catch {
+    return [];
+  }
+};
+
+const writeGuestCart = (items: GuestCartEntry[]) => {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(GUEST_CART_STORAGE_KEY, JSON.stringify(items));
+  window.dispatchEvent(new Event("guest-cart-updated"));
+};
+
 export function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -88,41 +129,12 @@ export function ProductDetail() {
     comment: "",
   });
   const tabsSectionRef = useRef<HTMLDivElement | null>(null);
+  const buildSizingContext = (item: Product) =>
+    [item.category, item.subcategory, item.product_type]
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean)
+      .join(" ");
 
-  const getDefaultSizesByCategory = (category: string) => {
-    const normalized = category.trim().toLowerCase();
-    if (normalized === "shoes") {
-      return [
-        "36",
-        "37",
-        "38",
-        "39",
-        "40",
-        "41",
-        "42",
-        "43",
-        "44",
-        "45",
-        "46",
-        "47",
-        "48",
-      ];
-    }
-    if (normalized === "accessories" || normalized === "bags") {
-      return ["One Size"];
-    }
-    return ["XS", "S", "M", "L", "XL", "XXL"];
-  };
-  const getDefaultSizeGuideByCategory = (category: string) => {
-    const normalized = category.trim().toLowerCase();
-    if (normalized === "shoes") {
-      return "NOX Shoe Size Guide\nEU | US | UK | AR | LENGTH cm\n36 | 5 | 4 | 35 | 23.3\n37 | 5.5 | 4.5 | 36 | 24.0\n38 | 6 | 5 | 37 | 24.7\n39 | 6.5 | 6 | 38 | 25.3\n40 | 7 | 6.5 | 39 | 26.0\n41 | 8 | 7 | 40 | 26.7\n42 | 9 | 8 | 41 | 27.3\n43 | 9.5 | 8.5 | 42 | 28.0\n44 | 10 | 9 | 43 | 28.7\n45 | 11 | 10 | 44 | 29.3\n46 | 12 | 11 | 45 | 30.0\n47 | 13 | 12 | 46 | 30.7\n48 | 14 | 13 | 47 | 31.3";
-    }
-    if (normalized === "accessories" || normalized === "bags") {
-      return "One-size item. Product dimensions may vary slightly by style.";
-    }
-    return "Clothing fit guide: If you are between two sizes, choose the larger size for a relaxed fit and the smaller size for a slim fit.";
-  };
   const getAvailableStockForSize = (item: Product, size: string) => {
     const sizeStockMap = item.size_stock || {};
     const hasSizeStock = Object.keys(sizeStockMap).length > 0;
@@ -156,7 +168,7 @@ export function ProductDetail() {
         const availableSizes =
           data.sizes && data.sizes.length > 0
             ? data.sizes
-            : getDefaultSizesByCategory(data.category);
+            : getDefaultSizesByCategory(buildSizingContext(data));
         const firstInStockSize =
           availableSizes.find(
             (size) => getAvailableStockForSize(data, size) > 0
@@ -202,11 +214,11 @@ export function ProductDetail() {
           ...entry.data(),
         }))
         .filter(
-          (entry) =>
-            typeof entry.rating === "number" &&
-            typeof entry.comment === "string" &&
-            typeof entry.user_name === "string"
-        ) as ProductReview[];
+          (entry): entry is ProductReview =>
+            typeof (entry as ProductReview).rating === "number" &&
+            typeof (entry as ProductReview).comment === "string" &&
+            typeof (entry as ProductReview).user_name === "string"
+        );
 
       parsed.sort(
         (a, b) =>
@@ -276,11 +288,6 @@ export function ProductDetail() {
   };
 
   const addToCart = async () => {
-    if (!user) {
-      navigate("/login");
-      return;
-    }
-
     if (!product) return;
 
     try {
@@ -295,33 +302,60 @@ export function ProductDetail() {
         return;
       }
 
-      const cartsRef = collection(db, "carts");
-      const q = query(
-        cartsRef,
-        where("user_id", "==", user.uid),
-        where("product_id", "==", product.id),
-        where("size", "==", selectedSize)
-      );
-      const querySnapshot = await getDocs(q);
+      if (user) {
+        const cartsRef = collection(db, "carts");
+        const q = query(
+          cartsRef,
+          where("user_id", "==", user.uid),
+          where("product_id", "==", product.id),
+          where("size", "==", selectedSize)
+        );
+        const querySnapshot = await getDocs(q);
 
-      if (!querySnapshot.empty) {
-        const existingItem = querySnapshot.docs[0];
-        const currentQuantity = existingItem.data().quantity || 0;
-        if (availableStock > 0 && currentQuantity + quantity > availableStock) {
-          alert(`Only ${availableStock} units are currently in stock.`);
-          return;
+        if (!querySnapshot.empty) {
+          const existingItem = querySnapshot.docs[0];
+          const currentQuantity = existingItem.data().quantity || 0;
+          if (availableStock > 0 && currentQuantity + quantity > availableStock) {
+            alert(`Only ${availableStock} units are currently in stock.`);
+            return;
+          }
+          await updateDoc(doc(db, "carts", existingItem.id), {
+            quantity: currentQuantity + quantity,
+          });
+        } else {
+          await addDoc(cartsRef, {
+            user_id: user.uid,
+            product_id: product.id,
+            size: selectedSize,
+            quantity: quantity,
+            created_at: new Date(),
+          });
         }
-        await updateDoc(doc(db, "carts", existingItem.id), {
-          quantity: currentQuantity + quantity,
-        });
       } else {
-        await addDoc(cartsRef, {
-          user_id: user.uid,
-          product_id: product.id,
-          size: selectedSize,
-          quantity: quantity,
-          created_at: new Date(),
-        });
+        const guestCart = readGuestCart();
+        const existingIndex = guestCart.findIndex(
+          (entry) => entry.product_id === product.id && entry.size === selectedSize
+        );
+
+        if (existingIndex >= 0) {
+          const nextQuantity = guestCart[existingIndex].quantity + quantity;
+          if (availableStock > 0 && nextQuantity > availableStock) {
+            alert(`Only ${availableStock} units are currently in stock.`);
+            return;
+          }
+          guestCart[existingIndex] = {
+            ...guestCart[existingIndex],
+            quantity: nextQuantity,
+          };
+        } else {
+          guestCart.push({
+            product_id: product.id,
+            size: selectedSize,
+            quantity,
+          });
+        }
+
+        writeGuestCart(guestCart);
       }
 
       setAddedToCart(true);
@@ -397,9 +431,10 @@ export function ProductDetail() {
   const sizes =
     product.sizes && product.sizes.length > 0
       ? product.sizes
-      : getDefaultSizesByCategory(product.category);
+      : getDefaultSizesByCategory(buildSizingContext(product));
   const sizeGuideText =
-    product.size_guide?.trim() || getDefaultSizeGuideByCategory(product.category);
+    product.size_guide?.trim() ||
+    getDefaultSizeGuideByCategory(buildSizingContext(product));
   const hasPerSizeStock = Object.keys(product.size_stock || {}).length > 0;
   const selectedSizeStock = getAvailableStockForSize(product, selectedSize);
   const sizeGuideLines = sizeGuideText

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { collection, doc, getDoc, getDocs } from "firebase/firestore";
+import { collection, doc, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { fromCategorySlug, toCategorySlug } from "../lib/category";
 import {
@@ -19,6 +19,11 @@ interface Product {
   price: number;
   image_url: string;
   category: string;
+  subcategory?: string;
+  product_type?: string;
+  colors?: string[];
+  brand?: string;
+  tags?: string[];
   audience?: ProductAudience;
   authenticity?: ProductAuthenticity;
 }
@@ -39,55 +44,65 @@ export function CategoryPage() {
   const [selectedAudience, setSelectedAudience] = useState<
     ProductAudience | "all"
   >("all");
+  const [colorInput, setColorInput] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState<"featured" | "price-low" | "price-high">(
     "featured"
   );
 
   useEffect(() => {
-    const loadCategory = async () => {
-      try {
-        setLoading(true);
+    setLoading(true);
+    const unsubscribers: Array<() => void> = [];
 
-        // Resolve display title from admin-configured home categories when available.
-        const homepageSnap = await getDoc(doc(db, "site_settings", "homepage"));
-        if (homepageSnap.exists()) {
-          const configured = homepageSnap.data().home_categories;
-          if (Array.isArray(configured)) {
-            const matched = configured.find((item: HomeCategoryEntry) => {
-              if (!item?.slug || typeof item.slug !== "string") return false;
-              return toCategorySlug(item.slug) === toCategorySlug(slug);
-            });
-            if (matched?.name && typeof matched.name === "string") {
-              setDisplayName(matched.name);
-            } else {
-              setDisplayName(fromCategorySlug(slug));
+    const homepageRef = doc(db, "site_settings", "homepage");
+    unsubscribers.push(
+      onSnapshot(
+        homepageRef,
+        (homepageSnap) => {
+          if (homepageSnap.exists()) {
+            const configured = homepageSnap.data().home_categories;
+            if (Array.isArray(configured)) {
+              const matched = configured.find((item: HomeCategoryEntry) => {
+                if (!item?.slug || typeof item.slug !== "string") return false;
+                return toCategorySlug(item.slug) === toCategorySlug(slug);
+              });
+              if (matched?.name && typeof matched.name === "string") {
+                setDisplayName(matched.name);
+                return;
+              }
             }
-          } else {
-            setDisplayName(fromCategorySlug(slug));
           }
-        } else {
           setDisplayName(fromCategorySlug(slug));
+        },
+        () => setDisplayName(fromCategorySlug(slug))
+      )
+    );
+
+    unsubscribers.push(
+      onSnapshot(
+        collection(db, "products"),
+        (snapshot) => {
+          const allProducts = snapshot.docs.map((item) => ({
+            id: item.id,
+            ...item.data(),
+          })) as Product[];
+
+          const filtered = allProducts.filter(
+            (product) => toCategorySlug(product.category) === toCategorySlug(slug)
+          );
+          setProducts(filtered);
+          setLoading(false);
+        },
+        (error) => {
+          console.error("Error loading category page:", error);
+          setLoading(false);
         }
+      )
+    );
 
-        // Dynamic behavior: no new pages needed, products are filtered by category slug.
-        const snapshot = await getDocs(collection(db, "products"));
-        const allProducts = snapshot.docs.map((item) => ({
-          id: item.id,
-          ...item.data(),
-        })) as Product[];
-
-        const filtered = allProducts.filter(
-          (product) => toCategorySlug(product.category) === toCategorySlug(slug)
-        );
-        setProducts(filtered);
-      } catch (error) {
-        console.error("Error loading category page:", error);
-      } finally {
-        setLoading(false);
-      }
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
-
-    loadCategory();
   }, [slug]);
 
   useEffect(() => {
@@ -101,6 +116,38 @@ export function CategoryPage() {
       );
     }
 
+    if (colorInput.trim()) {
+      const colorTerm = colorInput.trim().toLowerCase();
+      filtered = filtered.filter((product) =>
+        (product.colors || []).some((color) =>
+          String(color || "")
+            .toLowerCase()
+            .includes(colorTerm)
+        )
+      );
+    }
+
+    if (searchTerm.trim()) {
+      const term = searchTerm.trim().toLowerCase();
+      filtered = filtered.filter((product) => {
+        const tagsText = Array.isArray(product.tags) ? product.tags.join(" ") : "";
+        return (
+          product.name.toLowerCase().includes(term) ||
+          product.category.toLowerCase().includes(term) ||
+          String(product.subcategory || "")
+            .toLowerCase()
+            .includes(term) ||
+          String(product.product_type || "")
+            .toLowerCase()
+            .includes(term) ||
+          String(product.brand || "")
+            .toLowerCase()
+            .includes(term) ||
+          tagsText.toLowerCase().includes(term)
+        );
+      });
+    }
+
     if (sortBy === "price-low") {
       filtered.sort((a, b) => a.price - b.price);
     } else if (sortBy === "price-high") {
@@ -108,7 +155,7 @@ export function CategoryPage() {
     }
 
     setFilteredProducts(filtered);
-  }, [products, selectedAudience, sortBy]);
+  }, [products, selectedAudience, colorInput, searchTerm, sortBy]);
 
   const heading = useMemo(
     () => (displayName?.trim() ? displayName : fromCategorySlug(slug)),
@@ -128,6 +175,28 @@ export function CategoryPage() {
         </div>
 
         <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-gray-500">Search</label>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[180px]"
+              placeholder="Name, type, brand..."
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-gray-500">Color</label>
+            <input
+              type="text"
+              value={colorInput}
+              onChange={(e) => setColorInput(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[150px]"
+              placeholder="Black, White..."
+            />
+          </div>
+
           <div className="flex items-center gap-2">
             <label className="text-sm text-gray-500">Audience</label>
             <select

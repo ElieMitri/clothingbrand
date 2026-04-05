@@ -18,7 +18,6 @@ import { db } from "../lib/firebase";
 import {
   collection,
   doc,
-  getDoc,
   limit,
   onSnapshot,
   orderBy,
@@ -59,6 +58,7 @@ interface NotificationPreferences {
 }
 
 const REMIND_LATER_HOURS = 24;
+const GUEST_CART_STORAGE_KEY = "guest_cart_items_v1";
 
 function PeakLogo({ className = "" }: { className?: string }) {
   return (
@@ -66,7 +66,7 @@ function PeakLogo({ className = "" }: { className?: string }) {
   );
 }
 export function Navbar() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, loading: authLoading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [isScrolled, setIsScrolled] = useState(false);
@@ -94,7 +94,11 @@ export function Navbar() {
   const [bubblePointerLeft, setBubblePointerLeft] = useState(20);
   const [shopCategories, setShopCategories] = useState<
     { name: string; path: string; special?: boolean }[]
-  >([{ name: "New Arrivals", path: "/new-arrivals" }]);
+  >([{ name: "Shop All", path: "/shop" }]);
+  const [rawShopMenuItems, setRawShopMenuItems] = useState<
+    { name: string; path: string; special?: boolean }[]
+  >([{ name: "Collections", path: "/collections" }]);
+  const [isPageReady, setIsPageReady] = useState(false);
   const adminEmails = ["lbathletes@hotmail.com", "sammourdany@gmail.com"];
   const isAdminUser =
     Boolean(user?.email) &&
@@ -109,17 +113,54 @@ export function Navbar() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  useEffect(() => {
+    const markReady = () => setIsPageReady(true);
+
+    if (document.readyState === "complete") {
+      const timer = window.setTimeout(markReady, 120);
+      return () => window.clearTimeout(timer);
+    }
+
+    window.addEventListener("load", markReady);
+    const fallbackTimer = window.setTimeout(markReady, 2000);
+    return () => {
+      window.removeEventListener("load", markReady);
+      window.clearTimeout(fallbackTimer);
+    };
+  }, []);
+  const isNavLoading = authLoading || !isPageReady;
+
   // Load real-time cart count
   useEffect(() => {
     if (!user) {
-      setCartItemCount(0);
-      return;
+      const getGuestCartCount = () => {
+        try {
+          const raw = window.localStorage.getItem(GUEST_CART_STORAGE_KEY);
+          if (!raw) return 0;
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return 0;
+          return parsed.reduce(
+            (sum, entry) => sum + Number(entry?.quantity || 0),
+            0
+          );
+        } catch {
+          return 0;
+        }
+      };
+
+      const syncGuestCount = () => setCartItemCount(getGuestCartCount());
+      syncGuestCount();
+      window.addEventListener("guest-cart-updated", syncGuestCount);
+      window.addEventListener("storage", syncGuestCount);
+      return () => {
+        window.removeEventListener("guest-cart-updated", syncGuestCount);
+        window.removeEventListener("storage", syncGuestCount);
+      };
     }
 
     const cartsRef = collection(db, "carts");
     const q = query(cartsRef, where("user_id", "==", user.uid));
 
-    // Real-time listener for cart updates
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -230,11 +271,39 @@ export function Navbar() {
   };
 
   useEffect(() => {
-    const loadShopCategories = async () => {
-      try {
-        const homepageSettingsSnap = await getDoc(
-          doc(db, "site_settings", "homepage")
-        );
+    const buildShopMenu = (
+      items: Array<{ name: string; path: string; special?: boolean }>
+    ) => {
+      const normalized = items
+        .map((entry) => ({
+          name: entry.name.trim(),
+          path: entry.path.trim(),
+          special: Boolean(entry.special),
+        }))
+        .filter((entry) => entry.name && entry.path)
+        .filter((entry) => entry.path !== "/new-arrivals");
+
+      const withRequired = normalized.some((entry) => entry.path === "/sale")
+        ? normalized
+        : [...normalized, { name: "Sale", path: "/sale", special: true }];
+
+      const unique = withRequired.filter(
+        (entry, index, arr) =>
+          arr.findIndex((item) => item.path === entry.path) === index
+      );
+
+      return [{ name: "Shop All", path: "/shop" }, ...unique.filter((e) => e.path !== "/shop")];
+    };
+
+    setShopCategories(buildShopMenu(rawShopMenuItems));
+  }, [rawShopMenuItems]);
+
+  useEffect(() => {
+    const homepageRef = doc(db, "site_settings", "homepage");
+
+    const unsubscribeHomepage = onSnapshot(
+      homepageRef,
+      (homepageSettingsSnap) => {
         const customShopMenu = homepageSettingsSnap.exists()
           ? Array.isArray(homepageSettingsSnap.data().shop_menu_items)
             ? homepageSettingsSnap
@@ -258,24 +327,21 @@ export function Navbar() {
           : [];
 
         if (customShopMenu.length > 0) {
-          setShopCategories(customShopMenu);
+          setRawShopMenuItems(customShopMenu);
           return;
         }
 
-        setShopCategories([
-          { name: "New Arrivals", path: "/new-arrivals" },
-          { name: "Collections", path: "/collections" },
-        ]);
-      } catch (error) {
+        setRawShopMenuItems([{ name: "Collections", path: "/collections" }]);
+      },
+      (error) => {
         console.error("Error loading dynamic shop categories:", error);
-        setShopCategories([
-          { name: "New Arrivals", path: "/new-arrivals" },
-          { name: "Collections", path: "/collections" },
-        ]);
+        setRawShopMenuItems([{ name: "Collections", path: "/collections" }]);
       }
-    };
+    );
 
-    loadShopCategories();
+    return () => {
+      unsubscribeHomepage();
+    };
   }, []);
 
   useEffect(() => {
@@ -444,32 +510,28 @@ export function Navbar() {
             <div className="max-w-7xl mx-auto flex items-center justify-between px-3 py-1 sm:px-4 sm:py-2.5 lg:px-5 xl:px-6">
             <div className="relative z-10 flex items-center gap-2">
               {/* Mobile Menu Button */}
-              <button
-                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                className="lg:hidden p-2.5 hover:bg-slate-800/70 rounded-xl transition-colors"
-                aria-label="Toggle menu"
-              >
-                {isMobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
-              </button>
+              {!isNavLoading && (
+                <button
+                  onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                  className="lg:hidden p-2.5 hover:bg-slate-800/70 rounded-xl transition-colors"
+                  aria-label="Toggle menu"
+                >
+                  {isMobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+                </button>
+              )}
 
               {/* Logo + Notifications */}
               <div ref={notificationPanelRef} className="relative notification-menu">
-                {user ? (
-                  <button
-                    ref={notificationTriggerRef}
-                    onClick={() => setIsNotificationPanelOpen((prev) => !prev)}
-                    className="relative inline-flex items-center justify-center h-12 w-12 rounded-xl transition-all duration-300"
-                    aria-label="Open notifications"
-                  >
-                    <PeakLogo className="h-11 w-11" />
-                    {visibleNotifications.length > 0 && (
-                      <span className="absolute top-0 right-0 translate-x-[8%] -translate-y-[8%] min-w-4.5 h-4.5 px-1 rounded-full bg-cyan-300 text-slate-950 text-[9px] font-bold inline-flex items-center justify-center shadow-[0_0_10px_rgba(103,232,249,0.4)]">
-                        {visibleNotifications.length > 99
-                          ? "99+"
-                          : visibleNotifications.length}
-                      </span>
-                    )}
-                  </button>
+                {!isNavLoading && user ? (
+                  <div className="flex items-center gap-1.5">
+                    <Link
+                      to="/"
+                      className="inline-flex items-center justify-center h-12 w-12 rounded-xl transition-all duration-300"
+                      aria-label="LBathletes Home"
+                    >
+                      <PeakLogo className="h-11 w-11" />
+                    </Link> 
+                  </div>
                 ) : (
                   <Link
                     to="/"
@@ -480,7 +542,16 @@ export function Navbar() {
                   </Link>
                 )}
 
-                {user && isNotificationPanelOpen && (
+                {!isNavLoading && user && isNotificationPanelOpen && (
+                  <button
+                    type="button"
+                    aria-label="Close notifications"
+                    className="fixed inset-0 z-[74] cursor-default bg-transparent"
+                    onClick={() => setIsNotificationPanelOpen(false)}
+                  />
+                )}
+
+                {!isNavLoading && user && isNotificationPanelOpen && (
                   <div
                     ref={notificationPanelBubbleRef}
                     className="notification-bubble-enter fixed left-3 right-3 top-[92px] z-[75] rounded-2xl border border-cyan-300/20 bg-slate-950/95 backdrop-blur-xl shadow-[0_24px_70px_rgba(2,6,23,0.8)] p-3 max-h-[calc(100dvh-96px)] overflow-visible sm:absolute sm:top-full sm:left-0 sm:right-auto sm:mt-3 sm:w-[min(92vw,380px)] sm:max-h-none"
@@ -557,6 +628,7 @@ export function Navbar() {
             </div>
 
             {/* Desktop Navigation */}
+            {!isNavLoading ? (
             <div className="relative z-10 hidden lg:flex items-center gap-5 xl:gap-8">
               <Link
                 to="/"
@@ -636,10 +708,17 @@ export function Navbar() {
                 />
               </Link>
             </div>
+            ) : (
+              <div className="relative z-10 hidden lg:flex items-center">
+                <div className="h-4 w-48 rounded-full bg-slate-700/60 animate-pulse" />
+              </div>
+            )}
 
             {/* Right Side Actions */}
             <div className="relative z-10 flex items-center gap-2 py-1">
-              {user ? (
+              {isNavLoading ? (
+                <div className="h-10 w-28 rounded-xl bg-slate-700/60 animate-pulse" />
+              ) : user ? (
                 <>
                   {isAdminUser && (
                     <Link
@@ -744,7 +823,8 @@ export function Navbar() {
                 >
                   LOGIN
                 </Link>
-              )}
+              )
+              }
             </div>
             </div>
           </div>
@@ -752,6 +832,7 @@ export function Navbar() {
       </nav>
 
       {/* Mobile Menu */}
+      {!isNavLoading && (
       <div
         className={`fixed inset-0 z-40 lg:hidden transition-opacity duration-300 ${
           isMobileMenuOpen
@@ -922,6 +1003,7 @@ export function Navbar() {
             </div>
           </div>
         </div>
+      )}
     </>
   );
 }

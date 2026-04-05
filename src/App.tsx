@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -42,15 +42,8 @@ function App() {
             <Route path="/new-arrivals" element={<NewArrivals />} />
             <Route path="/sale" element={<Sale />} />
 
+            <Route path="/cart" element={<Cart />} />
             {/* Protected Routes WITH Navbar */}
-            <Route
-              path="/cart"
-              element={
-                <ProtectedRoute>
-                  <Cart />
-                </ProtectedRoute>
-              }
-            />
             <Route
               path="/orders"
               element={

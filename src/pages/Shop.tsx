@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { db } from "../lib/firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, onSnapshot } from "firebase/firestore";
 import {
   ProductAudience,
   audienceLabelMap,
@@ -18,6 +18,16 @@ interface Product {
   price: number;
   image_url: string;
   category: string;
+  subcategory?: string;
+  colors?: string[];
+  product_type?: string;
+  brand?: string;
+  sku?: string;
+  tags?: string[];
+  flavor?: string;
+  net_weight?: string;
+  is_featured?: boolean;
+  created_at?: unknown;
   audience?: ProductAudience;
   authenticity?: ProductAuthenticity;
 }
@@ -30,45 +40,98 @@ export function Shop() {
   const [selectedAudience, setSelectedAudience] = useState<
     ProductAudience | "all"
   >("all");
+  const [selectedType, setSelectedType] = useState<string>("all");
+  const [colorInput, setColorInput] = useState("");
   const [sortBy, setSortBy] = useState<"featured" | "price-low" | "price-high">(
     "featured"
   );
+  const [searchTerm, setSearchTerm] = useState("");
   const [categories, setCategories] = useState<string[]>(["all"]);
 
+  const getProductType = (product: Product) =>
+    String(product.subcategory || product.product_type || "")
+      .trim()
+      .toLowerCase();
+
+  const toDateValue = (value: unknown) => {
+    if (value && typeof value === "object" && "toDate" in (value as object)) {
+      try {
+        return (value as { toDate: () => Date }).toDate();
+      } catch {
+        return new Date(0);
+      }
+    }
+    if (value instanceof Date) return value;
+    if (typeof value === "string" || typeof value === "number") {
+      const parsed = new Date(value);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+    return new Date(0);
+  };
+
   useEffect(() => {
-    loadProducts();
+    setLoading(true);
+    const unsubscribe = onSnapshot(
+      collection(db, "products"),
+      (snapshot) => {
+        const productsData = snapshot.docs.map((entry) => ({
+          id: entry.id,
+          ...entry.data(),
+        })) as Product[];
+
+        setProducts(productsData);
+        const dynamicCategories = Array.from(
+          new Set(
+            productsData
+              .map((product) => product.category?.trim())
+              .filter((category): category is string => Boolean(category))
+          )
+        ).sort((a, b) => a.localeCompare(b));
+        setCategories(["all", ...dynamicCategories]);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error loading products:", error);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
   }, []);
 
-  const loadProducts = async () => {
-    try {
-      setLoading(true);
-      const snapshot = await getDocs(collection(db, "products"));
-      const productsData = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Product[];
+  useEffect(() => {
+    setSelectedType("all");
+  }, [selectedCategory]);
 
-      setProducts(productsData);
-      const dynamicCategories = Array.from(
-        new Set(
-          productsData
-            .map((product) => product.category?.trim())
-            .filter((category): category is string => Boolean(category))
-        )
-      ).sort((a, b) => a.localeCompare(b));
-      setCategories(["all", ...dynamicCategories]);
-    } catch (error) {
-      console.error("Error loading products:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const typeOptions = useMemo(() => {
+    const source =
+      selectedCategory === "all"
+        ? products
+        : products.filter((product) => product.category === selectedCategory);
+    const types = Array.from(
+      new Set(
+        source
+          .map((product) => product.subcategory || product.product_type || "")
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    return ["all", ...types];
+  }, [products, selectedCategory]);
 
   useEffect(() => {
     let filtered = [...products];
 
     if (selectedCategory !== "all") {
       filtered = filtered.filter((product) => product.category === selectedCategory);
+    }
+
+    if (selectedType !== "all") {
+      filtered = filtered.filter(
+        (product) =>
+          getProductType(product) === selectedType.trim().toLowerCase()
+      );
     }
 
     if (selectedAudience !== "all") {
@@ -79,14 +142,66 @@ export function Shop() {
       );
     }
 
+    if (colorInput.trim()) {
+      const colorTerm = colorInput.trim().toLowerCase();
+      filtered = filtered.filter((product) =>
+        (product.colors || []).some((color) =>
+          String(color || "")
+            .toLowerCase()
+            .includes(colorTerm)
+        )
+      );
+    }
+
+    if (searchTerm.trim()) {
+      const term = searchTerm.trim().toLowerCase();
+      filtered = filtered.filter((product) => {
+        const tagsText = Array.isArray(product.tags) ? product.tags.join(" ") : "";
+        return (
+          product.name.toLowerCase().includes(term) ||
+          product.category.toLowerCase().includes(term) ||
+          String(product.subcategory || "")
+            .toLowerCase()
+            .includes(term) ||
+          String(product.product_type || "")
+            .toLowerCase()
+            .includes(term) ||
+          String(product.brand || "")
+            .toLowerCase()
+            .includes(term) ||
+          String(product.sku || "")
+            .toLowerCase()
+            .includes(term) ||
+          String(product.flavor || "")
+            .toLowerCase()
+            .includes(term) ||
+          tagsText.toLowerCase().includes(term)
+        );
+      });
+    }
+
     if (sortBy === "price-low") {
       filtered.sort((a, b) => a.price - b.price);
     } else if (sortBy === "price-high") {
       filtered.sort((a, b) => b.price - a.price);
+    } else {
+      filtered.sort((a, b) => {
+        const featuredDelta = Number(Boolean(b.is_featured)) - Number(Boolean(a.is_featured));
+        if (featuredDelta !== 0) return featuredDelta;
+        return toDateValue(b.created_at).getTime() - toDateValue(a.created_at).getTime();
+      });
     }
 
     setFilteredProducts(filtered);
-  }, [products, selectedCategory, selectedAudience, sortBy]);
+  }, [
+    products,
+    selectedCategory,
+    selectedType,
+    selectedAudience,
+    colorInput,
+    sortBy,
+    searchTerm,
+  ]);
 
   return (
     <div className="min-h-screen pt-20 pb-10 px-4 bg-white">
@@ -96,6 +211,35 @@ export function Shop() {
         </h1>
 
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-sm text-gray-500">Search</label>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Name, brand, type, SKU..."
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[220px]"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-sm text-gray-500">Type</label>
+            <select
+              value={selectedType}
+              onChange={(e) => setSelectedType(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[180px]"
+            >
+              <option value="all">Everything</option>
+              {typeOptions
+                .filter((entry) => entry !== "all")
+                .map((entry) => (
+                  <option key={entry} value={entry}>
+                    {entry}
+                  </option>
+                ))}
+            </select>
+          </div>
+
           <div className="flex items-center gap-2 flex-wrap">
             <label className="text-sm text-gray-500">Audience</label>
             <select
@@ -110,6 +254,17 @@ export function Shop() {
               <option value="women">Women</option>
               <option value="unisex">Unisex</option>
             </select>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-sm text-gray-500">Color</label>
+            <input
+              type="text"
+              value={colorInput}
+              onChange={(e) => setColorInput(e.target.value)}
+              placeholder="Black, White, Navy..."
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[170px]"
+            />
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
@@ -188,7 +343,13 @@ export function Shop() {
                 </div>
                 <div className="space-y-1.5">
                   <p className="text-xs tracking-wider text-gray-500 uppercase">
-                    {product.category} •{" "}
+                    {product.category}
+                    {product.subcategory
+                      ? ` • ${product.subcategory}`
+                      : product.product_type
+                      ? ` • ${product.product_type}`
+                      : ""}{" "}
+                    •{" "}
                     {
                       audienceLabelMap[
                         normalizeProductAudience(product.audience, product.category)
@@ -197,6 +358,15 @@ export function Shop() {
                     • {toProductAuthenticityLabel(product.authenticity)}
                   </p>
                   <h3 className="font-light text-lg">{product.name}</h3>
+                  {(product.brand || product.flavor || product.net_weight) && (
+                    <p className="text-xs text-gray-500">
+                      {product.brand ? product.brand : ""}
+                      {product.flavor ? `${product.brand ? " • " : ""}${product.flavor}` : ""}
+                      {product.net_weight
+                        ? `${product.brand || product.flavor ? " • " : ""}${product.net_weight}`
+                        : ""}
+                    </p>
+                  )}
                   <p className="text-gray-900 font-medium">
                     ${product.price.toFixed(2)}
                   </p>

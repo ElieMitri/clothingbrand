@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Filter, Heart } from "lucide-react";
 import { db } from "../lib/firebase";
-import { collection, query, where, getDocs, limit } from "firebase/firestore";
+import { collection, onSnapshot, query, where, limit } from "firebase/firestore";
 import {
   ProductAuthenticity,
   toProductAuthenticityLabel,
@@ -49,7 +49,27 @@ export function Women() {
   const sizes = ["XS", "S", "M", "L", "XL"];
 
   useEffect(() => {
-    loadProducts();
+    setLoading(true);
+    const productsRef = collection(db, "products");
+    const q = query(productsRef, where("category", "==", "Women"), limit(50));
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        const productsData = querySnapshot.docs.map((entry) => ({
+          id: entry.id,
+          ...entry.data(),
+        })) as Product[];
+
+        setProducts(productsData);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error loading products:", error);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -62,26 +82,6 @@ export function Women() {
     priceRange,
     sortBy,
   ]);
-
-  const loadProducts = async () => {
-    try {
-      setLoading(true);
-      const productsRef = collection(db, "products");
-      const q = query(productsRef, where("category", "==", "Women"), limit(50));
-      const querySnapshot = await getDocs(q);
-
-      const productsData = querySnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Product[];
-
-      setProducts(productsData);
-    } catch (error) {
-      console.error("Error loading products:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const filterAndSortProducts = () => {
     let filtered = [...products];

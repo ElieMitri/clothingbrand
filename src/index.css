@@ -155,11 +155,22 @@ button {
   background-color: rgba(10, 19, 35, 0.84) !important;
 }
 
-:where(.bg-gray-50, .bg-gray-100, .bg-stone-50, .bg-stone-100, .bg-slate-50) {
+:where(
+  .bg-gray-50,
+  .bg-gray-100,
+  .bg-gray-100\/90,
+  .bg-gray-50\/70,
+  .bg-gray-200,
+  .bg-gray-300,
+  .bg-stone-50,
+  .bg-stone-100,
+  .bg-slate-50,
+  .bg-slate-100
+) {
   background-color: rgba(14, 25, 44, 0.74) !important;
 }
 
-:where(.text-black, .text-slate-900, .text-gray-900, .text-stone-900) {
+:where(.text-black, .text-slate-900, .text-gray-900, .text-stone-900, .text-gray-800, .text-slate-800) {
   color: #f3f8ff !important;
 }
 
@@ -171,11 +182,11 @@ button {
   color: #9fb2d1 !important;
 }
 
-:where(.border-gray-100, .border-gray-200, .border-gray-300, .border-stone-200, .border-stone-300, .border-slate-200, .border-slate-300) {
+:where(.border-gray-100, .border-gray-200, .border-gray-300, .border-gray-400, .border-stone-200, .border-stone-300, .border-slate-200, .border-slate-300) {
   border-color: rgba(67, 84, 113, 0.58) !important;
 }
 
-:where(.hover\:bg-gray-50:hover, .hover\:bg-slate-50:hover, .hover\:bg-red-50:hover) {
+:where(.hover\:bg-gray-50:hover, .hover\:bg-gray-100:hover, .hover\:bg-gray-200:hover, .hover\:bg-gray-300:hover, .hover\:bg-slate-50:hover, .hover\:bg-red-50:hover) {
   background-color: rgba(17, 35, 59, 0.85) !important;
 }
 

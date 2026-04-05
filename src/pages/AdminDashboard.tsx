@@ -57,6 +57,15 @@ import {
   normalizeProductAuthenticity,
   productAuthenticityLabelMap,
 } from "../lib/productAuthenticity";
+import {
+  getDefaultApparelSizes,
+  getDefaultGloveSizes,
+  getDefaultOneSizeSizes,
+  getDefaultSupplementSizes,
+  getDefaultShoeSizeGuide,
+  getDefaultShoeSizes,
+  getDefaultSizesByCategory,
+} from "../lib/productSizing";
 
 type DateField = Timestamp | Date | string | null | undefined;
 type CsvValue = string | number | boolean | null | undefined;
@@ -64,6 +73,9 @@ type CsvValue = string | number | boolean | null | undefined;
 interface Product {
   id: string;
   name: string;
+  brand?: string;
+  product_type?: string;
+  sku?: string;
   price: number;
   cost_price: number;
   original_price?: number;
@@ -84,6 +96,9 @@ interface Product {
   discount_percentage?: number;
   material?: string;
   care_instructions?: string;
+  tags?: string[];
+  flavor?: string;
+  net_weight?: string;
   is_featured?: boolean;
   is_new_arrival?: boolean;
   created_at: DateField;
@@ -109,6 +124,8 @@ interface Order {
   shipping?: number;
   tax?: number;
   status: OrderStatus;
+  cancel_reason?: string;
+  status_note?: string;
   stock_deducted?: boolean;
   stock_restored?: boolean;
   created_at: DateField;
@@ -254,7 +271,7 @@ export function AdminDashboard() {
     | "subscribers"
   >("overview");
   const [isSideNavOpen, setIsSideNavOpen] = useState(false);
-  const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
+  const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(false);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -284,12 +301,16 @@ export function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [orderSearchTerm, setOrderSearchTerm] = useState("");
+  const [orderStatusTab, setOrderStatusTab] = useState<
+    "pending" | "processing" | "shipped" | "delivered" | "cancelled"
+  >("pending");
   const [userSearchTerm, setUserSearchTerm] = useState("");
   const [subscriberSearchTerm, setSubscriberSearchTerm] = useState("");
   const [collectionSearchTerm, setCollectionSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [saleSettings, setSaleSettings] = useState({
     sale_title: "SEASONAL SALE",
+    sale_headline: "UP TO 70% OFF",
     sale_subtitle: "Limited Time Offer",
     end_at_input: "",
   });
@@ -310,6 +331,9 @@ export function AdminDashboard() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [productForm, setProductForm] = useState({
     name: "",
+    brand: "",
+    product_type: "",
+    sku: "",
     price: 0,
     cost_price: 0,
     original_price: 0,
@@ -323,6 +347,9 @@ export function AdminDashboard() {
     discount_percentage: 0,
     material: "",
     care_instructions: "",
+    tags: "",
+    flavor: "",
+    net_weight: "",
     colors: "",
     sizes: "",
     images: "",
@@ -431,7 +458,7 @@ export function AdminDashboard() {
       category: "orderUpdates",
       title: "Shipping Timeline Update",
       message:
-        "Some orders may take a little longer than expected. Thanks for your patience while we prepare each package.",
+        "Some orders may take a little longer than expected. Thanks for your patience while your order is being processed.",
     },
   ];
 
@@ -455,6 +482,35 @@ export function AdminDashboard() {
       (a, b) => a.localeCompare(b)
     );
   }, [products, homepageSettings.home_categories]);
+  const suggestedCategoryOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...categories,
+          "Shoes",
+          "Socks",
+          "Muay Thai",
+          "Boxing",
+          "Running",
+          "Football",
+          "Futsal",
+          "Padel",
+          "Tennis",
+          "Basketball",
+          "Volleyball",
+          "Swimming",
+          "Cycling",
+          "Crossfit",
+          "Gym Wear",
+          "Gym Gear",
+          "Supplements",
+          "Gym Supplements",
+          "Sports Equipment",
+          "Accessories",
+        ])
+      ).sort((a, b) => a.localeCompare(b)),
+    [categories]
+  );
   const toDate = (value: DateField): Date => {
     if (value instanceof Timestamp) return value.toDate();
     if (value instanceof Date) return value;
@@ -559,50 +615,45 @@ export function AdminDashboard() {
       return acc;
     }, {} as Record<string, string[]>);
 
-  const getDefaultSizesByCategory = (category: string) => {
-    const normalized = category.trim().toLowerCase();
-    if (normalized === "shoes") {
-      return [
-        "36",
-        "37",
-        "38",
-        "39",
-        "40",
-        "41",
-        "42",
-        "43",
-        "44",
-        "45",
-        "46",
-        "47",
-        "48",
-      ];
-    }
-    if (normalized === "accessories" || normalized === "bags") {
-      return ["One Size"];
-    }
-    return ["XS", "S", "M", "L", "XL", "XXL"];
-  };
+  const applySizePreset = (
+    preset: "shoe" | "apparel" | "one-size" | "glove-oz" | "supplement"
+  ) => {
+    const presetSizes =
+      preset === "shoe"
+        ? getDefaultShoeSizes()
+        : preset === "one-size"
+        ? getDefaultOneSizeSizes()
+        : preset === "glove-oz"
+        ? getDefaultGloveSizes()
+        : preset === "supplement"
+        ? getDefaultSupplementSizes()
+        : getDefaultApparelSizes();
 
-  const getDefaultShoeSizeGuide = () =>
-    "NOX Shoe Size Guide\nEU | US | UK | AR | LENGTH cm\n36 | 5 | 4 | 35 | 23.3\n37 | 5.5 | 4.5 | 36 | 24.0\n38 | 6 | 5 | 37 | 24.7\n39 | 6.5 | 6 | 38 | 25.3\n40 | 7 | 6.5 | 39 | 26.0\n41 | 8 | 7 | 40 | 26.7\n42 | 9 | 8 | 41 | 27.3\n43 | 9.5 | 8.5 | 42 | 28.0\n44 | 10 | 9 | 43 | 28.7\n45 | 11 | 10 | 44 | 29.3\n46 | 12 | 11 | 45 | 30.0\n47 | 13 | 12 | 46 | 30.7\n48 | 14 | 13 | 47 | 31.3";
-
-  const applyShoeDefaults = () => {
     setProductForm((prev) => ({
       ...prev,
-      category: "Shoes",
-      sizes: "36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48",
-      size_guide: getDefaultShoeSizeGuide(),
+      sizes: presetSizes.join(", "),
+      size_guide: preset === "shoe" ? getDefaultShoeSizeGuide() : prev.size_guide,
     }));
   };
+
+  const buildSizingContext = () =>
+    [productForm.category, productForm.subcategory, productForm.product_type]
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean)
+      .join(" ");
 
   const sizeOptionsForStock = useMemo(() => {
     const explicitSizes = parseCommaSeparatedValues(productForm.sizes);
     if (explicitSizes.length > 0) {
       return explicitSizes;
     }
-    return getDefaultSizesByCategory(productForm.category);
-  }, [productForm.sizes, productForm.category]);
+    return getDefaultSizesByCategory(buildSizingContext());
+  }, [
+    productForm.sizes,
+    productForm.category,
+    productForm.subcategory,
+    productForm.product_type,
+  ]);
 
   useEffect(() => {
     setSizeStockMap((prev) => {
@@ -753,6 +804,7 @@ export function AdminDashboard() {
 
         setSaleSettings({
           sale_title: data.sale_title || "SEASONAL SALE",
+          sale_headline: data.sale_headline || "UP TO 70% OFF",
           sale_subtitle: data.sale_subtitle || "Limited Time Offer",
           end_at_input: endDate ? toDateTimeLocalInput(endDate) : "",
         });
@@ -976,6 +1028,9 @@ export function AdminDashboard() {
       setEditingProduct(product);
       setProductForm({
         name: product.name,
+        brand: product.brand || "",
+        product_type: product.product_type || "",
+        sku: product.sku || "",
         price: product.price,
         cost_price: product.cost_price || 0,
         original_price: product.original_price || product.price,
@@ -989,6 +1044,9 @@ export function AdminDashboard() {
         discount_percentage: product.discount_percentage || 0,
         material: product.material || "",
         care_instructions: product.care_instructions || "",
+        tags: product.tags?.join(", ") || "",
+        flavor: product.flavor || "",
+        net_weight: product.net_weight || "",
         colors: product.colors?.join(", ") || "",
         sizes: product.sizes?.join(", ") || "",
         images: product.images?.join(", ") || "",
@@ -1005,6 +1063,9 @@ export function AdminDashboard() {
       setEditingProduct(null);
       setProductForm({
         name: "",
+        brand: "",
+        product_type: "",
+        sku: "",
         price: 0,
         cost_price: 0,
         original_price: 0,
@@ -1018,6 +1079,9 @@ export function AdminDashboard() {
         discount_percentage: 0,
         material: "",
         care_instructions: "",
+        tags: "",
+        flavor: "",
+        net_weight: "",
         colors: "",
         sizes: "",
         images: "",
@@ -1156,7 +1220,7 @@ export function AdminDashboard() {
       const selectedSizes =
         parseCommaSeparatedValues(productForm.sizes).length > 0
           ? parseCommaSeparatedValues(productForm.sizes)
-          : getDefaultSizesByCategory(productForm.category);
+          : getDefaultSizesByCategory(buildSizingContext());
       const cleanedSizeStock = selectedSizes.reduce((acc, size) => {
         acc[size] = Math.max(0, Number(sizeStockMap[size] || 0));
         return acc;
@@ -1169,6 +1233,9 @@ export function AdminDashboard() {
 
       const productData = {
         name: productForm.name,
+        brand: productForm.brand.trim() || null,
+        product_type: productForm.product_type.trim() || null,
+        sku: productForm.sku.trim() || null,
         price: Number(productForm.price),
         cost_price: Number(productForm.cost_price),
         original_price:
@@ -1186,6 +1253,9 @@ export function AdminDashboard() {
         discount_percentage: Number(productForm.discount_percentage),
         material: productForm.material || null,
         care_instructions: productForm.care_instructions || null,
+        tags: parseCommaSeparatedValues(productForm.tags),
+        flavor: productForm.flavor.trim() || null,
+        net_weight: productForm.net_weight.trim() || null,
         colors: productForm.colors
           ? productForm.colors.split(",").map((c) => c.trim())
           : [],
@@ -1242,13 +1312,12 @@ export function AdminDashboard() {
         return {
           title: "Order Update: Pending",
           message:
-            "Your order was received and is pending confirmation. We will notify you once preparation starts.",
+            "Your order was received and is pending confirmation. We will notify you when the status changes.",
         };
       case "processing":
         return {
           title: "Order Update: Processing",
-          message:
-            "Great news. Your order is now being prepared by our team.",
+          message: "Great news. Your order is now being processed.",
         };
       case "shipped":
         return {
@@ -1322,6 +1391,41 @@ export function AdminDashboard() {
     });
   };
 
+  const sendOrderStatusEmail = async ({
+    orderId,
+    userEmail,
+    newStatus,
+    itemCount,
+  }: {
+    orderId: string;
+    userEmail?: string;
+    newStatus: OrderStatus;
+    itemCount: number;
+  }) => {
+    const normalizedEmail = String(userEmail || "").trim().toLowerCase();
+    if (!normalizedEmail) return;
+
+    const copy = getOrderStatusNotificationCopy(newStatus);
+
+    const response = await fetch("/api/send-order-status-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: normalizedEmail,
+        orderId,
+        status: newStatus,
+        title: copy.title,
+        message: copy.message,
+        itemCount,
+      }),
+    });
+
+    if (!response.ok) {
+      const reason = await response.text().catch(() => "");
+      throw new Error(reason || `HTTP ${response.status}`);
+    }
+  };
+
   const saveOrder = async () => {
     try {
       if (!editingOrder) return;
@@ -1371,6 +1475,26 @@ export function AdminDashboard() {
           });
         } catch (notificationError) {
           console.error("Failed to send order status web notification:", notificationError);
+        }
+        try {
+          await sendOrderStatusEmail({
+            orderId: editingOrder.id,
+            userEmail: editingOrder.user_email || orderForm.user_email,
+            newStatus: nextStatus,
+            itemCount: cleanedItems.reduce(
+              (sum, item) => sum + Number(item.quantity || 0),
+              0
+            ),
+          });
+        } catch (emailError) {
+          console.error("Failed to send order status email:", emailError);
+          alert(
+            `Order status updated, but email failed: ${
+              emailError instanceof Error
+                ? emailError.message
+                : "Unknown email error"
+            }`
+          );
         }
       }
 
@@ -1711,6 +1835,95 @@ export function AdminDashboard() {
     }
   };
 
+  const clearActiveSaleDiscounts = async () => {
+    const discountedSnapshot = await getDocs(
+      query(collection(db, "products"), where("discount_percentage", ">", 0))
+    );
+
+    await Promise.all(
+      discountedSnapshot.docs.map((entry) => {
+        const data = entry.data();
+        const originalPrice = Number(data.original_price ?? data.price ?? 0);
+
+        return updateDoc(entry.ref, {
+          discount_percentage: 0,
+          price: originalPrice,
+          original_price: originalPrice,
+        });
+      })
+    );
+
+    return discountedSnapshot.size;
+  };
+
+  const endSaleNow = async () => {
+    try {
+      setSavingSaleSettings(true);
+      await setDoc(
+        doc(db, "site_settings", "sale"),
+        {
+          sale_title: saleSettings.sale_title || "SEASONAL SALE",
+          sale_headline: saleSettings.sale_headline || "UP TO 70% OFF",
+          sale_subtitle: saleSettings.sale_subtitle || "Limited Time Offer",
+          show_sale_link: false,
+          end_at: null,
+          updated_at: Timestamp.now(),
+        },
+        { merge: true }
+      );
+
+      const updatedCount = await clearActiveSaleDiscounts();
+      setSaleSettings((prev) => ({
+        ...prev,
+        end_at_input: "",
+      }));
+
+      alert(
+        `Sale ended manually and removed from ${updatedCount} discounted product${updatedCount === 1 ? "" : "s"}.`
+      );
+    } catch (error) {
+      console.error("Error ending sale:", error);
+      alert("Failed to end sale");
+    } finally {
+      setSavingSaleSettings(false);
+    }
+  };
+
+  const showSaleNow = async () => {
+    const parsedEndDate = new Date(saleSettings.end_at_input);
+    const validEndDate = Number.isNaN(parsedEndDate.getTime())
+      ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      : parsedEndDate;
+
+    try {
+      setSavingSaleSettings(true);
+      await setDoc(
+        doc(db, "site_settings", "sale"),
+        {
+          sale_title: saleSettings.sale_title || "SEASONAL SALE",
+          sale_headline: saleSettings.sale_headline || "UP TO 70% OFF",
+          sale_subtitle: saleSettings.sale_subtitle || "Limited Time Offer",
+          show_sale_link: true,
+          end_at: Timestamp.fromDate(validEndDate),
+          updated_at: Timestamp.now(),
+        },
+        { merge: true }
+      );
+
+      setSaleSettings((prev) => ({
+        ...prev,
+        end_at_input: toDateTimeLocalInput(validEndDate),
+      }));
+
+      alert("Sale shown again.");
+    } catch (error) {
+      console.error("Error showing sale:", error);
+      alert("Failed to show sale");
+    } finally {
+      setSavingSaleSettings(false);
+    }
+  };
+
   const saveSaleSettings = async () => {
     if (!saleSettings.end_at_input) {
       alert("Please set a sale end date and time.");
@@ -1729,7 +1942,9 @@ export function AdminDashboard() {
         doc(db, "site_settings", "sale"),
         {
           sale_title: saleSettings.sale_title || "SEASONAL SALE",
+          sale_headline: saleSettings.sale_headline || "UP TO 70% OFF",
           sale_subtitle: saleSettings.sale_subtitle || "Limited Time Offer",
+          show_sale_link: true,
           end_at: Timestamp.fromDate(endDate),
           updated_at: Timestamp.now(),
         },
@@ -1962,6 +2177,25 @@ export function AdminDashboard() {
       } catch (notificationError) {
         console.error("Failed to send order status web notification:", notificationError);
       }
+      try {
+        await sendOrderStatusEmail({
+          orderId,
+          userEmail: order.user_email,
+          newStatus,
+          itemCount: Array.isArray(order.items)
+            ? order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+            : 0,
+        });
+      } catch (emailError) {
+        console.error("Failed to send order status email:", emailError);
+        alert(
+          `Order status updated, but email failed: ${
+            emailError instanceof Error
+              ? emailError.message
+              : "Unknown email error"
+          }`
+        );
+      }
     } catch (error) {
       console.error("Error updating order status:", error);
       alert(
@@ -1971,11 +2205,10 @@ export function AdminDashboard() {
   };
 
   const getAllowedStatusOptions = (currentStatus: OrderStatus): OrderStatus[] => {
-    if (currentStatus === "pending") return ["pending", "processing", "cancelled"];
-    if (currentStatus === "processing") return ["processing", "shipped"];
-    if (currentStatus === "shipped") return ["shipped", "delivered"];
-    if (currentStatus === "delivered") return ["delivered"];
-    return ["cancelled"];
+    if (currentStatus === "cancelled") {
+      return ["pending", "processing", "shipped", "delivered"];
+    }
+    return ["pending", "processing", "shipped", "delivered"];
   };
 
   const deleteSubscriber = async (subscriberId: string) => {
@@ -2237,21 +2470,64 @@ export function AdminDashboard() {
   };
 
   const filteredProducts = products.filter((product) => {
+    const tagsText = Array.isArray(product.tags) ? product.tags.join(" ") : "";
     const matchesSearch =
       product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       product.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      String(product.subcategory || "")
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase()) ||
+      String(product.product_type || "")
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase()) ||
+      String(product.brand || "")
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase()) ||
+      String(product.sku || "")
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase()) ||
+      tagsText.toLowerCase().includes(searchTerm.toLowerCase()) ||
       product.id.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory =
       selectedCategory === "all" || product.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
 
-  const filteredOrders = orders.filter((order) => {
+  const searchedOrders = orders.filter((order) => {
     return (
       order.id.toLowerCase().includes(orderSearchTerm.toLowerCase()) ||
       order.user_email?.toLowerCase().includes(orderSearchTerm.toLowerCase())
     );
   });
+  const orderStatusTabs: Array<{
+    key: "pending" | "processing" | "shipped" | "delivered" | "cancelled";
+    label: string;
+  }> = [
+    { key: "pending", label: "Pending" },
+    { key: "processing", label: "Processing" },
+    { key: "shipped", label: "Shipped" },
+    { key: "delivered", label: "Delivered" },
+    { key: "cancelled", label: "Cancelled" },
+  ];
+  const orderCountsByStatus = orderStatusTabs.reduce(
+    (acc, tab) => {
+      acc[tab.key] = searchedOrders.filter((order) => order.status === tab.key).length;
+      return acc;
+    },
+    {
+      pending: 0,
+      processing: 0,
+      shipped: 0,
+      delivered: 0,
+      cancelled: 0,
+    } as Record<
+      "pending" | "processing" | "shipped" | "delivered" | "cancelled",
+      number
+    >
+  );
+  const filteredOrders = searchedOrders.filter(
+    (order) => order.status === orderStatusTab
+  );
 
   const userRows: AdminUserRow[] = adminUsers.map((entry) => {
     const email = String(entry.email || "").trim().toLowerCase();
@@ -2412,7 +2688,7 @@ export function AdminDashboard() {
   };
 
   return (
-    <div className="min-h-screen pt-24 pb-16 px-3 sm:px-4 bg-gray-50">
+    <div className="min-h-screen pt-10 pb-16 px-3 sm:px-4 bg-gray-50">
       <div className="max-w-7xl mx-auto">
         <div className="lg:hidden mb-4">
           <button
@@ -2486,21 +2762,17 @@ export function AdminDashboard() {
         </aside>
 
         {isDesktopSidebarOpen && (
-          <aside className="hidden lg:block fixed left-0 top-24 bottom-0 w-72 z-30 px-3 pb-4">
-            <div className="h-full bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
+          <>
+            <div
+              className="hidden lg:block fixed inset-0 bg-black/30 z-30"
+              onClick={() => setIsDesktopSidebarOpen(false)}
+            />
+            <aside className="hidden lg:block fixed left-3 top-3 w-72 z-40">
+            <div className="max-h-[calc(100vh-7rem)] bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col">
               <div className="p-5 border-b border-gray-200">
-                <div className="flex items-center justify-between mb-3">
-                  <h1 className="text-2xl font-light tracking-wider leading-tight">
-                    ADMIN DASHBOARD
-                  </h1>
-                  <button
-                    onClick={() => setIsDesktopSidebarOpen(false)}
-                    className="inline-flex items-center justify-center h-9 w-9 rounded-lg border border-gray-300 hover:bg-gray-100"
-                    aria-label="Close sidebar"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
+                <h1 className="text-2xl font-light tracking-wider leading-tight mb-3">
+                  ADMIN DASHBOARD
+                </h1>
                 <p className="text-sm text-gray-600 mb-4">
                   Manage your store, products, orders, and subscribers
                 </p>
@@ -2529,22 +2801,25 @@ export function AdminDashboard() {
                 ))}
               </div>
             </div>
-          </aside>
+            </aside>
+          </>
         )}
 
         <button
           onClick={() => setIsDesktopSidebarOpen((prev) => !prev)}
-          className="hidden lg:inline-flex fixed left-3 top-[6.8rem] z-40 items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm hover:bg-gray-50"
+          className={`hidden lg:inline-flex fixed z-50 items-center justify-center bg-white border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 transition-all duration-300 ${
+            isDesktopSidebarOpen
+              ? "top-3 left-[17.8rem] h-10 w-10"
+              : "top-3 left-3 h-10 px-3 gap-2"
+          }`}
           aria-label={isDesktopSidebarOpen ? "Close sidebar" : "Open sidebar"}
         >
-          <Menu size={16} />
-          {isDesktopSidebarOpen ? "Close" : "Open"}
+          {isDesktopSidebarOpen ? <X size={16} /> : <Menu size={16} />}
+          {!isDesktopSidebarOpen ? "Menu" : null}
         </button>
 
         <div
-          className={`min-w-0 transition-all duration-300 ${
-            isDesktopSidebarOpen ? "lg:ml-72" : "lg:ml-0"
-          }`}
+          className="min-w-0 transition-all duration-300 lg:ml-0"
         >
           <div className="flex-1 min-w-0">
         {/* Overview Tab */}
@@ -2802,7 +3077,7 @@ export function AdminDashboard() {
                   />
                   <input
                     type="text"
-                    placeholder="Search by name, category, or ID..."
+                    placeholder="Search by name, brand, type, category, SKU, tag, or ID..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
@@ -2889,6 +3164,10 @@ export function AdminDashboard() {
                           <p className="text-sm text-gray-500">
                             {product.category}
                             {product.subcategory && ` • ${product.subcategory}`}
+                            {product.product_type &&
+                              product.product_type !== product.subcategory &&
+                              ` • ${product.product_type}`}
+                            {product.brand && ` • ${product.brand}`}
                             {` • ${audienceLabelMap[
                               normalizeProductAudience(
                                 product.audience,
@@ -3059,6 +3338,22 @@ export function AdminDashboard() {
                 <Download size={20} />
               </button>
             </div>
+            <div className="flex flex-wrap gap-2 -mt-3">
+              {orderStatusTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setOrderStatusTab(tab.key)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                    orderStatusTab === tab.key
+                      ? "bg-black text-white border-gray-700"
+                      : "bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200"
+                  }`}
+                >
+                  {tab.label} ({orderCountsByStatus[tab.key]})
+                </button>
+              ))}
+            </div>
 
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
@@ -3092,6 +3387,16 @@ export function AdminDashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
+                    {filteredOrders.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={8}
+                          className="px-6 py-10 text-center text-sm text-gray-500"
+                        >
+                          No {orderStatusTab} orders found for this search.
+                        </td>
+                      </tr>
+                    )}
                     {filteredOrders.map((order) => (
                       <Fragment key={order.id}>
                         <tr className="hover:bg-gray-50">
@@ -3146,29 +3451,33 @@ export function AdminDashboard() {
                           ${(order.total || 0).toFixed(2)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <select
-                            value={order.status}
-                            onChange={(e) =>
-                              updateOrderStatus(order.id, e.target.value as OrderStatus)
-                            }
-                            className={`px-3 py-1 text-xs font-semibold rounded-full border-0 cursor-pointer ${
-                              order.status === "pending"
-                                ? "bg-yellow-100 text-yellow-800"
-                                : order.status === "processing"
-                                ? "bg-blue-100 text-blue-800"
-                                : order.status === "shipped"
-                                ? "bg-purple-100 text-purple-800"
-                                : order.status === "delivered"
-                                ? "bg-green-100 text-green-800"
-                                : "bg-red-100 text-red-800"
-                            }`}
-                          >
-                            {getAllowedStatusOptions(order.status).map((status) => (
-                              <option key={status} value={status}>
-                                {status.charAt(0).toUpperCase() + status.slice(1)}
-                              </option>
-                            ))}
-                          </select>
+                          {order.status === "cancelled" ? (
+                            <span className="inline-flex px-3 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800">
+                              Cancelled
+                            </span>
+                          ) : (
+                            <select
+                              value={order.status}
+                              onChange={(e) =>
+                                updateOrderStatus(order.id, e.target.value as OrderStatus)
+                              }
+                              className={`px-3 py-1 text-xs font-semibold rounded-full border-0 cursor-pointer ${
+                                order.status === "pending"
+                                  ? "bg-yellow-100 text-yellow-800"
+                                  : order.status === "processing"
+                                  ? "bg-blue-100 text-blue-800"
+                                  : order.status === "shipped"
+                                  ? "bg-purple-100 text-purple-800"
+                                  : "bg-green-100 text-green-800"
+                              }`}
+                            >
+                              {getAllowedStatusOptions(order.status).map((status) => (
+                                <option key={status} value={status}>
+                                  {status.charAt(0).toUpperCase() + status.slice(1)}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                           <div className="flex gap-2 flex-wrap">
@@ -3288,6 +3597,16 @@ export function AdminDashboard() {
                                       ${Number(order.total || 0).toFixed(2)}
                                     </span>
                                   </div>
+                                  {(order.cancel_reason || order.status_note) && (
+                                    <div className="pt-2 border-t border-gray-200">
+                                      <p className="text-gray-600 mb-1">
+                                        Cancellation reason
+                                      </p>
+                                      <p className="font-medium text-sm">
+                                        {order.cancel_reason || order.status_note}
+                                      </p>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -3313,7 +3632,7 @@ export function AdminDashboard() {
                 <code className="ml-1">site_settings/sale</code> and used by the
                 public Sale page.
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">
                     Banner Title
@@ -3329,6 +3648,23 @@ export function AdminDashboard() {
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
                     placeholder="SEASONAL SALE"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Headline
+                  </label>
+                  <input
+                    type="text"
+                    value={saleSettings.sale_headline}
+                    onChange={(e) =>
+                      setSaleSettings((prev) => ({
+                        ...prev,
+                        sale_headline: e.target.value,
+                      }))
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    placeholder="UP TO 70% OFF"
                   />
                 </div>
                 <div>
@@ -3366,12 +3702,32 @@ export function AdminDashboard() {
                 </div>
               </div>
               <div className="mt-4">
+                <p className="text-sm text-gray-700">
+                  Sale links stay available in navigation/homepage. Use the
+                  buttons below to manually end or show the sale.
+                </p>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   onClick={saveSaleSettings}
                   disabled={savingSaleSettings}
                   className="px-5 py-2.5 bg-black text-white rounded-lg hover:bg-gray-800 disabled:opacity-60 transition-colors"
                 >
                   {savingSaleSettings ? "Saving..." : "Save Sale Timer"}
+                </button>
+                <button
+                  onClick={showSaleNow}
+                  disabled={savingSaleSettings}
+                  className="px-5 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-60 transition-colors"
+                >
+                  {savingSaleSettings ? "Applying..." : "Apply: Show Sale Again"}
+                </button>
+                <button
+                  onClick={endSaleNow}
+                  disabled={savingSaleSettings}
+                  className="px-5 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-60 transition-colors"
+                >
+                  {savingSaleSettings ? "Applying..." : "Apply: End Sale Now"}
                 </button>
               </div>
             </div>
@@ -3382,7 +3738,6 @@ export function AdminDashboard() {
                 Control hero image, today&apos;s pick, category cards, and home
                 collections from here.
               </p>
-
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
                 <div>
                   <label className="block text-sm font-medium mb-2">
@@ -4208,13 +4563,6 @@ export function AdminDashboard() {
                 </div>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
                   <button
-                    onClick={() => setShowWebNotificationModal(true)}
-                    className="w-full sm:w-auto flex items-center justify-center gap-2 border border-gray-300 px-4 py-3 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    <AlertCircle size={18} />
-                    Web Notification
-                  </button>
-                  <button
                     onClick={() => setShowEmailModal(true)}
                     disabled={subscribers.length === 0}
                     className="w-full sm:w-auto flex items-center justify-center gap-2 bg-black text-white px-6 py-3 rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -4366,6 +4714,54 @@ export function AdminDashboard() {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
+                  <label className="block text-sm font-medium mb-2">Brand</label>
+                  <input
+                    type="text"
+                    value={productForm.brand}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, brand: e.target.value })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    placeholder="Nike, Everlast, Optimum Nutrition..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Product Type
+                  </label>
+                  <input
+                    type="text"
+                    value={productForm.product_type}
+                    onChange={(e) =>
+                      setProductForm({
+                        ...productForm,
+                        product_type: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    placeholder="Shoes, Gloves, Protein, Shorts..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    SKU (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={productForm.sku}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, sku: e.target.value })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    placeholder="LB-GLV-12OZ-BLK"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
                   <label className="block text-sm font-medium mb-2">
                     Category *
                   </label>
@@ -4380,10 +4776,10 @@ export function AdminDashboard() {
                     }
                     list="admin-product-categories"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                    placeholder="Type a category (e.g. Men, Shoes, Running)"
+                    placeholder="Type a category (e.g. Socks, Muay Thai, Supplements, Football Gear)"
                   />
                   <datalist id="admin-product-categories">
-                    {categories.map((cat) => (
+                    {suggestedCategoryOptions.map((cat) => (
                       <option key={cat} value={cat} />
                     ))}
                   </datalist>
@@ -4727,13 +5123,43 @@ export function AdminDashboard() {
                   <label className="block text-sm font-medium">
                     Sizes (comma-separated)
                   </label>
-                  <button
-                    type="button"
-                    onClick={applyShoeDefaults}
-                    className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                  >
-                    Use Shoe Defaults
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applySizePreset("shoe")}
+                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                    >
+                      Shoe
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applySizePreset("apparel")}
+                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                    >
+                      Apparel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applySizePreset("one-size")}
+                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                    >
+                      One Size
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applySizePreset("glove-oz")}
+                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                    >
+                      Glove OZ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applySizePreset("supplement")}
+                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                    >
+                      Supplement
+                    </button>
+                  </div>
                 </div>
                 <input
                   type="text"
@@ -4743,9 +5169,9 @@ export function AdminDashboard() {
                   }
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
                   placeholder={
-                    productForm.category === "Shoes"
+                    productForm.category.trim().toLowerCase().includes("shoe")
                       ? "36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48"
-                      : "XS, S, M, L, XL"
+                      : "XS, S, M, L, XL or One Size or 8oz, 10oz, 12oz..."
                   }
                 />
                 <p className="text-xs text-gray-500 mt-1">
@@ -4987,6 +5413,56 @@ export function AdminDashboard() {
                   placeholder="Machine wash cold..."
                 />
               </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Tags (comma-separated)
+                  </label>
+                  <input
+                    type="text"
+                    value={productForm.tags}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, tags: e.target.value })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    placeholder="muay thai, training, gym, whey, recovery"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Flavor (supplements)
+                  </label>
+                  <input
+                    type="text"
+                    value={productForm.flavor}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, flavor: e.target.value })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    placeholder="Chocolate, Vanilla, Fruit Punch..."
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Net Weight (supplements)
+                </label>
+                <input
+                  type="text"
+                  value={productForm.net_weight}
+                  onChange={(e) =>
+                    setProductForm({
+                      ...productForm,
+                      net_weight: e.target.value,
+                    })
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                  placeholder="1kg / 2lb / 500g"
+                />
+              </div>
             </div>
 
             <div className="p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-3 sticky bottom-0 bg-white">
@@ -5042,19 +5518,25 @@ export function AdminDashboard() {
 
               <div>
                 <label className="block text-sm font-medium mb-2">Status</label>
-                <select
-                  value={orderForm.status}
-                  onChange={(e) =>
-                    setOrderForm({ ...orderForm, status: e.target.value })
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                >
-                  {getAllowedStatusOptions(editingOrder.status).map((status) => (
-                    <option key={status} value={status}>
-                      {status.charAt(0).toUpperCase() + status.slice(1)}
-                    </option>
-                  ))}
-                </select>
+                {editingOrder.status === "cancelled" ? (
+                  <div className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-red-100 text-red-800 font-semibold">
+                    Cancelled
+                  </div>
+                ) : (
+                  <select
+                    value={orderForm.status}
+                    onChange={(e) =>
+                      setOrderForm({ ...orderForm, status: e.target.value })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                  >
+                    {getAllowedStatusOptions(editingOrder.status).map((status) => (
+                      <option key={status} value={status}>
+                        {status.charAt(0).toUpperCase() + status.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -5320,114 +5802,6 @@ We're excited to announce..."
               >
                 <Mail size={20} />
                 Send Campaign
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Web Notification Modal */}
-      {showWebNotificationModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
-              <h2 className="text-2xl font-light">Send Web Notification</h2>
-              <button
-                onClick={() => setShowWebNotificationModal(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg"
-              >
-                <X size={24} />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Quick Templates
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {notificationTemplates.map((template) => (
-                    <button
-                      key={template.id}
-                      type="button"
-                      onClick={() => applyNotificationTemplate(template.id)}
-                      className="px-3 py-1.5 rounded-full text-xs font-medium border border-gray-300 hover:bg-gray-100"
-                    >
-                      {template.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Notification Type
-                </label>
-                <select
-                  value={webNotificationForm.category}
-                  onChange={(e) =>
-                    setWebNotificationForm({
-                      ...webNotificationForm,
-                      category: e.target.value as WebNotificationCategory,
-                    })
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                >
-                  <option value="general">General</option>
-                  <option value="orderUpdates">Order Updates</option>
-                  <option value="promotions">Promotions</option>
-                  <option value="newsletter">Newsletter</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Title</label>
-                <input
-                  type="text"
-                  value={webNotificationForm.title}
-                  onChange={(e) =>
-                    setWebNotificationForm({
-                      ...webNotificationForm,
-                      title: e.target.value,
-                    })
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                  placeholder="Important update"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Message
-                </label>
-                <textarea
-                  value={webNotificationForm.message}
-                  onChange={(e) =>
-                    setWebNotificationForm({
-                      ...webNotificationForm,
-                      message: e.target.value,
-                    })
-                  }
-                  rows={6}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                  placeholder="Write the notification users should receive..."
-                />
-              </div>
-            </div>
-
-            <div className="p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-3 sticky bottom-0 bg-white">
-              <button
-                onClick={() => setShowWebNotificationModal(false)}
-                className="flex-1 px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={sendWebNotification}
-                className="flex-1 px-6 py-3 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
-              >
-                <AlertCircle size={20} />
-                Send Notification
               </button>
             </div>
           </div>

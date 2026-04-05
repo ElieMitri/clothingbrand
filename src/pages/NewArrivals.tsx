@@ -5,11 +5,9 @@ import { db } from "../lib/firebase";
 import {
   collection,
   doc,
-  getDoc,
-  getDocs,
-  query,
+  onSnapshot,
   orderBy,
-  limit,
+  query,
 } from "firebase/firestore";
 import {
   ProductAudience,
@@ -45,6 +43,9 @@ export function NewArrivals() {
   >("all");
   const [priceRange, setPriceRange] = useState<[number, number]>([0, 1000]);
   const [sortBy, setSortBy] = useState("newest");
+  const [configuredNewArrivalIds, setConfiguredNewArrivalIds] = useState<string[]>(
+    []
+  );
 
   const categories = Array.from(
     new Set(
@@ -55,79 +56,74 @@ export function NewArrivals() {
   ).sort((a, b) => a.localeCompare(b));
 
   useEffect(() => {
-    loadProducts();
+    const unsubscribe = onSnapshot(doc(db, "site_settings", "homepage"), (snap) => {
+      const ids =
+        snap.exists() && Array.isArray(snap.data().new_arrival_ids)
+          ? (snap.data().new_arrival_ids as string[])
+          : [];
+      setConfiguredNewArrivalIds(ids);
+    });
+
+    return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    const productsQuery = query(collection(db, "products"), orderBy("created_at", "desc"));
+    const unsubscribe = onSnapshot(
+      productsQuery,
+      (snapshot) => {
+        const mapDocToProduct = (
+          productId: string,
+          data: Record<string, unknown>
+        ): Product => ({
+          id: productId,
+          name: String(data.name || ""),
+          price: Number(data.price || 0),
+          image_url: String(data.image_url || ""),
+          category: String(data.category || ""),
+          audience: data.audience as ProductAudience | undefined,
+          authenticity: data.authenticity as ProductAuthenticity | undefined,
+          description:
+            typeof data.description === "string" ? data.description : undefined,
+          created_at:
+            data.created_at && typeof data.created_at === "object"
+              ? (data.created_at as { toDate?: () => Date }).toDate
+                ? (
+                    data.created_at as {
+                      toDate: () => Date;
+                    }
+                  ).toDate().toISOString()
+                : String(data.created_at)
+              : String(data.created_at || ""),
+        });
+
+        const allProducts = snapshot.docs.map((entry) =>
+          mapDocToProduct(entry.id, entry.data())
+        );
+
+        if (configuredNewArrivalIds.length > 0) {
+          const orderedConfigured = configuredNewArrivalIds
+            .map((id) => allProducts.find((item) => item.id === id))
+            .filter((item): item is Product => Boolean(item));
+          setProducts(orderedConfigured.slice(0, 50));
+        } else {
+          setProducts([]);
+        }
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error loading products:", error);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [configuredNewArrivalIds]);
 
   useEffect(() => {
     filterAndSortProducts();
   }, [products, selectedCategories, selectedAudience, priceRange, sortBy]);
-
-  const loadProducts = async () => {
-    try {
-      setLoading(true);
-      const mapDocToProduct = (
-        productId: string,
-        data: Record<string, unknown>
-      ): Product => ({
-        id: productId,
-        name: String(data.name || ""),
-        price: Number(data.price || 0),
-        image_url: String(data.image_url || ""),
-        category: String(data.category || ""),
-        audience: data.audience as ProductAudience | undefined,
-        authenticity: data.authenticity as ProductAuthenticity | undefined,
-        description:
-          typeof data.description === "string" ? data.description : undefined,
-        created_at:
-          data.created_at && typeof data.created_at === "object"
-            ? (data.created_at as { toDate?: () => Date }).toDate
-              ? (
-                  data.created_at as {
-                    toDate: () => Date;
-                  }
-                ).toDate().toISOString()
-              : String(data.created_at)
-            : String(data.created_at || ""),
-      });
-
-      const homepageSettingsSnap = await getDoc(
-        doc(db, "site_settings", "homepage")
-      );
-      const configuredNewArrivalIds =
-        homepageSettingsSnap.exists() &&
-        Array.isArray(homepageSettingsSnap.data().new_arrival_ids)
-          ? (homepageSettingsSnap.data().new_arrival_ids as string[])
-          : [];
-
-      let productsData: Product[] = [];
-
-      if (configuredNewArrivalIds.length > 0) {
-        const arrivals = await Promise.all(
-          configuredNewArrivalIds.map(async (id) => {
-            const snap = await getDoc(doc(db, "products", id));
-            if (!snap.exists()) return null;
-            return mapDocToProduct(snap.id, snap.data());
-          })
-        );
-        productsData = arrivals.filter(
-          (item): item is Product => item !== null
-        );
-      } else {
-        const productsRef = collection(db, "products");
-        const q = query(productsRef, orderBy("created_at", "desc"), limit(50));
-        const querySnapshot = await getDocs(q);
-        productsData = querySnapshot.docs.map((item) =>
-          mapDocToProduct(item.id, item.data())
-        );
-      }
-
-      setProducts(productsData);
-    } catch (error) {
-      console.error("Error loading products:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const filterAndSortProducts = () => {
     let filtered = [...products];

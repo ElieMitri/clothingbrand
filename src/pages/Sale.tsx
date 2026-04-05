@@ -47,15 +47,17 @@ export function Sale() {
   >("all");
   const [selectedDiscount, setSelectedDiscount] = useState<string>("all");
   const [sortBy, setSortBy] = useState("discount-high");
+  const [showSaleLink, setShowSaleLink] = useState<boolean | null>(null);
 
   const [saleTitle, setSaleTitle] = useState("SEASONAL SALE");
+  const [saleHeadline, setSaleHeadline] = useState("UP TO 70% OFF");
   const [saleSubtitle, setSaleSubtitle] = useState("Limited Time Offer");
   const [saleEndAt, setSaleEndAt] = useState<Date | null>(null);
   const [timeLeft, setTimeLeft] = useState({
-    days: 2,
-    hours: 15,
-    minutes: 42,
-    seconds: 30,
+    days: 0,
+    hours: 0,
+    minutes: 0,
+    seconds: 0,
   });
 
   const [email, setEmail] = useState("");
@@ -63,7 +65,13 @@ export function Sale() {
     "idle" | "success" | "exists" | "error"
   >("idle");
 
-  const categories = ["Men", "Women", "Accessories", "Shoes", "Bags"];
+  const categories = Array.from(
+    new Set(
+      products
+        .map((product) => product.category?.trim())
+        .filter((category): category is string => Boolean(category))
+    )
+  ).sort((a, b) => a.localeCompare(b));
   const discountRanges = [
     { value: "all", label: "All Discounts" },
     { value: "70", label: "Up to 70% off" },
@@ -71,16 +79,80 @@ export function Sale() {
     { value: "30", label: "Up to 30% off" },
   ];
 
+  const getCountdown = (endAt: Date | null) => {
+    if (!endAt) {
+      return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+    }
+
+    const now = Date.now();
+    const distance = endAt.getTime() - now;
+    if (distance <= 0) {
+      return { days: 0, hours: 0, minutes: 0, seconds: 0 };
+    }
+
+    return {
+      days: Math.floor(distance / (1000 * 60 * 60 * 24)),
+      hours: Math.floor((distance / (1000 * 60 * 60)) % 24),
+      minutes: Math.floor((distance / (1000 * 60)) % 60),
+      seconds: Math.floor((distance / 1000) % 60),
+    };
+  };
+
   useEffect(() => {
-    loadProducts();
-  }, []);
+    if (showSaleLink === null) return;
+    const isExpired =
+      saleEndAt instanceof Date && saleEndAt.getTime() <= Date.now();
+    if (!showSaleLink || isExpired) {
+      setProducts([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    const productsRef = collection(db, "products");
+    const q = query(productsRef, where("discount_percentage", ">", 0), limit(50));
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        const productsWithDiscount = querySnapshot.docs.map((entry) => {
+          const data = entry.data();
+          return {
+            id: entry.id,
+            ...data,
+            original_price:
+              data.original_price ||
+              data.price / (1 - (data.discount_percentage || 0) / 100),
+          } as Product;
+        });
+        setProducts(productsWithDiscount);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error loading products:", error);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [showSaleLink, saleEndAt]);
 
   useEffect(() => {
     const saleRef = doc(db, "site_settings", "sale");
     const unsubscribe = onSnapshot(saleRef, (snap) => {
-      if (!snap.exists()) return;
+      if (!snap.exists()) {
+        setShowSaleLink(true);
+        setSaleTitle("SEASONAL SALE");
+        setSaleHeadline("UP TO 70% OFF");
+        setSaleSubtitle("Limited Time Offer");
+        setSaleEndAt(null);
+        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+        return;
+      }
+
       const data = snap.data();
+      setShowSaleLink(data.show_sale_link !== false);
       setSaleTitle(data.sale_title || "SEASONAL SALE");
+      setSaleHeadline(data.sale_headline || "UP TO 70% OFF");
       setSaleSubtitle(data.sale_subtitle || "Limited Time Offer");
 
       const dateValue =
@@ -91,7 +163,11 @@ export function Sale() {
           : typeof data.end_at === "string"
           ? new Date(data.end_at)
           : null;
-      setSaleEndAt(dateValue);
+
+      const validEndAt =
+        dateValue && !Number.isNaN(dateValue.getTime()) ? dateValue : null;
+      setSaleEndAt(validEndAt);
+      setTimeLeft(getCountdown(validEndAt));
     });
 
     return () => unsubscribe();
@@ -102,23 +178,10 @@ export function Sale() {
   }, [products, selectedCategories, selectedAudience, selectedDiscount, sortBy]);
 
   useEffect(() => {
+    setTimeLeft(getCountdown(saleEndAt));
+
     const timer = setInterval(() => {
-      if (!saleEndAt) return;
-
-      const now = new Date().getTime();
-      const distance = saleEndAt.getTime() - now;
-
-      if (distance <= 0) {
-        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
-        return;
-      }
-
-      setTimeLeft({
-        days: Math.floor(distance / (1000 * 60 * 60 * 24)),
-        hours: Math.floor((distance / (1000 * 60 * 60)) % 24),
-        minutes: Math.floor((distance / (1000 * 60)) % 60),
-        seconds: Math.floor((distance / 1000) % 60),
-      });
+      setTimeLeft(getCountdown(saleEndAt));
     }, 1000);
 
     return () => clearInterval(timer);
@@ -168,36 +231,6 @@ export function Sale() {
       setSubscribeStatus("error");
     } finally {
       setTimeout(() => setSubscribeStatus("idle"), 3000);
-    }
-  };
-
-  const loadProducts = async () => {
-    try {
-      setLoading(true);
-      const productsRef = collection(db, "products");
-      const q = query(
-        productsRef,
-        where("discount_percentage", ">", 0),
-        limit(50)
-      );
-      const querySnapshot = await getDocs(q);
-
-      const productsWithDiscount = querySnapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          original_price:
-            data.original_price ||
-            data.price / (1 - (data.discount_percentage || 0) / 100),
-        } as Product;
-      });
-
-      setProducts(productsWithDiscount);
-    } catch (error) {
-      console.error("Error loading products:", error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -260,6 +293,75 @@ export function Sale() {
     setSelectedDiscount("all");
   };
 
+  const isSaleExpired =
+    saleEndAt instanceof Date && saleEndAt.getTime() <= Date.now();
+
+  const isInitialLoading =
+    showSaleLink === null || (showSaleLink === true && loading && products.length === 0);
+
+  if (isInitialLoading) {
+    return (
+      <div className="min-h-screen pt-24 pb-16 px-4">
+        <div className="max-w-7xl mx-auto">
+          <div className="mb-12 rounded-3xl p-8 md:p-12 border border-slate-700/70 surface-card animate-pulse">
+            <div className="h-8 w-40 bg-slate-800 rounded-full mx-auto mb-6" />
+            <div className="h-14 w-80 bg-slate-800 rounded mx-auto mb-4" />
+            <div className="h-7 w-64 bg-slate-800 rounded mx-auto mb-8" />
+            <div className="flex justify-center gap-4 md:gap-6">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="text-center">
+                  <div className="rounded-xl p-4 md:p-6 min-w-[70px] md:min-w-[90px] bg-slate-800">
+                    <div className="h-8 w-8 bg-slate-700 rounded mx-auto" />
+                  </div>
+                  <div className="h-3 w-10 bg-slate-800 rounded mt-2 mx-auto" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="py-4 px-6 rounded-xl border border-slate-700 surface-card animate-pulse">
+                <div className="h-5 w-5 bg-slate-700 rounded mx-auto mb-2" />
+                <div className="h-4 w-20 bg-slate-800 rounded mx-auto" />
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            {[...Array(8)].map((_, i) => (
+              <div key={i} className="animate-pulse">
+                <div className="aspect-[3/4] bg-slate-800 rounded-lg mb-4" />
+                <div className="h-4 bg-slate-800 rounded mb-2" />
+                <div className="h-4 bg-slate-800 rounded w-1/2" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (showSaleLink === false || isSaleExpired) {
+    return (
+      <div className="min-h-screen pt-24 pb-16 px-4">
+        <div className="max-w-4xl mx-auto text-center surface-card rounded-2xl p-10 border border-slate-700/70">
+          <h1 className="text-3xl md:text-4xl font-light text-slate-100 mb-3">
+            No Active Sale
+          </h1>
+          <p className="text-slate-300 mb-6">
+            {isSaleExpired
+              ? "This sale ended when the countdown reached zero."
+              : "The sale is currently disabled from admin settings."}
+          </p>
+          <Link to="/shop" className="text-cyan-200 underline hover:text-cyan-100">
+            Continue to Shop
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen pt-24 pb-16 px-4">
       <div className="max-w-7xl mx-auto">
@@ -276,7 +378,7 @@ export function Sale() {
             </div>
 
             <h1 className="text-5xl md:text-7xl font-semibold tracking-[0.16em] mb-4">
-              UP TO 70% OFF
+              {saleHeadline}
             </h1>
             <p className="text-xl md:text-2xl font-light mb-8">{saleSubtitle}</p>
 

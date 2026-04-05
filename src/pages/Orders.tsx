@@ -40,6 +40,8 @@ interface Order {
   items: OrderItem[];
   total: number;
   status: OrderStatus;
+  cancel_reason?: string;
+  status_note?: string;
   created_at: Timestamp | Date | string | null | undefined;
   shipping_address?: string;
   tracking_number?: string;
@@ -52,6 +54,8 @@ export function Orders() {
   const [loading, setLoading] = useState(true);
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
   const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
+  const [cancelModalOrder, setCancelModalOrder] = useState<Order | null>(null);
+  const [cancelReasonInput, setCancelReasonInput] = useState("");
   const formatOrderDate = (value: Order["created_at"]) => {
     const date =
       value instanceof Timestamp
@@ -187,13 +191,68 @@ export function Orders() {
     }
   };
 
+  const statusRank: Record<Exclude<OrderStatus, "cancelled">, number> = {
+    pending: 0,
+    processing: 1,
+    shipped: 2,
+    delivered: 3,
+  };
+
+  const getTimelineSteps = (status: OrderStatus) => {
+    if (status === "cancelled") {
+      return [
+        {
+          key: "cancelled",
+          title: "Closed",
+          description: "Order cancelled",
+          completed: true,
+          icon: "cancelled" as const,
+        },
+      ];
+    }
+
+    const currentRank = statusRank[status];
+    return [
+      {
+        key: "pending",
+        title: "Order Placed",
+        description: "Your order has been received",
+        completed: currentRank >= 0,
+        icon: "check" as const,
+      },
+      {
+        key: "processing",
+        title: "Processing",
+        description: "Your order is being processed",
+        completed: currentRank >= 1,
+        icon: "processing" as const,
+      },
+      {
+        key: "shipped",
+        title: "Shipped",
+        description: "Your order is on the way",
+        completed: currentRank >= 2,
+        icon: "shipped" as const,
+      },
+      {
+        key: "delivered",
+        title: "Delivered",
+        description: "Your order has been delivered",
+        completed: currentRank >= 3,
+        icon: "check" as const,
+      },
+    ];
+  };
+
   const requestStatusChange = async (
     order: Order,
     newStatus: OrderStatus,
     confirmText: string,
-    reason?: string
+    reason?: string,
+    extraFields?: Record<string, unknown>,
+    skipConfirm = false
   ) => {
-    if (!window.confirm(confirmText)) return;
+    if (!skipConfirm && !window.confirm(confirmText)) return false;
 
     try {
       setStatusUpdating(order.id);
@@ -202,6 +261,8 @@ export function Orders() {
         userId: user?.uid || order.user_id,
         items: order.items,
         newStatus,
+        statusNote: reason,
+        extraFields,
       });
 
       if (newStatus === "cancelled") {
@@ -287,8 +348,37 @@ export function Orders() {
       alert(
         error instanceof Error ? error.message : "Failed to update order status."
       );
+      return false;
     } finally {
       setStatusUpdating(null);
+    }
+    return true;
+  };
+
+  const submitCancelOrder = async () => {
+    if (!cancelModalOrder) return;
+    const reason = cancelReasonInput.trim();
+    if (!reason) {
+      alert("Please tell us why you cancelled the order.");
+      return;
+    }
+
+    const ok = await requestStatusChange(
+      cancelModalOrder,
+      "cancelled",
+      "",
+      reason,
+      {
+        cancel_reason: reason,
+        cancelled_at: Timestamp.now(),
+        cancelled_by: "customer",
+      },
+      true
+    );
+
+    if (ok) {
+      setCancelModalOrder(null);
+      setCancelReasonInput("");
     }
   };
 
@@ -411,14 +501,10 @@ export function Orders() {
                       </span>
                       {order.status === "pending" && (
                         <button
-                          onClick={() =>
-                            requestStatusChange(
-                              order,
-                              "cancelled",
-                              "Cancel this order? Stock will be returned to inventory.",
-                              "User cancelled order"
-                            )
-                          }
+                          onClick={() => {
+                            setCancelModalOrder(order);
+                            setCancelReasonInput("");
+                          }}
                           disabled={statusUpdating === order.id}
                           className="px-3 py-2 rounded-lg text-xs font-medium border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-60"
                         >
@@ -547,174 +633,51 @@ export function Orders() {
                       <h3 className="font-semibold text-lg mb-4">
                         Order Status
                       </h3>
-                      <div className="relative">
-                        <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-200" />
+                      {(() => {
+                        const timelineSteps = getTimelineSteps(order.status);
+                        return (
+                          <div className="relative">
+                            {timelineSteps.length > 1 && (
+                              <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-200" />
+                            )}
 
-                        <div className="space-y-6 relative">
-                          <div
-                            className={`flex items-center gap-4 ${
-                              [
-                                "pending",
-                                "processing",
-                                "shipped",
-                                "delivered",
-                                "cancelled",
-                              ].includes(order.status)
-                                ? ""
-                                : "opacity-50"
-                            }`}
-                          >
-                            <div
-                              className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
-                                [
-                                  "pending",
-                                  "processing",
-                                  "shipped",
-                                  "delivered",
-                                  "cancelled",
-                                ].includes(order.status)
-                                  ? "bg-green-500"
-                                  : "bg-gray-300"
-                              }`}
-                            >
-                              <CheckCircle className="text-white" size={16} />
-                            </div>
-                            <div>
-                              <p className="font-medium">Order Placed</p>
-                              <p className="text-sm text-gray-500">
-                                Your order has been received
-                              </p>
+                            <div className="space-y-6 relative">
+                              {timelineSteps.map((step) => (
+                                <div
+                                  key={step.key}
+                                  className={`flex items-center gap-4 ${
+                                    step.completed ? "" : "opacity-50"
+                                  }`}
+                                >
+                                  <div
+                                    className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
+                                      step.key === "cancelled"
+                                        ? "bg-red-500"
+                                        : step.completed
+                                        ? "bg-green-500"
+                                        : "bg-gray-300"
+                                    }`}
+                                  >
+                                    {step.key === "cancelled" ? (
+                                      <XCircle className="text-white" size={16} />
+                                    ) : step.icon === "processing" && !step.completed ? (
+                                      <Clock className="text-white" size={16} />
+                                    ) : step.icon === "shipped" && !step.completed ? (
+                                      <Truck className="text-white" size={16} />
+                                    ) : (
+                                      <CheckCircle className="text-white" size={16} />
+                                    )}
+                                  </div>
+                                  <div>
+                                    <p className="font-medium">{step.title}</p>
+                                    <p className="text-sm text-gray-500">{step.description}</p>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           </div>
-
-                          <div
-                            className={`flex items-center gap-4 ${
-                              [
-                                "processing",
-                                "shipped",
-                                "delivered",
-                              ].includes(
-                                order.status
-                              )
-                                ? ""
-                                : "opacity-50"
-                            }`}
-                          >
-                            <div
-                              className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
-                                [
-                                  "processing",
-                                  "shipped",
-                                  "delivered",
-                                ].includes(order.status)
-                                  ? "bg-green-500"
-                                  : "bg-gray-300"
-                              }`}
-                            >
-                              {[
-                                "processing",
-                                "shipped",
-                                "delivered",
-                              ].includes(order.status) ? (
-                                <CheckCircle className="text-white" size={16} />
-                              ) : (
-                                <Clock className="text-white" size={16} />
-                              )}
-                            </div>
-                            <div>
-                              <p className="font-medium">Processing</p>
-                              <p className="text-sm text-gray-500">
-                                We're preparing your items
-                              </p>
-                            </div>
-                          </div>
-
-                          <div
-                            className={`flex items-center gap-4 ${
-                              [
-                                "shipped",
-                                "delivered",
-                              ].includes(order.status)
-                                ? ""
-                                : "opacity-50"
-                            }`}
-                          >
-                            <div
-                              className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
-                                [
-                                  "shipped",
-                                  "delivered",
-                                ].includes(order.status)
-                                  ? "bg-green-500"
-                                  : "bg-gray-300"
-                              }`}
-                            >
-                              {[
-                                "shipped",
-                                "delivered",
-                              ].includes(order.status) ? (
-                                <CheckCircle className="text-white" size={16} />
-                              ) : (
-                                <Truck className="text-white" size={16} />
-                              )}
-                            </div>
-                            <div>
-                              <p className="font-medium">Shipped</p>
-                              <p className="text-sm text-gray-500">
-                                Your order is on the way
-                              </p>
-                            </div>
-                          </div>
-
-                          <div
-                            className={`flex items-center gap-4 ${
-                              ["delivered"].includes(order.status)
-                                ? ""
-                                : "opacity-50"
-                            }`}
-                          >
-                            <div
-                              className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
-                                ["delivered"].includes(order.status)
-                                  ? "bg-green-500"
-                                  : "bg-gray-300"
-                              }`}
-                            >
-                              <CheckCircle className="text-white" size={16} />
-                            </div>
-                            <div>
-                              <p className="font-medium">Delivered</p>
-                              <p className="text-sm text-gray-500">
-                                Your order has been delivered
-                              </p>
-                            </div>
-                          </div>
-
-                          <div
-                            className={`flex items-center gap-4 ${
-                              ["cancelled"].includes(order.status)
-                                ? ""
-                                : "opacity-50"
-                            }`}
-                          >
-                            <div
-                              className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
-                                ["cancelled"].includes(order.status)
-                                  ? "bg-red-500"
-                                  : "bg-gray-300"
-                              }`}
-                            >
-                              <XCircle className="text-white" size={16} />
-                            </div>
-                            <div>
-                              <p className="font-medium">Closed</p>
-                              <p className="text-sm text-gray-500">
-                                Order cancelled
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
@@ -723,6 +686,45 @@ export function Orders() {
           </div>
         )}
       </div>
+      {cancelModalOrder && (
+        <div className="fixed inset-0 z-50 bg-black/55 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl border border-gray-200 shadow-xl p-5">
+            <h3 className="text-lg font-semibold mb-2">Why did you cancel?</h3>
+            <p className="text-sm text-gray-600 mb-3">
+              This reason will be shared with the admin team.
+            </p>
+            <textarea
+              value={cancelReasonInput}
+              onChange={(e) => setCancelReasonInput(e.target.value)}
+              rows={4}
+              placeholder="Example: I ordered the wrong size."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg resize-none"
+            />
+            <div className="mt-4 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setCancelModalOrder(null);
+                  setCancelReasonInput("");
+                }}
+                className="px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50"
+              >
+                Keep Order
+              </button>
+              <button
+                type="button"
+                onClick={submitCancelOrder}
+                disabled={statusUpdating === cancelModalOrder.id}
+                className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                {statusUpdating === cancelModalOrder.id
+                  ? "Cancelling..."
+                  : "Confirm Cancel"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

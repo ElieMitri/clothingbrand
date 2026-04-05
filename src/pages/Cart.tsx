@@ -68,6 +68,50 @@ interface SavedAddress {
   country?: string;
 }
 
+const GUEST_CART_STORAGE_KEY = "guest_cart_items_v1";
+
+interface GuestCartEntry {
+  product_id: string;
+  size: string;
+  quantity: number;
+}
+
+const readGuestCart = (): GuestCartEntry[] => {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = window.localStorage.getItem(GUEST_CART_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    const grouped = new Map<string, GuestCartEntry>();
+    parsed.forEach((entry) => {
+      const productId = String(entry?.product_id || "").trim();
+      const size = String(entry?.size || "").trim();
+      const quantity = Number(entry?.quantity || 0);
+      if (!productId || !size || quantity <= 0) return;
+      const key = `${productId}__${size}`;
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.quantity += quantity;
+      } else {
+        grouped.set(key, { product_id: productId, size, quantity });
+      }
+    });
+
+    return Array.from(grouped.values());
+  } catch {
+    return [];
+  }
+};
+
+const writeGuestCart = (items: GuestCartEntry[]) => {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(GUEST_CART_STORAGE_KEY, JSON.stringify(items));
+  window.dispatchEvent(new Event("guest-cart-updated"));
+};
+
 export function Cart() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -76,6 +120,7 @@ export function Cart() {
   const [updating, setUpdating] = useState<string | null>(null);
   const [showCheckoutForm, setShowCheckoutForm] = useState(false);
   const [checkoutForm, setCheckoutForm] = useState({
+    email: "",
     fullName: "",
     phone: "",
     address: "",
@@ -117,11 +162,20 @@ export function Cart() {
   }, [showCheckoutForm, showAddAddressModal]);
 
   useEffect(() => {
-    if (user) {
+    loadCart();
+  }, [user]);
+
+  useEffect(() => {
+    if (user) return;
+    const handleGuestCartUpdated = () => {
       loadCart();
-    } else {
-      setLoading(false);
-    }
+    };
+    window.addEventListener("guest-cart-updated", handleGuestCartUpdated);
+    window.addEventListener("storage", handleGuestCartUpdated);
+    return () => {
+      window.removeEventListener("guest-cart-updated", handleGuestCartUpdated);
+      window.removeEventListener("storage", handleGuestCartUpdated);
+    };
   }, [user]);
 
   const normalizeAddressBook = (raw: unknown): SavedAddress[] => {
@@ -191,7 +245,50 @@ export function Cart() {
 
   const loadCart = async () => {
     try {
-      if (!user) return;
+      setLoading(true);
+
+      if (!user) {
+        const guestEntries = readGuestCart();
+        if (guestEntries.length === 0) {
+          setCartItems([]);
+          return;
+        }
+
+        const items = await Promise.all(
+          guestEntries.map(async (entry) => {
+            const productRef = doc(db, "products", entry.product_id);
+            const productSnap = await getDoc(productRef);
+            if (!productSnap.exists()) return null;
+
+            const productData = productSnap.data();
+            const sizeStockMap = (productData.size_stock ||
+              {}) as Record<string, number>;
+            const hasSizeStock = Object.keys(sizeStockMap).length > 0;
+            const availableStock = hasSizeStock
+              ? Number(sizeStockMap[entry.size] || 0)
+              : Number(productData.stock || 0);
+
+            const mappedItem: RawCartItem = {
+              id: `${entry.product_id}__${entry.size}`,
+              product_id: entry.product_id,
+              size: entry.size,
+              quantity: entry.quantity,
+              product: {
+                name: productData.name,
+                price: productData.price,
+                image_url: productData.image_url,
+                category: productData.category,
+                stock: availableStock,
+                size_stock: hasSizeStock ? sizeStockMap : undefined,
+              },
+            };
+            return mappedItem;
+          })
+        );
+
+        setCartItems(items.filter((item): item is RawCartItem => item !== null));
+        return;
+      }
 
       const cartsRef = collection(db, "carts");
       const q = query(cartsRef, where("user_id", "==", user.uid));
@@ -255,9 +352,21 @@ export function Cart() {
         return;
       }
 
+      if (!currentItem) return;
       setUpdating(itemId);
-      const cartRef = doc(db, "carts", itemId);
-      await updateDoc(cartRef, { quantity: newQuantity });
+
+      if (user) {
+        const cartRef = doc(db, "carts", itemId);
+        await updateDoc(cartRef, { quantity: newQuantity });
+      } else {
+        const guestCart = readGuestCart();
+        const nextGuestCart = guestCart.map((entry) =>
+          `${entry.product_id}__${entry.size}` === itemId
+            ? { ...entry, quantity: newQuantity }
+            : entry
+        );
+        writeGuestCart(nextGuestCart);
+      }
 
       setCartItems(
         cartItems.map((item) =>
@@ -274,8 +383,16 @@ export function Cart() {
   const removeItem = async (itemId: string) => {
     try {
       setUpdating(itemId);
-      const cartRef = doc(db, "carts", itemId);
-      await deleteDoc(cartRef);
+      if (user) {
+        const cartRef = doc(db, "carts", itemId);
+        await deleteDoc(cartRef);
+      } else {
+        const guestCart = readGuestCart();
+        const nextGuestCart = guestCart.filter(
+          (entry) => `${entry.product_id}__${entry.size}` !== itemId
+        );
+        writeGuestCart(nextGuestCart);
+      }
 
       setCartItems(cartItems.filter((item) => item.id !== itemId));
     } catch (error) {
@@ -286,7 +403,19 @@ export function Cart() {
   };
 
   const openCheckoutForm = async () => {
-    if (!user || cartItems.length === 0) return;
+    if (cartItems.length === 0) return;
+
+    if (!user) {
+      setSavedAddresses([]);
+      setSelectedAddressId("");
+      setCheckoutForm((prev) => ({
+        ...prev,
+        email: prev.email || "",
+      }));
+      setShowCheckoutForm(true);
+      return;
+    }
+
     try {
       const userSnap = await getDoc(doc(db, "users", user.uid));
       const userData = userSnap.exists() ? userSnap.data() : {};
@@ -304,6 +433,7 @@ export function Cart() {
 
       setCheckoutForm((prev) => ({
         ...prev,
+        email: prev.email || String(user.email || ""),
         fullName: prev.fullName || fullName,
         phone: prev.phone || phone,
       }));
@@ -323,8 +453,9 @@ export function Cart() {
   };
 
   const checkout = async () => {
-    if (!user || cartItems.length === 0) return;
+    if (cartItems.length === 0) return;
 
+    const emailInput = checkoutForm.email.trim().toLowerCase();
     const fullName = checkoutForm.fullName.trim();
     const phone = checkoutForm.phone.trim();
     const address = checkoutForm.address.trim();
@@ -334,8 +465,8 @@ export function Cart() {
     const zipCode = "-";
     const country = "Lebanon";
 
-    if (!fullName || !phone || !address || !city) {
-      alert("Please fill in all required shipping fields.");
+    if (!fullName || !phone || !address || !city || (!user && !emailInput)) {
+      alert("Please fill in all required checkout fields.");
       return;
     }
 
@@ -365,17 +496,60 @@ export function Cart() {
       const cartDocIds = cartItems.map((item) => item.id);
 
       const orderId = await placeOrderWithInventory({
-        userId: user.uid,
-        userEmail: user.email,
+        userId: user?.uid || null,
+        userEmail: user?.email || emailInput || null,
         items: orderItems,
         subtotal,
         shipping,
         tax,
         total,
-        cartDocIds,
+        cartDocIds: user ? cartDocIds : [],
       });
 
-      const email = String(user.email || "Not provided");
+      const email = String(user?.email || emailInput || "Not provided");
+
+      try {
+        const confirmationPayload = {
+          orderId,
+          name: fullName,
+          email,
+          address,
+          phone,
+          directions,
+          city,
+          state,
+          zipCode,
+          country,
+          subtotal,
+          shipping,
+          tax,
+          total,
+          items: orderItems.map((item) => ({
+            name: item.product_name,
+            size: item.size,
+            quantity: item.quantity,
+            unitPrice: item.price,
+          })),
+        };
+
+        const response = await fetch("/api/send-order-confirmation-email", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(confirmationPayload),
+        });
+
+        if (!response.ok) {
+          const reason = await response.text().catch(() => "");
+          throw new Error(reason || `HTTP ${response.status}`);
+        }
+      } catch (confirmationError) {
+        console.error(
+          "Order placed, but confirmation email failed:",
+          confirmationError
+        );
+      }
 
       try {
         const notificationPayload = {
@@ -431,13 +605,20 @@ export function Cart() {
 
       setShowCheckoutForm(false);
       setCheckoutForm({
+        email: "",
         fullName: "",
         phone: "",
         address: "",
         directions: "",
         city: "",
       });
-      setTimeout(() => navigate("/orders"), 1300);
+      if (!user) {
+        writeGuestCart([]);
+        setCartItems([]);
+        setTimeout(() => navigate("/"), 1300);
+      } else {
+        setTimeout(() => navigate("/orders"), 1300);
+      }
     } catch (error) {
       console.error("Error placing order:", error);
       const message =
@@ -566,30 +747,6 @@ export function Cart() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-300 mx-auto mb-4"></div>
           <p className="text-slate-300">Loading your cart...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen pt-24 pb-16 px-4 bg-gray-50 flex items-center justify-center">
-        <div className="text-center max-w-md">
-          <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <ShoppingBag className="text-gray-400" size={40} />
-          </div>
-          <h2 className="text-2xl font-light mb-4">
-            Sign in to view your cart
-          </h2>
-          <p className="text-gray-600 mb-8">
-            Please sign in to access your shopping cart and checkout.
-          </p>
-          <Link
-            to="/login"
-            className="inline-block px-8 py-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors"
-          >
-            Sign In
-          </Link>
         </div>
       </div>
     );
@@ -759,7 +916,7 @@ export function Cart() {
                   </div>
 
                   <div className="flex justify-between text-gray-600">
-                    <span>Shipping</span>
+                    <span>Service Fee</span>
                     <span className="font-medium">
                       {shipping === 0 ? (
                         <span className="text-green-600">FREE</span>
@@ -778,7 +935,7 @@ export function Cart() {
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
                       <p className="text-blue-800">
                         Add ${(100 - subtotal).toFixed(2)} more to get FREE
-                        shipping!
+                        service fee!
                       </p>
                     </div>
                   )}
@@ -815,7 +972,7 @@ export function Cart() {
                       <Truck size={20} />
                     </div>
                     <div>
-                      <p className="font-medium text-gray-900">Free Shipping</p>
+                      <p className="font-medium text-gray-900">No Service Fee</p>
                       <p className="text-xs">On orders over $100</p>
                     </div>
                   </div>
@@ -863,14 +1020,31 @@ export function Cart() {
                     onClick={(event) => event.stopPropagation()}
                   >
                     <div className="p-4 sm:p-6 border-b border-gray-200 shrink-0">
-                      <h2 className="text-xl font-semibold">Shipping Details</h2>
+                      <h2 className="text-xl font-semibold">Checkout Details</h2>
                       <p className="text-sm text-gray-600 mt-1">
-                        Enter delivery information for this order.
+                        {user
+                          ? "Enter order information for this checkout."
+                          : "Continue as guest and enter your order details."}
                       </p>
                     </div>
 
                     <div className="p-4 sm:p-6 space-y-4 overflow-y-auto overscroll-contain">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email {!user ? "*" : "(for updates)"}
+                  </label>
+                  <input
+                    type="email"
+                    value={checkoutForm.email}
+                    onChange={(e) =>
+                      setCheckoutForm((prev) => ({ ...prev, email: e.target.value }))
+                    }
+                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
+                    placeholder="your@email.com"
+                    disabled={Boolean(user?.email)}
+                  />
+                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Full Name *
@@ -901,6 +1075,7 @@ export function Cart() {
                 </div>
               </div>
 
+              {user ? (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Saved Location
@@ -972,6 +1147,7 @@ export function Cart() {
                   </div>
                 ) : null}
               </div>
+              ) : null}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -998,7 +1174,7 @@ export function Cart() {
                     setCheckoutForm((prev) => ({ ...prev, directions: e.target.value }))
                   }
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  placeholder="Landmark or delivery notes..."
+                  placeholder="Landmark or order notes..."
                   rows={2}
                 />
               </div>
@@ -1112,7 +1288,7 @@ export function Cart() {
                           }
                           rows={2}
                           className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                          placeholder="Landmark or delivery notes..."
+                          placeholder="Landmark or order notes..."
                         />
                       </div>
                       <div>

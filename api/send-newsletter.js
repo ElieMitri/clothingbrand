@@ -5,10 +5,12 @@ export default async function handler(req, res) {
 
   try {
     const { subject, message, recipients } = req.body || {};
+    const trimmedSubject = String(subject || "").trim();
+    const trimmedMessage = String(message || "").trim();
 
     if (
-      !subject ||
-      !message ||
+      !trimmedSubject ||
+      !trimmedMessage ||
       !Array.isArray(recipients) ||
       recipients.length === 0
     ) {
@@ -21,7 +23,10 @@ export default async function handler(req, res) {
     }
 
     const fromAddress =
-      process.env.NEWSLETTER_FROM || "LBathletes <onboarding@resend.dev>";
+      process.env.NEWSLETTER_FROM ||
+      process.env.ORDER_STATUS_FROM ||
+      "LBathletes <onboarding@resend.dev>";
+    const supportEmail = String(process.env.SUPPORT_EMAIL || "").trim();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
     const uniqueRecipients = Array.from(
       new Set(
@@ -44,8 +49,9 @@ export default async function handler(req, res) {
         .replace(/'/g, "&#039;");
 
     const htmlBody = `<div style="font-family: Arial, sans-serif; line-height:1.6; color:#0f172a;">${escapeHtml(
-      message
+      trimmedMessage
     ).replace(/\n/g, "<br />")}</div>`;
+    const textBody = trimmedMessage;
 
     const failedRecipients = [];
     let sentCount = 0;
@@ -64,14 +70,26 @@ export default async function handler(req, res) {
             body: JSON.stringify({
               from: fromAddress,
               to: [recipient],
-              subject,
+              subject: trimmedSubject,
               html: htmlBody,
+              text: textBody,
+              reply_to: emailRegex.test(supportEmail) ? supportEmail : undefined,
             }),
           });
 
           if (!response.ok) {
-            const text = await response.text();
-            throw new Error(text || `Send failed for ${recipient}`);
+            const errorText = await response.text().catch(() => "");
+            let parsedError = null;
+            try {
+              parsedError = errorText ? JSON.parse(errorText) : null;
+            } catch {
+              parsedError = null;
+            }
+            const reason =
+              (parsedError && (parsedError.message || parsedError.error)) ||
+              errorText ||
+              `Send failed for ${recipient}`;
+            throw new Error(String(reason));
           }
 
           return recipient;

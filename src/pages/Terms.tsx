@@ -27,7 +27,7 @@ export function Terms() {
           <section>
             <h2 className="text-xl font-semibold text-slate-100">3. Returns and Cancellations</h2>
             <p className="mt-2">
-              Orders can be cancelled before shipment. Once an order is shipped or delivered,
+              Orders can be cancelled before final processing. Once an order is marked as completed,
               it is considered final and non-refundable.
             </p>
           </section>

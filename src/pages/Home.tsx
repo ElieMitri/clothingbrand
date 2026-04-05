@@ -9,7 +9,6 @@ import {
   BadgeCheck,
   Gem,
   Instagram,
-  MessageSquareQuote,
   PackageCheck,
   Shield,
   Truck,
@@ -21,7 +20,6 @@ import {
   addDoc,
   collection,
   doc,
-  getDoc,
   getDocs,
   limit,
   onSnapshot,
@@ -120,6 +118,9 @@ export function Home() {
   const [newArrivals, setNewArrivals] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [collectionsData, setCollectionsData] = useState<CollectionItem[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [featuredProductIds, setFeaturedProductIds] = useState<string[]>([]);
+  const [newArrivalIds, setNewArrivalIds] = useState<string[]>([]);
   const [todayPickProductId, setTodayPickProductId] = useState("");
   const [heroImageOverride, setHeroImageOverride] = useState("");
   const [homeCollectionIds, setHomeCollectionIds] = useState<string[]>([]);
@@ -145,20 +146,48 @@ export function Home() {
   const notificationPanelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (allProducts.length === 0) {
+      setFeaturedProducts([]);
+      setNewArrivals([]);
+      return;
+    }
+
+    if (featuredProductIds.length > 0) {
+      const orderedFeatured = featuredProductIds
+        .map((id) => allProducts.find((product) => product.id === id))
+        .filter((product): product is Product => Boolean(product))
+        .slice(0, 3);
+      setFeaturedProducts(orderedFeatured);
+    } else {
+      setFeaturedProducts([]);
+    }
+
+    if (newArrivalIds.length > 0) {
+      const orderedArrivals = newArrivalIds
+        .map((id) => allProducts.find((product) => product.id === id))
+        .filter((product): product is Product => Boolean(product))
+        .slice(0, 4);
+      setNewArrivals(orderedArrivals);
+    } else {
+      setNewArrivals([]);
+    }
+  }, [allProducts, featuredProductIds, newArrivalIds]);
+
+  useEffect(() => {
     const unsubscribers: Unsubscribe[] = [];
 
     try {
       const settingsRef = doc(db, "site_settings", "homepage");
 
       unsubscribers.push(
-        onSnapshot(settingsRef, async (settingsSnap) => {
+        onSnapshot(settingsRef, (settingsSnap) => {
           let featuredIds: string[] = [];
-          let newArrivalIds: string[] = [];
+          let arrivalsIds: string[] = [];
 
           if (settingsSnap.exists()) {
             const data = settingsSnap.data();
             featuredIds = data.featured_product_ids || [];
-            newArrivalIds = data.new_arrival_ids || [];
+            arrivalsIds = data.new_arrival_ids || [];
             setTodayPickProductId(data.today_pick_product_id || "");
             setHeroImageOverride(data.hero_image_url || "");
             setHomeCollectionIds(data.home_collection_ids || []);
@@ -195,48 +224,19 @@ export function Home() {
             setCategories([]);
           }
 
-          if (featuredIds.length > 0) {
-            const featured = await Promise.all(
-              featuredIds.slice(0, 3).map(async (id) => {
-                const snap = await getDoc(doc(db, "products", id));
-                if (!snap.exists()) return null;
-                return { id: snap.id, ...snap.data() } as Product;
-              })
-            );
-            setFeaturedProducts(featured.filter((p): p is Product => p !== null));
-          } else {
-            const recentQ = query(
-              collection(db, "products"),
-              orderBy("created_at", "desc"),
-              limit(3)
-            );
-            const recentSnap = await getDocs(recentQ);
-            setFeaturedProducts(
-              recentSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Product))
-            );
-          }
+          setFeaturedProductIds(featuredIds);
+          setNewArrivalIds(arrivalsIds);
+        })
+      );
 
-          if (newArrivalIds.length > 0) {
-            const arrivals = await Promise.all(
-              newArrivalIds.slice(0, 4).map(async (id) => {
-                const snap = await getDoc(doc(db, "products", id));
-                if (!snap.exists()) return null;
-                return { id: snap.id, ...snap.data() } as Product;
-              })
-            );
-            setNewArrivals(arrivals.filter((p): p is Product => p !== null));
-          } else {
-            const recentQ = query(
-              collection(db, "products"),
-              orderBy("created_at", "desc"),
-              limit(4)
-            );
-            const recentSnap = await getDocs(recentQ);
-            setNewArrivals(
-              recentSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Product))
-            );
-          }
-
+      const productsQuery = query(collection(db, "products"), orderBy("created_at", "desc"));
+      unsubscribers.push(
+        onSnapshot(productsQuery, (snapshot) => {
+          const data = snapshot.docs.map((entry) => ({
+            id: entry.id,
+            ...entry.data(),
+          })) as Product[];
+          setAllProducts(data);
         })
       );
 
@@ -499,6 +499,26 @@ export function Home() {
           .map((id) => collectionsData.find((entry) => entry.id === id))
           .filter((entry): entry is CollectionItem => Boolean(entry))
       : collectionsData.slice(0, 3);
+  const topDiscountProduct = useMemo(() => {
+    const discounted = allProducts.filter(
+      (product) => Number(product.discount_percentage || 0) > 0
+    );
+    if (discounted.length === 0) return null;
+
+    return discounted.sort((a, b) => {
+      const aDiscount = Number(a.discount_percentage || 0);
+      const bDiscount = Number(b.discount_percentage || 0);
+      if (aDiscount !== bDiscount) return bDiscount - aDiscount;
+      return a.price - b.price;
+    })[0];
+  }, [allProducts]);
+  const topDiscountOriginalPrice = topDiscountProduct
+    ? topDiscountProduct.original_price &&
+      Number(topDiscountProduct.original_price) > Number(topDiscountProduct.price)
+      ? Number(topDiscountProduct.original_price)
+      : Number(topDiscountProduct.price) /
+        (1 - Number(topDiscountProduct.discount_percentage || 0) / 100)
+    : null;
 
   return (
     <div className="min-h-screen pb-16">
@@ -618,33 +638,49 @@ export function Home() {
 
           <div className="max-w-7xl mx-auto px-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="surface-card rounded-3xl p-6 md:p-7 min-h-[260px] live-float [animation-duration:8s]">
-              <p className="text-xs tracking-[0.18em] text-cyan-200">ATHLETE REVIEWS</p>
-              <h2 className="mt-3 text-2xl font-semibold text-slate-50 leading-tight">
-                Trusted By Players
-              </h2>
-              <div className="mt-3 flex items-center gap-2 text-cyan-100">
-                <Star size={16} fill="currentColor" />
-                <Star size={16} fill="currentColor" />
-                <Star size={16} fill="currentColor" />
-                <Star size={16} fill="currentColor" />
-                <Star size={16} fill="currentColor" />
-                <span className="text-sm text-slate-300">4.9/5 average rating</span>
-              </div>
-              <p className="mt-3 text-slate-300 text-sm line-clamp-2 inline-flex items-start gap-2">
-                <MessageSquareQuote size={14} className="mt-0.5 text-cyan-200" />
-                “Premium feel and great fit from day one.”
-              </p>
-              <div className="mt-4 flex items-center justify-between">
-                <span className="text-sm text-slate-300">
-                  1.4k+ verified customer reviews
-                </span>
-                {/* <Link
-                  to="/shop"
-                  className="text-sm text-cyan-200 hover:text-cyan-100 inline-flex items-center gap-1"
-                >
-                  Read more <ArrowRight size={14} />
-                </Link> */}
-              </div>
+              <p className="text-xs tracking-[0.18em] text-cyan-200">TOP DISCOUNT PICK</p>
+              {topDiscountProduct ? (
+                <>
+                  <h2 className="mt-3 text-2xl font-semibold text-slate-50 leading-tight line-clamp-2">
+                    {topDiscountProduct.name}
+                  </h2>
+                  <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-rose-300/30 bg-rose-500/15 px-3 py-1 text-rose-200 text-sm">
+                    <Star size={14} fill="currentColor" />
+                    Save {Number(topDiscountProduct.discount_percentage || 0)}%
+                  </div>
+                  <p className="mt-3 text-slate-300 text-sm">
+                    Category: {topDiscountProduct.category}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2">
+                    <span className="text-xl font-semibold text-slate-100">
+                      {formatPrice(Number(topDiscountProduct.price || 0))}
+                    </span>
+                    {topDiscountOriginalPrice ? (
+                      <span className="text-sm text-slate-400 line-through">
+                        {formatPrice(Number(topDiscountOriginalPrice))}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-4">
+                    <Link
+                      to={`/product/${topDiscountProduct.id}`}
+                      className="inline-flex items-center gap-2 text-sm text-cyan-200 hover:text-cyan-100"
+                    >
+                      Shop this deal
+                      <ArrowRight size={14} />
+                    </Link>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h2 className="mt-3 text-2xl font-semibold text-slate-50 leading-tight">
+                    No Active Discounts Yet
+                  </h2>
+                  <p className="mt-3 text-slate-300 text-sm">
+                    Add product discounts from admin and your best offer will show here automatically.
+                  </p>
+                </>
+              )}
             </div>
 
             <div className="surface-card rounded-3xl p-6 md:p-7 min-h-[260px]">
@@ -661,15 +697,15 @@ export function Home() {
                 </div>
                 <div className="rounded-xl border border-slate-700/70 p-3 text-slate-200 inline-flex items-center gap-2">
                   <PackageCheck size={14} className="text-cyan-200" />
-                  Fast shipping 24-72h
+                  Trusted reseller sourcing
                 </div>
                 <div className="rounded-xl border border-slate-700/70 p-3 text-slate-200 inline-flex items-center gap-2">
                   <BadgeCheck size={14} className="text-cyan-200" />
-                  Quality checked drops
+                  Verified authenticity focus
                 </div>
                 <div className="rounded-xl border border-slate-700/70 p-3 text-slate-200 inline-flex items-center gap-2">
                   <Banknote size={14} className="text-cyan-200" />
-                  Cash on delivery
+                  Flexible payment options
                 </div>
               </div>
             </div>
@@ -680,8 +716,8 @@ export function Home() {
       <section className="px-4 mt-8">
         <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
-           { icon: Truck, label: "QUICK DELIVERY", sub: "Across Lebanon" },
-            { icon: Banknote, label: "CASH ON DELIVERY", sub: "Pay when you receive" },
+           { icon: Truck, label: "QUICK FULFILLMENT", sub: "Across Lebanon" },
+            { icon: Banknote, label: "FLEXIBLE PAYMENT", sub: "Multiple checkout options" },
             { icon: Shield, label: "FINAL SALE", sub: "No refunds" },
           ].map((item) => (
             <div
@@ -879,7 +915,7 @@ export function Home() {
                 LBathletes is built around clean silhouettes, elevated materials, and
                 intentional details that feel modern every day. We focus on
                 wearable luxury with limited releases, fast fulfillment, and a
-                refined shopping experience from first look to delivery.
+                refined shopping experience from first look to checkout.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <Link

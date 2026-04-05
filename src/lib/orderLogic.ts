@@ -24,14 +24,14 @@ export interface OrderLineItem {
 }
 
 interface PlaceOrderInput {
-  userId: string;
+  userId?: string | null;
   userEmail?: string | null;
   items: OrderLineItem[];
   subtotal: number;
   shipping: number;
   tax: number;
   total: number;
-  cartDocIds: string[];
+  cartDocIds?: string[];
 }
 
 interface UpdateOrderStatusInput {
@@ -40,6 +40,7 @@ interface UpdateOrderStatusInput {
   items: OrderLineItem[];
   newStatus: OrderStatus;
   statusNote?: string;
+  extraFields?: Record<string, unknown>;
 }
 
 const RESTOCK_STATUSES = new Set<OrderStatus>(["cancelled"]);
@@ -50,11 +51,11 @@ const STOCK_CONSUMING_STATUSES = new Set<OrderStatus>([
   "delivered",
 ]);
 const STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  pending: ["pending", "processing", "cancelled"],
-  processing: ["processing", "shipped"],
-  shipped: ["shipped", "delivered"],
-  delivered: ["delivered"],
-  cancelled: ["cancelled"],
+  pending: ["pending", "processing", "shipped", "delivered", "cancelled"],
+  processing: ["pending", "processing", "shipped", "delivered", "cancelled"],
+  shipped: ["pending", "processing", "shipped", "delivered", "cancelled"],
+  delivered: ["pending", "processing", "shipped", "delivered", "cancelled"],
+  cancelled: ["pending", "processing", "shipped", "delivered", "cancelled"],
 };
 
 const normalizeSizeKey = (size?: string) => (size || "").trim();
@@ -97,7 +98,10 @@ export async function placeOrderWithInventory({
   cartDocIds,
 }: PlaceOrderInput): Promise<string> {
   const orderRef = doc(collection(db, "orders"));
-  const userOrderRef = doc(db, "users", userId, "orders", orderRef.id);
+  const normalizedUserId = String(userId || "").trim();
+  const userOrderRef = normalizedUserId
+    ? doc(db, "users", normalizedUserId, "orders", orderRef.id)
+    : null;
   const productSizeQuantities = buildProductSizeQuantities(items);
   const now = Timestamp.now();
 
@@ -154,7 +158,7 @@ export async function placeOrderWithInventory({
     }
 
     const orderData = {
-      user_id: userId,
+      user_id: normalizedUserId || null,
       user_email: userEmail || null,
       items,
       subtotal,
@@ -169,9 +173,11 @@ export async function placeOrderWithInventory({
     };
 
     transaction.set(orderRef, orderData);
-    transaction.set(userOrderRef, orderData);
+    if (userOrderRef) {
+      transaction.set(userOrderRef, orderData);
+    }
 
-    cartDocIds.forEach((cartDocId) => {
+    (cartDocIds || []).forEach((cartDocId) => {
       transaction.delete(doc(db, "carts", cartDocId));
     });
   });
@@ -185,6 +191,7 @@ export async function updateOrderStatusWithInventory({
   items,
   newStatus,
   statusNote,
+  extraFields,
 }: UpdateOrderStatusInput): Promise<void> {
   const orderRef = doc(db, "orders", orderId);
   const userOrderRef = userId ? doc(db, "users", userId, "orders", orderId) : null;
@@ -296,6 +303,9 @@ export async function updateOrderStatusWithInventory({
 
     if (statusNote) {
       patch.status_note = statusNote;
+    }
+    if (extraFields && typeof extraFields === "object") {
+      Object.assign(patch, extraFields);
     }
 
     if (shouldRestock) {
