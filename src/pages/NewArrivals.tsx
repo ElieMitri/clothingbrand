@@ -15,6 +15,10 @@ import {
   ProductAudience,
   normalizeProductAudience,
 } from "../lib/productAudience";
+import {
+  ProductAuthenticity,
+  toProductAuthenticityLabel,
+} from "../lib/productAuthenticity";
 
 interface Product {
   id: string;
@@ -23,6 +27,7 @@ interface Product {
   image_url: string;
   category: string;
   audience?: ProductAudience;
+  authenticity?: ProductAuthenticity;
   description?: string;
   created_at: string;
 }
@@ -70,6 +75,7 @@ export function NewArrivals() {
         image_url: String(data.image_url || ""),
         category: String(data.category || ""),
         audience: data.audience as ProductAudience | undefined,
+        authenticity: data.authenticity as ProductAuthenticity | undefined,
         description:
           typeof data.description === "string" ? data.description : undefined,
         created_at:
@@ -393,6 +399,9 @@ export function NewArrivals() {
                     <h3 className="font-light text-sm md:text-base mb-1 tracking-wide line-clamp-1">
                       {product.name}
                     </h3>
+                    <p className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">
+                      {toProductAuthenticityLabel(product.authenticity)}
+                    </p>
                     <p className="text-gray-600 text-sm md:text-base font-medium">
                       ${product.price.toFixed(2)}
                     </p>

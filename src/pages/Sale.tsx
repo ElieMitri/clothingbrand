@@ -18,6 +18,10 @@ import {
   ProductAudience,
   normalizeProductAudience,
 } from "../lib/productAudience";
+import {
+  ProductAuthenticity,
+  toProductAuthenticityLabel,
+} from "../lib/productAuthenticity";
 
 interface Product {
   id: string;
@@ -27,6 +31,7 @@ interface Product {
   image_url: string;
   category: string;
   audience?: ProductAudience;
+  authenticity?: ProductAuthenticity;
   discount_percentage?: number;
 }
 
@@ -455,6 +460,9 @@ export function Sale() {
                       <h3 className="font-medium text-sm mb-2 tracking-wide line-clamp-1 text-slate-100">
                         {product.name}
                       </h3>
+                      <p className="text-[11px] uppercase tracking-wider text-slate-300 mb-1">
+                        {toProductAuthenticityLabel(product.authenticity)}
+                      </p>
                       <div className="flex items-center gap-2">
                         <p className="text-rose-300 font-bold text-lg">
                           ${product.price.toFixed(2)}

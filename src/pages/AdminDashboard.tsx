@@ -52,6 +52,11 @@ import {
   audienceLabelMap,
   normalizeProductAudience,
 } from "../lib/productAudience";
+import {
+  ProductAuthenticity,
+  normalizeProductAuthenticity,
+  productAuthenticityLabelMap,
+} from "../lib/productAuthenticity";
 
 type DateField = Timestamp | Date | string | null | undefined;
 type CsvValue = string | number | boolean | null | undefined;
@@ -67,6 +72,7 @@ interface Product {
   category: string;
   subcategory?: string;
   audience?: ProductAudience;
+  authenticity?: ProductAuthenticity;
   images?: string[];
   colors?: string[];
   color_images?: Record<string, string>;
@@ -312,6 +318,7 @@ export function AdminDashboard() {
     category: "Men",
     subcategory: "",
     audience: "men" as ProductAudience,
+    authenticity: "original" as ProductAuthenticity,
     stock: 0,
     discount_percentage: 0,
     material: "",
@@ -977,6 +984,7 @@ export function AdminDashboard() {
         category: product.category,
         subcategory: product.subcategory || "",
         audience: normalizeProductAudience(product.audience, product.category),
+        authenticity: normalizeProductAuthenticity(product.authenticity),
         stock: product.stock || 0,
         discount_percentage: product.discount_percentage || 0,
         material: product.material || "",
@@ -1005,6 +1013,7 @@ export function AdminDashboard() {
         category: categories[0] || "",
         subcategory: "",
         audience: normalizeProductAudience(undefined, categories[0] || ""),
+        authenticity: "original" as ProductAuthenticity,
         stock: 0,
         discount_percentage: 0,
         material: "",
@@ -1172,6 +1181,7 @@ export function AdminDashboard() {
           productForm.audience,
           productForm.category
         ),
+        authenticity: normalizeProductAuthenticity(productForm.authenticity),
         stock: hasPerSizeStock ? totalStockFromSizes : Number(productForm.stock),
         discount_percentage: Number(productForm.discount_percentage),
         material: productForm.material || null,
@@ -4414,6 +4424,29 @@ export function AdminDashboard() {
                     <option value="men">Men</option>
                     <option value="women">Women</option>
                     <option value="unisex">Unisex</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Authenticity
+                  </label>
+                  <select
+                    value={productForm.authenticity}
+                    onChange={(e) =>
+                      setProductForm({
+                        ...productForm,
+                        authenticity: e.target.value as ProductAuthenticity,
+                      })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                  >
+                    <option value="original">
+                      {productAuthenticityLabelMap.original}
+                    </option>
+                    <option value="copy_a">
+                      {productAuthenticityLabelMap.copy_a}
+                    </option>
                   </select>
                 </div>
               </div>

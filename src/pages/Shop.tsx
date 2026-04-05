@@ -7,6 +7,10 @@ import {
   audienceLabelMap,
   normalizeProductAudience,
 } from "../lib/productAudience";
+import {
+  ProductAuthenticity,
+  toProductAuthenticityLabel,
+} from "../lib/productAuthenticity";
 
 interface Product {
   id: string;
@@ -15,6 +19,7 @@ interface Product {
   image_url: string;
   category: string;
   audience?: ProductAudience;
+  authenticity?: ProductAuthenticity;
 }
 
 export function Shop() {
@@ -188,7 +193,8 @@ export function Shop() {
                       audienceLabelMap[
                         normalizeProductAudience(product.audience, product.category)
                       ]
-                    }
+                    }{" "}
+                    • {toProductAuthenticityLabel(product.authenticity)}
                   </p>
                   <h3 className="font-light text-lg">{product.name}</h3>
                   <p className="text-gray-900 font-medium">

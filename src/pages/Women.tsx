@@ -3,6 +3,10 @@ import { Link } from "react-router-dom";
 import { Filter, Heart } from "lucide-react";
 import { db } from "../lib/firebase";
 import { collection, query, where, getDocs, limit } from "firebase/firestore";
+import {
+  ProductAuthenticity,
+  toProductAuthenticityLabel,
+} from "../lib/productAuthenticity";
 
 interface Product {
   id: string;
@@ -13,6 +17,7 @@ interface Product {
   image_url: string;
   category: string;
   subcategory?: string;
+  authenticity?: ProductAuthenticity;
   colors?: string[];
   stock?: number;
 }
@@ -426,6 +431,9 @@ export function Women() {
                         <h3 className="font-medium text-sm mb-2 tracking-wide line-clamp-2 text-gray-900 group-hover:text-black min-h-[2.5rem]">
                           {product.name}
                         </h3>
+                        <p className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">
+                          {toProductAuthenticityLabel(product.authenticity)}
+                        </p>
 
                         {/* Price */}
                         <div className="flex items-center gap-2 mb-3">

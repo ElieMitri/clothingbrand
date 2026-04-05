@@ -3,6 +3,10 @@ import { Link } from "react-router-dom";
 import { Filter, Grid, List } from "lucide-react";
 import { db } from "../lib/firebase";
 import { collection, query, where, getDocs, limit } from "firebase/firestore";
+import {
+  ProductAuthenticity,
+  toProductAuthenticityLabel,
+} from "../lib/productAuthenticity";
 
 interface Product {
   id: string;
@@ -11,6 +15,7 @@ interface Product {
   image_url: string;
   category: string;
   subcategory?: string;
+  authenticity?: ProductAuthenticity;
   description?: string;
 }
 
@@ -353,6 +358,9 @@ export function Accessories() {
                     <h3 className="font-light text-sm mb-1 tracking-wide line-clamp-1">
                       {product.name}
                     </h3>
+                    <p className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">
+                      {toProductAuthenticityLabel(product.authenticity)}
+                    </p>
                     <p className="text-gray-900 text-sm font-medium">
                       ${product.price.toFixed(2)}
                     </p>
@@ -381,6 +389,9 @@ export function Accessories() {
                       <h3 className="font-light text-xl mb-2 tracking-wide">
                         {product.name}
                       </h3>
+                      <p className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">
+                        {toProductAuthenticityLabel(product.authenticity)}
+                      </p>
                       <p className="text-gray-900 font-medium text-lg mb-3">
                         ${product.price.toFixed(2)}
                       </p>

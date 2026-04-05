@@ -27,6 +27,10 @@ import {
 } from "firebase/firestore";
 import { useAuth } from "../contexts/AuthContext";
 import { toCategorySlug } from "../lib/category";
+import {
+  ProductAuthenticity,
+  toProductAuthenticityLabel,
+} from "../lib/productAuthenticity";
 
 interface Product {
   id: string;
@@ -37,6 +41,7 @@ interface Product {
   description: string;
   image_url: string;
   category: string;
+  authenticity?: ProductAuthenticity;
   images?: string[];
   colors?: string[];
   color_images?: Record<string, string>;
@@ -68,7 +73,6 @@ export function ProductDetail() {
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedSize, setSelectedSize] = useState("M");
-  const [selectedColor, setSelectedColor] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [selectedImage, setSelectedImage] = useState(0);
   const [adding, setAdding] = useState(false);
@@ -76,7 +80,6 @@ export function ProductDetail() {
     "description" | "details" | "size-guide" | "reviews"
   >("description");
   const [addedToCart, setAddedToCart] = useState(false);
-  const [relatedVariants, setRelatedVariants] = useState<Product[]>([]);
   const [reviews, setReviews] = useState<ProductReview[]>([]);
   const [loadingReviews, setLoadingReviews] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
@@ -86,69 +89,6 @@ export function ProductDetail() {
   });
   const tabsSectionRef = useRef<HTMLDivElement | null>(null);
 
-  const normalizeColorKey = (value: string) => value.trim().toLowerCase();
-  const getNameSignature = (value: string) => {
-    const colorWords = [
-      "black",
-      "white",
-      "navy",
-      "blue",
-      "dark",
-      "light",
-      "slate",
-      "charcoal",
-      "graphite",
-      "red",
-      "green",
-      "beige",
-      "gray",
-      "grey",
-      "brown",
-      "pink",
-      "purple",
-      "orange",
-      "yellow",
-      "gold",
-      "silver",
-      "tan",
-      "cream",
-    ];
-    return value
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .split(/\s+/)
-      .filter((word) => word && !colorWords.includes(word))
-      .join(" ")
-      .trim();
-  };
-  const getModelHint = (value: string) => {
-    const tokens = getNameSignature(value)
-      .split(/\s+/)
-      .filter(Boolean);
-    return tokens.slice(0, 2).join(" ");
-  };
-  const colorAppearsInName = (name: string, color: string) => {
-    const normalizedName = ` ${String(name || "").toLowerCase()} `;
-    const normalizedColor = normalizeColorKey(color);
-    if (!normalizedColor) return false;
-    return normalizedName.includes(` ${normalizedColor} `);
-  };
-  const colorExistsInList = (candidate: Product, color: string) =>
-    Array.isArray(candidate.colors) &&
-    candidate.colors.some(
-      (entry) => normalizeColorKey(entry) === normalizeColorKey(color)
-    );
-  const colorExistsInMediaKeys = (candidate: Product, color: string) => {
-    const key = normalizeColorKey(color);
-    if (!key) return false;
-    const inColorImages = Object.keys(candidate.color_images || {}).some(
-      (entry) => normalizeColorKey(entry) === key
-    );
-    const inColorGalleries = Object.keys(candidate.color_galleries || {}).some(
-      (entry) => normalizeColorKey(entry) === key
-    );
-    return inColorImages || inColorGalleries;
-  };
   const getDefaultSizesByCategory = (category: string) => {
     const normalized = category.trim().toLowerCase();
     if (normalized === "shoes") {
@@ -213,10 +153,6 @@ export function ProductDetail() {
       if (productSnap.exists()) {
         const data = { id: productSnap.id, ...productSnap.data() } as Product;
         setProduct(data);
-        setRelatedVariants([]);
-        if (data?.colors && data.colors.length > 0) {
-          setSelectedColor(data.colors[0]);
-        }
         const availableSizes =
           data.sizes && data.sizes.length > 0
             ? data.sizes
@@ -226,32 +162,6 @@ export function ProductDetail() {
             (size) => getAvailableStockForSize(data, size) > 0
           ) || availableSizes[0];
         setSelectedSize(firstInStockSize || "One Size");
-
-        // Build sibling variants (same model signature) so selecting a color can redirect to its variant page.
-        const allProductsSnap = await getDocs(collection(db, "products"));
-        const allProducts = allProductsSnap.docs.map((entry) => ({
-          id: entry.id,
-          ...entry.data(),
-        })) as Product[];
-
-        const currentSignature = getNameSignature(data.name || "");
-        const currentModelHint = getModelHint(data.name || "");
-        if (!currentSignature) {
-          setRelatedVariants([]);
-          return;
-        }
-        const siblings = allProducts.filter((candidate) => {
-          if (!candidate?.id) return false;
-          const sameCategory =
-            String(candidate.category || "").trim() ===
-            String(data.category || "").trim();
-          if (!sameCategory) return false;
-          const candidateSignature = getNameSignature(candidate.name || "");
-          if (candidateSignature === currentSignature) return true;
-          if (!currentModelHint) return false;
-          return candidateSignature.includes(currentModelHint);
-        });
-        setRelatedVariants(siblings);
       } else {
         setProduct(null);
       }
@@ -424,44 +334,6 @@ export function ProductDetail() {
     }
   };
 
-  const handleColorSelection = (color: string) => {
-    if (normalizeColorKey(color) === normalizeColorKey(selectedColor)) {
-      setSelectedColor(color);
-      setSelectedImage(0);
-      return;
-    }
-
-    const siblingVariants = relatedVariants.filter(
-      (candidate) => candidate.id !== product?.id
-    );
-
-    // Common case: one sibling per other color (like White page -> Navy page).
-    if (siblingVariants.length === 1) {
-      navigate(`/product/${siblingVariants[0].id}`);
-      return;
-    }
-
-    const targetVariant = siblingVariants
-      .map((candidate) => {
-        let score = 0;
-        if (colorAppearsInName(candidate.name || "", color)) score += 100;
-        if (colorExistsInList(candidate, color)) score += 80;
-        if (colorExistsInMediaKeys(candidate, color)) score += 60;
-        if ((candidate.colors || []).length === 1) score += 20;
-        return { candidate, score };
-      })
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score)[0]?.candidate;
-
-    if (targetVariant?.id && targetVariant.id !== product?.id) {
-      navigate(`/product/${targetVariant.id}`);
-      return;
-    }
-
-    setSelectedColor(color);
-    setSelectedImage(0);
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen pt-24 pb-12 px-4 bg-slate-950">
@@ -509,38 +381,7 @@ export function ProductDetail() {
     product.images && product.images.length > 0
       ? product.images
       : [product.image_url];
-  const colorGalleryMap = Object.entries(product.color_galleries || {}).reduce(
-    (acc, [color, urls]) => {
-      if (!Array.isArray(urls)) return acc;
-      const cleaned = urls
-        .map((url) => (typeof url === "string" ? url.trim() : ""))
-        .filter(Boolean);
-      if (cleaned.length > 0) {
-        acc[normalizeColorKey(color)] = cleaned;
-      }
-      return acc;
-    },
-    {} as Record<string, string[]>
-  );
-  const colorImageMap = Object.entries(product.color_images || {}).reduce(
-    (acc, [color, url]) => {
-      if (typeof color === "string" && typeof url === "string" && url.trim()) {
-        acc[normalizeColorKey(color)] = url.trim();
-      }
-      return acc;
-    },
-    {} as Record<string, string>
-  );
-  const selectedColorGallery =
-    colorGalleryMap[normalizeColorKey(selectedColor)] || [];
-  const selectedColorImage =
-    colorImageMap[normalizeColorKey(selectedColor)] || "";
-  const productImages =
-    selectedColorGallery.length > 0
-      ? selectedColorGallery
-      : selectedColorImage
-      ? [selectedColorImage]
-      : baseImages;
+  const productImages = baseImages;
   const goToPrevImage = () => {
     if (productImages.length <= 1) return;
     setSelectedImage((prev) =>
@@ -711,9 +552,14 @@ export function ProductDetail() {
           <div className="flex flex-col space-y-4 bg-white p-6 rounded-2xl shadow-lg">
             {/* Category & Rating */}
             <div className="flex items-center justify-between pb-3 border-b border-gray-200">
-              <span className="px-2.5 py-1 bg-gray-100 text-[10px] tracking-widest text-gray-700 uppercase rounded-full font-semibold">
-                {product.category}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-1 bg-gray-100 text-[10px] tracking-widest text-gray-700 uppercase rounded-full font-semibold">
+                  {product.category}
+                </span>
+                <span className="px-2.5 py-1 bg-slate-800 text-[10px] tracking-widest text-slate-300 uppercase rounded-full font-semibold">
+                  {toProductAuthenticityLabel(product.authenticity)}
+                </span>
+              </div>
               {product.rating && (
                 <div className="flex items-center gap-1.5">
                   <div className="flex items-center gap-0.5">
@@ -762,44 +608,6 @@ export function ProductDetail() {
             <p className="text-gray-600 leading-relaxed text-sm border-t border-b border-gray-200 py-4">
               {product.description}
             </p>
-
-            {/* Color Selection */}
-            {product.colors && product.colors.length > 0 && (
-              <div className="space-y-2">
-                <label className="block text-xs tracking-wider font-bold uppercase">
-                  Color:{" "}
-                  <span className="font-normal text-gray-600 capitalize">
-                    {selectedColor}
-                  </span>
-                </label>
-                <div className="flex gap-2">
-                  {product.colors.map((color) => {
-                    const isSelected =
-                      normalizeColorKey(selectedColor) ===
-                      normalizeColorKey(color);
-                    return (
-                      <button
-                        key={color}
-                        onClick={() => handleColorSelection(color)}
-                        className={`relative w-10 h-10 rounded-full border-2 transition-all shadow-md ${
-                          isSelected
-                            ? "border-black ring-2 ring-black ring-offset-2"
-                            : "border-gray-300 hover:border-gray-500"
-                        }`}
-                        style={{ backgroundColor: color.toLowerCase() }}
-                        title={color}
-                      >
-                        {isSelected ? (
-                          <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-black text-white flex items-center justify-center border border-white">
-                            <Check size={11} strokeWidth={3} />
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
 
             {/* Size Selection */}
             <div className="space-y-2">

@@ -35,6 +35,10 @@ import {
 } from "firebase/firestore";
 import { toCategorySlug } from "../lib/category";
 import { useAuth } from "../contexts/AuthContext";
+import {
+  ProductAuthenticity,
+  toProductAuthenticityLabel,
+} from "../lib/productAuthenticity";
 
 import Photo from "../assets/photo.png"
 import LbLogo from "../assets/lbathletes-logo.png";
@@ -48,6 +52,7 @@ interface Product {
   discount_percentage?: number;
   image_url: string;
   category: string;
+  authenticity?: ProductAuthenticity;
   description?: string;
   is_featured?: boolean;
   is_new_arrival?: boolean;
@@ -835,7 +840,8 @@ export function Home() {
                 </div>
                 <div className="p-5">
                   <p className="text-xs text-slate-300 tracking-[0.16em] uppercase">
-                    {product.category}
+                    {product.category} •{" "}
+                    {toProductAuthenticityLabel(product.authenticity)}
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-50 line-clamp-2">
                     {product.name}
