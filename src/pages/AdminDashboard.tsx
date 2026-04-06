@@ -1558,7 +1558,7 @@ export function AdminDashboard() {
     if (product) {
       setEditingProduct(product);
       setProductForm({
-        name: product.name,
+        name: String(product.name || ""),
         brand: product.brand || "",
         product_type: product.product_type || "",
         sku: product.sku || "",
@@ -1576,9 +1576,9 @@ export function AdminDashboard() {
                 ).toFixed(2)
               )
             : 0,
-        description: product.description,
-        image_url: product.image_url,
-        category: product.category,
+        description: String(product.description || ""),
+        image_url: String(product.image_url || ""),
+        category: String(product.category || ""),
         subcategory: product.subcategory || "",
         audience: normalizeProductAudience(product.audience, product.category),
         authenticity: normalizeProductAuthenticity(product.authenticity),
@@ -1759,7 +1759,20 @@ export function AdminDashboard() {
 
   const saveProduct = async () => {
     try {
-      if (!productForm.name || !productForm.description || !productForm.category) {
+      const resolvedName =
+        String(productForm.name || "").trim() ||
+        (editingProduct ? String(editingProduct.name || "").trim() : "");
+      const resolvedDescription =
+        String(productForm.description || "").trim() ||
+        (editingProduct ? String(editingProduct.description || "").trim() : "");
+      const resolvedCategory =
+        String(productForm.category || "").trim() ||
+        (editingProduct ? String(editingProduct.category || "").trim() : "");
+      const finalName = resolvedName || "Untitled Product";
+      const finalDescription = resolvedDescription || "No description provided.";
+      const finalCategory = resolvedCategory || categories[0] || "General";
+
+      if (!editingProduct && (!resolvedName || !resolvedDescription || !resolvedCategory)) {
         alert("Please fill in product name, description, and category.");
         return;
       }
@@ -1793,7 +1806,7 @@ export function AdminDashboard() {
         additionalImages[0] ||
         "/logo-transparent.png";
       const normalizedTaxonomy = normalizeAdminProductTaxonomy(
-        productForm.category,
+        finalCategory,
         productForm.subcategory,
         productForm.product_type
       );
@@ -1812,24 +1825,24 @@ export function AdminDashboard() {
       );
 
       const productData = {
-        name: productForm.name,
+        name: finalName,
         brand: productForm.brand.trim() || null,
         product_type: normalizedProductType || null,
         sku:
           productForm.sku.trim() ||
-          buildAutoSku(normalizedCategory, productForm.name) ||
+          buildAutoSku(normalizedCategory, finalName) ||
           null,
         price: retailPriceValue,
         cost_price: costPriceValue,
         original_price: originalPriceValue,
         commission_percentage: commissionPercentageValue,
-        description: productForm.description,
+        description: finalDescription,
         image_url: resolvedImageUrl,
         category: normalizedCategory,
         subcategory: normalizedSubcategory || null,
-        audience: isSupplementProduct
-          ? "unisex"
-          : normalizeProductAudience(productForm.audience, normalizedCategory),
+        audience: showAudienceField
+          ? normalizeProductAudience(productForm.audience, normalizedCategory)
+          : "unisex",
         authenticity: normalizeProductAuthenticity(productForm.authenticity),
         stock: 0,
         sold_out: Boolean(productForm.sold_out),
@@ -4038,7 +4051,7 @@ export function AdminDashboard() {
   const showSizeGuideField = showSizingFields;
   const showMaterialAndCareFields = !isSupplementProduct;
   const showSupplementFields = isSupplementProduct;
-  const showAudienceField = !isSupplementProduct;
+  const showAudienceField = showSizingFields;
   const categoryAwareSubcategoryOptions = Array.from(
     new Set([
       ...(suggestedSubcategoryByCategory[productForm.category] || []),
@@ -6831,8 +6844,11 @@ export function AdminDashboard() {
                 </p>
                 <p className="text-sm text-gray-800 mt-1">
                   {productDetailProfile} details are currently shown.
+                  {!showAudienceField
+                    ? " Audience is auto-set to Unisex for this category."
+                    : ""}
                   {isSupplementProduct
-                    ? " Supplements are forced to Unisex and use supplement-specific fields."
+                    ? " Supplements also use supplement-specific fields."
                     : ""}
                 </p>
               </div>

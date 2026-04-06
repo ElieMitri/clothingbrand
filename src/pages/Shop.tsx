@@ -61,6 +61,23 @@ const isMartialArtsLikeProduct = (product: Product) =>
   /\b(sports|martial|muay[\s-]?thai|boxing|mma|combat|glove|wrap|shin|guard)\b/i.test(
     `${product.category || ""} ${product.subcategory || ""} ${product.product_type || ""} ${product.name || ""}`
   );
+const shouldShowAudienceForProduct = (product: Product) => {
+  const context = `${product.category || ""} ${product.subcategory || ""} ${product.product_type || ""}`.toLowerCase();
+  const isSupplement =
+    /\b(supplement|herbal|protein|whey|creatine|pre[\s-]?workout|bcaa|vitamin|mass|collagen|omega|electrolyte|gainer)\b/.test(
+      context
+    );
+  const isFootwear = /\b(shoe|sneaker|boot|cleat|runner|running)\b/.test(context);
+  const isClothingLike =
+    /\b(cloth|apparel|shirt|t-shirt|tee|jersey|short|pant|jogger|hoodie|sweatshirt|jacket|top|bottom)\b/.test(
+      context
+    );
+  const isSock = /\bsock|socks\b/.test(context);
+  const isAccessoryLike = /\b(accessories|accessory|bag|cap|hat|bottle|belt|shaker)\b/.test(
+    context
+  );
+  return !isSupplement && !isAccessoryLike && (isFootwear || isClothingLike || isSock);
+};
 
 export function Shop() {
   const location = useLocation();
@@ -419,6 +436,20 @@ export function Shop() {
           ) : null}
         </div>
 
+        <div className="mb-6">
+          <label className="sr-only" htmlFor="shop-search">
+            Search products
+          </label>
+          <input
+            id="shop-search"
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search by name, brand, type, or SKU..."
+            className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm placeholder:text-gray-400 focus:outline-none focus:border-black transition-colors"
+          />
+        </div>
+
         <div
           className={`fixed inset-x-0 top-[84px] bottom-0 z-[140] transition-opacity duration-300 ${
             isFilterPanelOpen
@@ -452,17 +483,6 @@ export function Shop() {
             </div>
 
             <div className="p-5 space-y-4 overflow-y-auto h-[calc(100%-68px)]">
-              <div className="space-y-1.5">
-                <label className="text-sm text-gray-500">Search</label>
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Name, brand, type, SKU..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
-              </div>
-
               <div className="space-y-1.5">
                 <label className="text-sm text-gray-500">Category</label>
                 <select
@@ -637,7 +657,7 @@ export function Shop() {
                         [
                       getDisplayCategoryName(product.category),
                       resolveProductChildType(product),
-                      !isSupplementLikeProduct(product)
+                      shouldShowAudienceForProduct(product)
                         ? audienceLabelMap[
                             normalizeProductAudience(product.audience, product.category)
                           ]

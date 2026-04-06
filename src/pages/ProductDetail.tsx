@@ -24,7 +24,6 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { useAuth } from "../contexts/AuthContext";
-import { toCategorySlug } from "../lib/category";
 import {
   ProductAuthenticity,
   toProductAuthenticityLabel,
@@ -465,7 +464,7 @@ export function ProductDetail() {
           </Link>
           <ChevronRight size={16} />
           <Link
-            to={`/category/${toCategorySlug(product.category)}`}
+            to={`/shop?category=${encodeURIComponent(product.category || "")}`}
             className="hover:text-black transition-colors"
           >
             {product.category}

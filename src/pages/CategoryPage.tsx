@@ -65,6 +65,23 @@ const isMartialArtsLikeProduct = (product: Product) =>
   /\b(sports|martial|muay[\s-]?thai|boxing|mma|combat|glove|wrap|shin|guard)\b/i.test(
     `${product.category || ""} ${product.subcategory || ""} ${product.product_type || ""} ${product.name || ""}`
   );
+const shouldShowAudienceForProduct = (product: Product) => {
+  const context = `${product.category || ""} ${product.subcategory || ""} ${product.product_type || ""}`.toLowerCase();
+  const isSupplement =
+    /\b(supplement|herbal|protein|whey|creatine|pre[\s-]?workout|bcaa|vitamin|mass|collagen|omega|electrolyte|gainer)\b/.test(
+      context
+    );
+  const isFootwear = /\b(shoe|sneaker|boot|cleat|runner|running)\b/.test(context);
+  const isClothingLike =
+    /\b(cloth|apparel|shirt|t-shirt|tee|jersey|short|pant|jogger|hoodie|sweatshirt|jacket|top|bottom)\b/.test(
+      context
+    );
+  const isSock = /\bsock|socks\b/.test(context);
+  const isAccessoryLike = /\b(accessories|accessory|bag|cap|hat|bottle|belt|shaker)\b/.test(
+    context
+  );
+  return !isSupplement && !isAccessoryLike && (isFootwear || isClothingLike || isSock);
+};
 const categoryMatchesSlug = (product: Product, slug: string) => {
   const categorySlug = toCategorySlug(product.category || "");
   const selectedSlug = toCategorySlug(slug || "");
@@ -492,7 +509,7 @@ export function CategoryPage() {
                   <p className="text-xs tracking-wider text-gray-500 uppercase">
                     {[
                       product.category,
-                      !isSupplementLikeProduct(product)
+                      shouldShowAudienceForProduct(product)
                         ? audienceLabelMap[
                             normalizeProductAudience(product.audience, product.category)
                           ]
