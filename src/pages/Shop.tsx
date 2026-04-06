@@ -57,10 +57,6 @@ const resolveProductChildType = (product: Product) => {
   }
   return "";
 };
-const isMartialArtsLikeProduct = (product: Product) =>
-  /\b(sports|martial|muay[\s-]?thai|boxing|mma|combat|glove|wrap|shin|guard)\b/i.test(
-    `${product.category || ""} ${product.subcategory || ""} ${product.product_type || ""} ${product.name || ""}`
-  );
 const shouldShowAudienceForProduct = (product: Product) => {
   const context = `${product.category || ""} ${product.subcategory || ""} ${product.product_type || ""}`.toLowerCase();
   const isSupplement =
@@ -113,10 +109,6 @@ export function Shop() {
       );
     }
 
-    if (selectedSlug === "martial-arts") {
-      return isMartialArtsLikeProduct(product);
-    }
-
     return false;
   };
   const categorySupportsAudienceFilter = (categoryName: string) => {
@@ -154,17 +146,6 @@ export function Shop() {
   const getDisplayCategoryName = (categoryName: string) => {
     const slug = toCategorySlug(categoryName || "");
     if (slug.includes("gym") || slug.includes("crossfit")) return "Gym";
-    if (
-      slug.includes("sports") ||
-      slug.includes("martial") ||
-      slug.includes("muay-thai") ||
-      slug.includes("muaythai") ||
-      slug.includes("boxing") ||
-      slug.includes("mma") ||
-      slug.includes("combat")
-    ) {
-      return "Martial Arts";
-    }
     return categoryName;
   };
 
@@ -212,19 +193,6 @@ export function Shop() {
       return;
     }
     const requestedCategory = categoryParam.trim();
-    const requestedSlug = toCategorySlug(requestedCategory);
-    if (
-      requestedSlug.includes("sports") ||
-      requestedSlug.includes("martial") ||
-      requestedSlug.includes("muay-thai") ||
-      requestedSlug.includes("muaythai") ||
-      requestedSlug.includes("boxing") ||
-      requestedSlug.includes("mma") ||
-      requestedSlug.includes("combat")
-    ) {
-      setSelectedCategory("Martial Arts");
-      return;
-    }
     setSelectedCategory(requestedCategory);
   }, [location.pathname, location.search]);
 
