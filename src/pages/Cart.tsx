@@ -7,9 +7,6 @@ import {
   Minus,
   ShoppingBag,
   ArrowRight,
-  Tag,
-  Truck,
-  Shield,
   ChevronLeft,
 } from "lucide-react";
 import { db } from "../lib/firebase";
@@ -65,6 +62,7 @@ interface SavedAddress {
 }
 
 const GUEST_CART_STORAGE_KEY = "guest_cart_items_v1";
+const DELIVERY_CHARGE = 2;
 
 interface GuestCartEntry {
   product_id: string;
@@ -462,9 +460,9 @@ export function Cart() {
         0
       );
 
-      const shipping = subtotal > 100 ? 0 : 10;
-      const tax = subtotal * 0.08;
-      const total = subtotal + shipping + tax;
+      const shipping = DELIVERY_CHARGE;
+      const tax = 0;
+      const total = subtotal + shipping;
 
       const cartDocIds = cartItems.map((item) => item.id);
 
@@ -710,9 +708,9 @@ export function Cart() {
     0
   );
 
-  const shipping = subtotal > 100 ? 0 : 10;
-  const tax = subtotal * 0.08;
-  const total = subtotal + shipping + tax;
+  const shipping = DELIVERY_CHARGE;
+  const tax = 0;
+  const total = subtotal + shipping;
 
   if (loading) {
     return (
@@ -883,29 +881,10 @@ export function Cart() {
                   </div>
 
                   <div className="flex justify-between text-gray-600">
-                    <span>Service Fee</span>
-                    <span className="font-medium">
-                      {shipping === 0 ? (
-                        <span className="text-green-600">FREE</span>
-                      ) : (
-                        `$${shipping.toFixed(2)}`
-                      )}
-                    </span>
+                    <span>Delivery Charge</span>
+                    <span className="font-medium">${shipping.toFixed(2)}</span>
                   </div>
 
-                  <div className="flex justify-between text-gray-600">
-                    <span>Tax (8%)</span>
-                    <span className="font-medium">${tax.toFixed(2)}</span>
-                  </div>
-
-                  {subtotal < 100 && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
-                      <p className="text-blue-800">
-                        Add ${(100 - subtotal).toFixed(2)} more to get FREE
-                        service fee!
-                      </p>
-                    </div>
-                  )}
                 </div>
 
                 <div className="border-t border-gray-200 pt-4 mb-6">
@@ -932,40 +911,6 @@ export function Cart() {
                   Continue Shopping
                 </Link>
 
-                {/* Trust Badges */}
-                <div className="mt-6 pt-6 border-t border-gray-200 space-y-3">
-                  <div className="flex items-center gap-3 text-sm text-gray-600">
-                    <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <Truck size={20} />
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">No Service Fee</p>
-                      <p className="text-xs">On orders over $100</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 text-sm text-gray-600">
-                    <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <Shield size={20} />
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">
-                        Secure Checkout
-                      </p>
-                      <p className="text-xs">Your data is protected</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 text-sm text-gray-600">
-                    <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <Tag size={20} />
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">Easy Returns</p>
-                      <p className="text-xs">7-day return policy</p>
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
           </div>

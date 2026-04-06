@@ -96,7 +96,6 @@ export function CategoryPage() {
   const [selectedAudience, setSelectedAudience] = useState<
     ProductAudience | "all"
   >("all");
-  const [colorInput, setColorInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState<"featured" | "price-low" | "price-high">(
     "featured"
@@ -195,17 +194,6 @@ export function CategoryPage() {
       );
     }
 
-    if (colorInput.trim()) {
-      const colorTerm = colorInput.trim().toLowerCase();
-      filtered = filtered.filter((product) =>
-        (product.colors || []).some((color) =>
-          String(color || "")
-            .toLowerCase()
-            .includes(colorTerm)
-        )
-      );
-    }
-
     if (searchTerm.trim()) {
       const term = searchTerm.trim().toLowerCase();
       filtered = filtered.filter((product) => {
@@ -239,7 +227,6 @@ export function CategoryPage() {
     selectedType,
     shouldShowTypeFilter,
     selectedAudience,
-    colorInput,
     searchTerm,
     sortBy,
   ]);
@@ -272,7 +259,6 @@ export function CategoryPage() {
   const activeFilterCount = [
     shouldShowTypeFilter && selectedType !== "all",
     selectedAudience !== "all",
-    colorInput.trim().length > 0,
     searchTerm.trim().length > 0,
     sortBy !== "featured",
   ].filter(Boolean).length;
@@ -280,7 +266,6 @@ export function CategoryPage() {
   const clearFilters = () => {
     setSelectedType("all");
     setSelectedAudience("all");
-    setColorInput("");
     setSearchTerm("");
     setSortBy("featured");
   };
@@ -391,17 +376,6 @@ export function CategoryPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm text-gray-500">Color</label>
-                <input
-                  type="text"
-                  value={colorInput}
-                  onChange={(e) => setColorInput(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                  placeholder="Black, White..."
-                />
-              </div>
-
-              <div className="space-y-1.5">
                 <label className="text-sm text-gray-500">Audience</label>
                 <select
                   value={selectedAudience}
@@ -434,20 +408,13 @@ export function CategoryPage() {
                 </select>
               </div>
 
-              <div className="flex gap-2 pt-2">
+              <div className="pt-2">
                 <button
                   type="button"
                   onClick={clearFilters}
-                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
                 >
                   Clear
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsFilterPanelOpen(false)}
-                  className="flex-1 rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-gray-800"
-                >
-                  Apply
                 </button>
               </div>
             </div>

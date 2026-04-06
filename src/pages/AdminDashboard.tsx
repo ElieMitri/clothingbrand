@@ -60,7 +60,6 @@ import {
   getDefaultApparelSizes,
   getDefaultGloveSizes,
   getDefaultOneSizeSizes,
-  getDefaultSupplementSizes,
   getDefaultShoeSizeGuide,
   getDefaultShoeSizes,
   getDefaultSizesByCategory,
@@ -341,6 +340,26 @@ const normalizeHomepageShopPath = (rawPath: string) => {
   return `/shop?category=${encodeURIComponent(categoryLabel)}`;
 };
 
+const normalizeHomeCategorySlug = (value: string) => {
+  const token = slugifyPathToken(value);
+  if (!token) return "";
+  if (
+    token === "martial-arts" ||
+    token === "sports" ||
+    token.includes("muay-thai") ||
+    token === "muaythai" ||
+    token.includes("boxing") ||
+    token.includes("combat") ||
+    token === "mma"
+  ) {
+    return "martial-arts";
+  }
+  if (token === "crossfit" || token === "gym-crossfit") {
+    return "gym";
+  }
+  return token;
+};
+
 const buildAutoSku = (category: string, name: string) =>
   `${slugifyPathToken(category)}-${slugifyPathToken(name)}`
     .replace(/^-+|-+$/g, "")
@@ -476,6 +495,7 @@ export function AdminDashboard() {
   const [openSubcategoryTreeNodes, setOpenSubcategoryTreeNodes] = useState<
     string[]
   >([]);
+  const [categoryTreeQuery, setCategoryTreeQuery] = useState("");
   const [saleSettings, setSaleSettings] = useState({
     sale_title: "SEASONAL SALE",
     sale_headline: "UP TO 70% OFF",
@@ -926,6 +946,59 @@ export function AdminDashboard() {
           })),
       }));
   }, [categories, products]);
+  const filteredCategoryTree = useMemo(() => {
+    const query = categoryTreeQuery.trim().toLowerCase();
+    if (!query) return categoryTree;
+
+    return categoryTree
+      .map((categoryNode) => {
+        const categoryMatches = categoryNode.category.toLowerCase().includes(query);
+
+        const matchedSubcategories = categoryNode.subcategories
+          .map((subcategoryNode) => {
+            const subcategoryMatches = subcategoryNode.name
+              .toLowerCase()
+              .includes(query);
+            const matchedTypes = subcategoryNode.types.filter((productType) =>
+              productType.toLowerCase().includes(query)
+            );
+
+            if (subcategoryMatches) return subcategoryNode;
+            if (matchedTypes.length > 0) {
+              return { ...subcategoryNode, types: matchedTypes };
+            }
+            return null;
+          })
+          .filter(
+            (
+              node
+            ): node is { name: string; types: string[] } => node !== null
+          );
+
+        const matchedDirectTypes = categoryNode.directTypes.filter((productType) =>
+          productType.toLowerCase().includes(query)
+        );
+
+        if (categoryMatches) return categoryNode;
+        if (matchedSubcategories.length > 0 || matchedDirectTypes.length > 0) {
+          return {
+            ...categoryNode,
+            subcategories: matchedSubcategories,
+            directTypes: matchedDirectTypes,
+          };
+        }
+        return null;
+      })
+      .filter(
+        (
+          node
+        ): node is {
+          category: string;
+          directTypes: string[];
+          subcategories: { name: string; types: string[] }[];
+        } => node !== null
+      );
+  }, [categoryTree, categoryTreeQuery]);
   const suggestedTagOptions = useMemo(
     () =>
       Array.from(
@@ -1063,9 +1136,7 @@ export function AdminDashboard() {
       return acc;
     }, {} as Record<string, string[]>);
 
-  const applySizePreset = (
-    preset: "shoe" | "apparel" | "one-size" | "glove-oz" | "supplement"
-  ) => {
+  const applySizePreset = (preset: "shoe" | "apparel" | "one-size" | "glove-oz") => {
     const presetSizes =
       preset === "shoe"
         ? getDefaultShoeSizes()
@@ -1073,8 +1144,6 @@ export function AdminDashboard() {
         ? getDefaultOneSizeSizes()
         : preset === "glove-oz"
         ? getDefaultGloveSizes()
-        : preset === "supplement"
-        ? getDefaultSupplementSizes()
         : getDefaultApparelSizes();
 
     setProductForm((prev) => ({
@@ -1708,14 +1777,11 @@ export function AdminDashboard() {
           : parseColorGalleryLinks(productForm.color_gallery_links);
       const sizingContext = buildSizingContext();
       const manualSizes = parseCommaSeparatedValues(productForm.sizes);
-      const selectedSizes =
-        isSupplementProduct
-          ? getDefaultSupplementSizes()
-          : !showSizingFields
-          ? getDefaultOneSizeSizes()
-          : manualSizes.length > 0
+      const selectedSizes = showSizingFields
+        ? manualSizes.length > 0
           ? normalizeSizesForContext(sizingContext, manualSizes)
-          : getDefaultSizesByCategory(sizingContext);
+          : getDefaultSizesByCategory(sizingContext)
+        : [];
       const soldOutSizesRaw = parseCommaSeparatedValues(productForm.sold_out_sizes);
       const soldOutSizesNormalized = soldOutSizesRaw.filter((value, index, all) => {
         const normalized = value.toLowerCase();
@@ -1816,9 +1882,7 @@ export function AdminDashboard() {
       /\b(supplement|herbal|protein|whey|creatine|pre[\s-]?workout|bcaa|vitamin|mass|collagen|omega|electrolyte|gainer)\b/.test(
         `${category} ${productType}`.toLowerCase()
       );
-    const sizes = isSupplement
-      ? getDefaultSupplementSizes()
-      : getDefaultSizesByCategory(`${category} ${productType}`);
+    const sizes = getDefaultSizesByCategory(`${category} ${productType}`);
 
     setProductForm((prev) => ({
       ...prev,
@@ -3140,10 +3204,29 @@ export function AdminDashboard() {
   ) => {
     setHomepageSettings((prev) => {
       const nextCategories = [...prev.home_categories];
-      nextCategories[index] = {
-        ...nextCategories[index],
-        [field]: value,
-      };
+      const current = nextCategories[index];
+      if (!current) return prev;
+
+      if (field === "name") {
+        const shouldAutoFillSlug = !String(current.slug || "").trim();
+        nextCategories[index] = {
+          ...current,
+          name: value,
+          slug: shouldAutoFillSlug
+            ? normalizeHomeCategorySlug(value)
+            : String(current.slug || ""),
+        };
+      } else if (field === "slug") {
+        nextCategories[index] = {
+          ...current,
+          slug: value,
+        };
+      } else {
+        nextCategories[index] = {
+          ...current,
+          [field]: value,
+        };
+      }
       return {
         ...prev,
         home_categories: nextCategories,
@@ -3305,7 +3388,7 @@ export function AdminDashboard() {
       .map((entry, index) => ({
         id: entry.id || `custom-${index + 1}`,
         name: entry.name.trim(),
-        slug: entry.slug.trim().toLowerCase().replace(/^\/+/, ""),
+        slug: normalizeHomeCategorySlug(entry.slug),
         image_url: entry.image_url.trim(),
       }))
       .filter((entry) => entry.name && entry.slug && entry.image_url);
@@ -3935,6 +4018,11 @@ export function AdminDashboard() {
   const isFootwearProduct = /\b(shoe|sneaker|boot|cleat|runner|running)\b/.test(
     productContextLabel
   );
+  const isClothingLikeProduct =
+    /\b(cloth|apparel|shirt|t-shirt|tee|jersey|short|pant|jogger|hoodie|sweatshirt|jacket|top|bottom)\b/.test(
+      productContextLabel
+    );
+  const isSockProduct = /\bsock|socks\b/.test(productContextLabel);
   const isAccessoryLikeProduct =
     /\b(accessories|accessory|bag|cap|hat|bottle|belt|shaker)\b/.test(
       productContextLabel
@@ -3943,7 +4031,10 @@ export function AdminDashboard() {
     /\b(glove|boxing|muay thai|mma|wrap|shin|guard|mouthguard)\b/.test(
       productContextLabel
     );
-  const showSizingFields = !isSupplementProduct && !isAccessoryLikeProduct;
+  const showSizingFields =
+    !isSupplementProduct &&
+    !isAccessoryLikeProduct &&
+    (isFootwearProduct || isClothingLikeProduct || isSockProduct);
   const showSizeGuideField = showSizingFields;
   const showMaterialAndCareFields = !isSupplementProduct;
   const showSupplementFields = isSupplementProduct;
@@ -5334,6 +5425,13 @@ export function AdminDashboard() {
                         onChange={(e) =>
                           updateHomeCategory(index, "slug", e.target.value)
                         }
+                        onBlur={(e) =>
+                          updateHomeCategory(
+                            index,
+                            "slug",
+                            normalizeHomeCategorySlug(e.target.value)
+                          )
+                        }
                         placeholder="Slug (e.g. football)"
                         className="px-3 py-2 border border-gray-300 rounded-lg"
                       />
@@ -6420,8 +6518,8 @@ export function AdminDashboard() {
                       Category Tree
                     </p>
                     <p className="text-sm text-gray-700">
-                      Expand by category and subcategory. Click any node to use it,
-                      or use quick add buttons to build a new path.
+                      1) Pick Category, 2) pick Subcategory, 3) pick Type. Use
+                      search to jump to what you need.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -6447,9 +6545,33 @@ export function AdminDashboard() {
                   </div>
                 </div>
 
+                <div className="mb-3 grid grid-cols-1 md:grid-cols-[1.2fr,1fr] gap-2">
+                  <input
+                    type="text"
+                    value={categoryTreeQuery}
+                    onChange={(e) => setCategoryTreeQuery(e.target.value)}
+                    placeholder="Search category, subcategory, or type..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-black"
+                  />
+                  <div className="px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm">
+                    <span className="text-gray-500">Selected:</span>{" "}
+                    <span className="font-medium text-gray-900">
+                      {[productForm.category, productForm.subcategory, productForm.product_type]
+                        .map((entry) => String(entry || "").trim())
+                        .filter(Boolean)
+                        .join(" > ") || "None"}
+                    </span>
+                  </div>
+                </div>
+
                 <div className="max-h-80 overflow-y-auto rounded-lg border border-gray-200 bg-white p-3">
                   <ul className="space-y-2">
-                    {categoryTree.map((categoryNode) => {
+                    {filteredCategoryTree.length === 0 && (
+                      <li className="rounded-md border border-dashed border-gray-300 px-3 py-4 text-sm text-gray-500">
+                        No matches found. Try a different search term.
+                      </li>
+                    )}
+                    {filteredCategoryTree.map((categoryNode) => {
                       const isSelectedCategory =
                         productForm.category === categoryNode.category;
                       const isCategoryOpen =
@@ -6526,9 +6648,9 @@ export function AdminDashboard() {
                                   }))
                                 }
                                 className="text-xs px-2 py-1 rounded-full border border-gray-300 text-gray-700 hover:border-black hover:text-black"
-                                title="Add a subcategory under this category"
+                                title="Select category and clear lower levels"
                               >
-                                + Sub
+                                Select
                               </button>
                             </div>
 
@@ -6607,9 +6729,9 @@ export function AdminDashboard() {
                                               }))
                                             }
                                             className="text-xs px-2 py-1 rounded-full border border-gray-300 text-gray-700 hover:border-black hover:text-black"
-                                            title="Add a type under this subcategory"
+                                            title="Select subcategory and clear type"
                                           >
-                                            + Type
+                                            Select
                                           </button>
                                         </div>
 
@@ -6698,9 +6820,8 @@ export function AdminDashboard() {
                   </ul>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  Tip: use <span className="font-medium">+ Sub</span> or{" "}
-                  <span className="font-medium">+ Type</span>, then fill the input
-                  fields above to add a new branch quickly.
+                  Tip: after you select a path here, just fill the form fields above
+                  and save. New branches are created automatically.
                 </p>
               </div>
 
@@ -7034,13 +7155,6 @@ export function AdminDashboard() {
                   >
                     Glove OZ
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => applySizePreset("supplement")}
-                    className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                  >
-                    Supplement
-                  </button>
                 </div>
                 <input
                   type="text"
@@ -7052,7 +7166,7 @@ export function AdminDashboard() {
                   placeholder="XS, S, M, L or 8oz, 10oz, 12oz..."
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Leave blank to auto-fill defaults based on category.
+                  Leave blank to auto-fill only for clothes, shoes, or socks.
                 </p>
               </div>
               )}
@@ -7083,10 +7197,10 @@ export function AdminDashboard() {
                       })
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                    placeholder="M, L, 12oz, 30 Servings"
+                    placeholder="M, L, 42, 43"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Works for clothing sizes, glove ounces, and supplement variants.
+                    Use only if the product has real size variants.
                   </p>
                 </div>
               </div>
@@ -7355,7 +7469,7 @@ export function AdminDashboard() {
                       })
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                    placeholder="2.2lb / 1kg / 30 servings"
+                    placeholder="2.2lb / 1kg"
                   />
                 </div>
               )}

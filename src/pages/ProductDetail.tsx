@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import {
   ShoppingCart,
-  Truck,
   Banknote,
   Shield,
   ChevronLeft,
@@ -61,6 +60,16 @@ interface Product {
   reviews_count?: number;
   material?: string;
   care_instructions?: string;
+}
+
+interface ProductReview {
+  id: string;
+  product_id: string;
+  user_id?: string;
+  user_name: string;
+  rating: number;
+  comment: string;
+  created_at?: unknown;
 }
 
 const GUEST_CART_STORAGE_KEY = "guest_cart_items_v1";
@@ -137,6 +146,13 @@ export function ProductDetail() {
   const [selectedImage, setSelectedImage] = useState(0);
   const [adding, setAdding] = useState(false);
   const [addedToCart, setAddedToCart] = useState(false);
+  const [reviews, setReviews] = useState<ProductReview[]>([]);
+  const [loadingReviews, setLoadingReviews] = useState(false);
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [reviewForm, setReviewForm] = useState({
+    rating: 5,
+    comment: "",
+  });
   const buildSizingContext = (item: Product) =>
     [item.category, item.subcategory, item.product_type]
       .map((entry) => String(entry || "").trim())
@@ -146,6 +162,7 @@ export function ProductDetail() {
   useEffect(() => {
     if (id) {
       loadProduct();
+      loadReviews(id);
     }
   }, [id]);
 
@@ -270,6 +287,82 @@ export function ProductDetail() {
     }
   };
 
+  const loadReviews = async (productId: string) => {
+    try {
+      setLoadingReviews(true);
+      const reviewsQuery = query(
+        collection(db, "product_reviews"),
+        where("product_id", "==", productId)
+      );
+      const reviewsSnap = await getDocs(reviewsQuery);
+      const parsed = reviewsSnap.docs
+        .map((entry) => {
+          const data = entry.data();
+          return {
+            id: entry.id,
+            product_id: String(data.product_id || productId),
+            user_id: data.user_id ? String(data.user_id) : undefined,
+            user_name: String(data.user_name || "Customer").trim() || "Customer",
+            rating: Number(data.rating || 0),
+            comment: String(data.comment || "").trim(),
+            created_at: data.created_at,
+          } as ProductReview;
+        })
+        .filter(
+          (entry) =>
+            entry.rating > 0 &&
+            entry.rating <= 5 &&
+            Boolean(entry.comment) &&
+            Boolean(entry.user_name)
+        );
+
+      parsed.sort(
+        (a, b) =>
+          toDateValue(b.created_at).getTime() - toDateValue(a.created_at).getTime()
+      );
+      setReviews(parsed);
+    } catch (error) {
+      console.error("Error loading reviews:", error);
+      setReviews([]);
+    } finally {
+      setLoadingReviews(false);
+    }
+  };
+
+  const submitReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!product || !id || !user) {
+      navigate("/login");
+      return;
+    }
+
+    const trimmedComment = reviewForm.comment.trim();
+    if (!trimmedComment) return;
+
+    try {
+      setSubmittingReview(true);
+      const userName =
+        user.displayName?.trim() || user.email?.split("@")[0] || "Customer";
+
+      await addDoc(collection(db, "product_reviews"), {
+        product_id: id,
+        user_id: user.uid,
+        user_name: userName,
+        rating: reviewForm.rating,
+        comment: trimmedComment,
+        created_at: serverTimestamp(),
+      });
+
+      await loadReviews(id);
+      setReviewForm({ rating: 5, comment: "" });
+    } catch (error) {
+      console.error("Error submitting review:", error);
+      alert("Failed to submit review.");
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen pt-24 pb-12 px-4 bg-slate-950">
@@ -334,6 +427,7 @@ export function ProductDetail() {
     product.sizes && product.sizes.length > 0
       ? normalizeDisplayedSizes(buildSizingContext(product), product.sizes)
       : getDefaultSizesByCategory(buildSizingContext(product));
+  const hasSelectableSizes = availableSizes.length > 0;
   const soldOutSizeTokenSet = new Set(
     (Array.isArray(product.sold_out_sizes) ? product.sold_out_sizes : []).map(
       (size) => normalizeVariantToken(size)
@@ -505,43 +599,44 @@ export function ProductDetail() {
               {product.description}
             </p>
 
-            {/* Single serving/size (read-only) */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs tracking-wider font-bold uppercase">
-                  Size:{" "}
-                  <span className="font-normal text-gray-600">
-                    {selectedSize}
-                  </span>
-                </label>
+            {hasSelectableSizes && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs tracking-wider font-bold uppercase">
+                    Size:{" "}
+                    <span className="font-normal text-gray-600">
+                      {selectedSize}
+                    </span>
+                  </label>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {availableSizes.map((size) => {
+                    const soldOut = isSizeSoldOut(size);
+                    const selected = selectedSize === size;
+                    return (
+                      <button
+                        key={`size-${size}`}
+                        type="button"
+                        onClick={() => !soldOut && setSelectedSize(size)}
+                        disabled={soldOut}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                          soldOut
+                            ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed line-through"
+                            : selected
+                            ? "bg-black text-white border-black"
+                            : "bg-white text-gray-700 border-gray-300 hover:border-black hover:text-black"
+                        }`}
+                      >
+                        {size}
+                      </button>
+                    );
+                  })}
+                </div>
+                {isProductSoldOut && (
+                  <p className="text-xs font-semibold text-red-600">Sold Out</p>
+                )}
               </div>
-              <div className="flex flex-wrap gap-2">
-                {availableSizes.map((size) => {
-                  const soldOut = isSizeSoldOut(size);
-                  const selected = selectedSize === size;
-                  return (
-                    <button
-                      key={`size-${size}`}
-                      type="button"
-                      onClick={() => !soldOut && setSelectedSize(size)}
-                      disabled={soldOut}
-                      className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-                        soldOut
-                          ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed line-through"
-                          : selected
-                          ? "bg-black text-white border-black"
-                          : "bg-white text-gray-700 border-gray-300 hover:border-black hover:text-black"
-                      }`}
-                    >
-                      {size}
-                    </button>
-                  );
-                })}
-              </div>
-              {isProductSoldOut && (
-                <p className="text-xs font-semibold text-red-600">Sold Out</p>
-              )}
-            </div>
+            )}
 
             {/* Quantity */}
             <div className="space-y-2">
@@ -620,17 +715,6 @@ export function ProductDetail() {
 
             {/* Features */}
             <div className="grid grid-cols-1 gap-2.5 pt-4 border-t border-gray-200">
-              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
-                <div className="p-2 bg-white rounded-lg shadow-sm">
-                  <Truck size={20} className="text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold">Free Shipping</p>
-                  <p className="text-[10px] text-gray-600">
-                    On orders over $100
-                  </p>
-                </div>
-              </div>
               <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
                 <div className="p-2 bg-white rounded-lg shadow-sm">
                   <Banknote size={20} className="text-emerald-600" />

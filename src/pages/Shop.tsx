@@ -73,7 +73,6 @@ export function Shop() {
     ProductAudience | "all"
   >("all");
   const [selectedType, setSelectedType] = useState<string>("all");
-  const [colorInput, setColorInput] = useState("");
   const [sortBy, setSortBy] = useState<"featured" | "price-low" | "price-high">(
     "featured"
   );
@@ -280,17 +279,6 @@ export function Shop() {
       );
     }
 
-    if (colorInput.trim()) {
-      const colorTerm = colorInput.trim().toLowerCase();
-      filtered = filtered.filter((product) =>
-        (product.colors || []).some((color) =>
-          String(color || "")
-            .toLowerCase()
-            .includes(colorTerm)
-        )
-      );
-    }
-
     if (searchTerm.trim()) {
       const term = searchTerm.trim().toLowerCase();
       filtered = filtered.filter((product) => {
@@ -338,7 +326,6 @@ export function Shop() {
     shouldShowTypeFilter,
     selectedAudience,
     shouldShowAudienceFilter,
-    colorInput,
     sortBy,
     searchTerm,
   ]);
@@ -367,7 +354,6 @@ export function Shop() {
     selectedCategory !== "all",
     shouldShowTypeFilter && selectedType !== "all",
     shouldShowAudienceFilter && selectedAudience !== "all",
-    colorInput.trim().length > 0,
     sortBy !== "featured",
     searchTerm.trim().length > 0,
   ].filter(Boolean).length;
@@ -379,7 +365,7 @@ export function Shop() {
     } else {
       params.set("category", category);
     }
-    const nextSearch = params.toString();
+    const nextSearch = params.toString().replace(/\+/g, "%20");
     const nextUrl = nextSearch ? `/shop?${nextSearch}` : "/shop";
     const currentUrl = `${location.pathname}${location.search}`;
 
@@ -393,7 +379,6 @@ export function Shop() {
     setCategoryAndSyncUrl("all");
     setSelectedType("all");
     setSelectedAudience("all");
-    setColorInput("");
     setSortBy("featured");
     setSearchTerm("");
   };
@@ -532,17 +517,6 @@ export function Shop() {
               )}
 
               <div className="space-y-1.5">
-                <label className="text-sm text-gray-500">Color</label>
-                <input
-                  type="text"
-                  value={colorInput}
-                  onChange={(e) => setColorInput(e.target.value)}
-                  placeholder="Black, White, Navy..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
-              </div>
-
-              <div className="space-y-1.5">
                 <label className="text-sm text-gray-500">Sort</label>
                 <select
                   value={sortBy}
@@ -557,20 +531,13 @@ export function Shop() {
                 </select>
               </div>
 
-              <div className="pt-2 flex items-center gap-2">
+              <div className="pt-2">
                 <button
                   type="button"
                   onClick={clearFilters}
-                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2.5 text-sm hover:bg-gray-50 transition-colors"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm hover:bg-gray-50 transition-colors"
                 >
                   Reset
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsFilterPanelOpen(false)}
-                  className="flex-1 rounded-lg bg-black text-white px-3 py-2.5 text-sm hover:bg-gray-800 transition-colors"
-                >
-                  Apply
                 </button>
               </div>
             </div>

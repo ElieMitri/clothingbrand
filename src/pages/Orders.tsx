@@ -48,6 +48,8 @@ interface Order {
   user_id?: string;
 }
 
+const DELIVERY_CHARGE = 2;
+
 export function Orders() {
   const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
@@ -295,8 +297,8 @@ export function Orders() {
         const subtotal = Number(
           order.items.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0)
         );
-        const shipping = Number(order.total || 0) > 100 ? 0 : 10;
-        const tax = Math.max(0, Number(order.total || 0) - subtotal - shipping);
+        const shipping = DELIVERY_CHARGE;
+        const tax = 0;
 
         const response = await fetch("/api/send-order-status-discord", {
           method: "POST",
@@ -606,16 +608,8 @@ export function Orders() {
                           </span>
                         </div>
                         <div className="flex justify-between text-gray-600">
-                          <span>Shipping</span>
-                          <span className="font-medium">
-                            {order.total > 100 ? "FREE" : "$10.00"}
-                          </span>
-                        </div>
-                        <div className="flex justify-between text-gray-600">
-                          <span>Tax</span>
-                          <span className="font-medium">
-                            ${((order.total * 0.08) / 1.08).toFixed(2)}
-                          </span>
+                          <span>Delivery Charge</span>
+                          <span className="font-medium">$2.00</span>
                         </div>
                         <div className="border-t border-gray-200 pt-3">
                           <div className="flex justify-between items-center">

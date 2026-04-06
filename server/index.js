@@ -100,8 +100,7 @@ const buildOrderDiscordPayload = (order) => {
           { name: "Email", value: truncate(email, 256), inline: true },
           { name: "Phone", value: truncate(phone || "Not provided", 256), inline: true },
           { name: "Subtotal", value: `$${Number(subtotal || 0).toFixed(2)}`, inline: true },
-          { name: "Shipping", value: `$${Number(shipping || 0).toFixed(2)}`, inline: true },
-          { name: "Tax", value: `$${Number(tax || 0).toFixed(2)}`, inline: true },
+          { name: "Delivery Charge", value: `$${Number(shipping || 0).toFixed(2)}`, inline: true },
           { name: "Total", value: `$${Number(total).toFixed(2)}`, inline: true },
         ],
         description: truncate(
@@ -405,8 +404,7 @@ const buildStatusPayload = ({
           { name: "User Email", value: truncate(userEmail || "Unknown", 256), inline: true },
           { name: "Phone", value: truncate(phone || "Not provided", 256), inline: true },
           { name: "Subtotal", value: `$${Number(subtotal || 0).toFixed(2)}`, inline: true },
-          { name: "Shipping", value: `$${Number(shipping || 0).toFixed(2)}`, inline: true },
-          { name: "Tax", value: `$${Number(tax || 0).toFixed(2)}`, inline: true },
+          { name: "Delivery Charge", value: `$${Number(shipping || 0).toFixed(2)}`, inline: true },
           { name: "Total", value: `$${Number(total || 0).toFixed(2)}`, inline: true },
           { name: "Items", value: String(Number(itemCount || 0)), inline: true },
           { name: "Order Created", value: createdText, inline: true },
@@ -725,7 +723,6 @@ const sendOrderConfirmationEmail = async (req, res) => {
     const safeCountry = String(country || "Lebanon").trim();
     const safeSubtotal = Number(subtotal || 0);
     const safeShipping = Number(shipping || 0);
-    const safeTax = Number(tax || 0);
     const safeTotal = Number(total || 0);
 
     const escapeHtml = (text) =>
@@ -798,7 +795,7 @@ const sendOrderConfirmationEmail = async (req, res) => {
                 </tr>
                 <tr>
                   <td style="padding:14px 16px;">
-                    <p style="margin:0;font-size:13px;color:#6B7280;">Shipping Details</p>
+                    <p style="margin:0;font-size:13px;color:#6B7280;">Delivery Details</p>
                     <p style="margin:6px 0 0;font-size:14px;line-height:1.6;color:#111827;">
                       ${escapeHtml(safeAddress)}<br/>
                       ${escapeHtml(safeCity)}, ${escapeHtml(safeState)} ${escapeHtml(
@@ -835,14 +832,8 @@ const sendOrderConfirmationEmail = async (req, res) => {
                   )}</td>
                 </tr>
                 <tr>
-                  <td style="font-size:14px;color:#4B5563;padding:4px 0;">Service Fee</td>
+                  <td style="font-size:14px;color:#4B5563;padding:4px 0;">Delivery Charge</td>
                   <td style="font-size:14px;color:#111827;text-align:right;padding:4px 0;">$${safeShipping.toFixed(
-                    2
-                  )}</td>
-                </tr>
-                <tr>
-                  <td style="font-size:14px;color:#4B5563;padding:4px 0;">Tax</td>
-                  <td style="font-size:14px;color:#111827;text-align:right;padding:4px 0;">$${safeTax.toFixed(
                     2
                   )}</td>
                 </tr>
@@ -901,8 +892,7 @@ Order Details:
 ${plainItems}
 
 Subtotal: $${safeSubtotal.toFixed(2)}
-Service Fee: $${safeShipping.toFixed(2)}
-Tax: $${safeTax.toFixed(2)}
+Delivery Charge: $${safeShipping.toFixed(2)}
 Order Total: $${safeTotal.toFixed(2)}
 
 Need help? Contact ${supportEmail}

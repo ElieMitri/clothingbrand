@@ -7,45 +7,24 @@ const shoeKeywords = [
   "trainer",
 ];
 
-const oneSizeKeywords = [
-  "accessor",
-  "bag",
-  "equipment",
-  "gear",
-  "mouth",
-  "mouthguard",
-  "headgear",
-  "wrap",
-  "shin",
-  "guard",
-  "groin",
-  "pad",
-  "belt",
-  "rope",
-  "cap",
-  "hat",
+const apparelKeywords = [
+  "cloth",
+  "apparel",
+  "shirt",
+  "t-shirt",
+  "tee",
+  "jersey",
+  "short",
+  "pant",
+  "jogger",
+  "hoodie",
+  "sweatshirt",
+  "jacket",
+  "top",
+  "bottom",
 ];
 
-const gloveKeywords = ["glove", "boxing glove", "mma glove", "muay thai glove"];
-
-const supplementKeywords = [
-  "supplement",
-  "herbal",
-  "wellness",
-  "recovery",
-  "protein",
-  "creatine",
-  "pre-workout",
-  "pre workout",
-  "bcaa",
-  "mass gainer",
-  "gainer",
-  "vitamin",
-  "whey",
-  "collagen",
-  "omega",
-  "electrolyte",
-];
+const sockKeywords = ["sock", "socks"];
 
 const normalizeCategory = (category: string) => category.trim().toLowerCase();
 
@@ -73,11 +52,6 @@ export const getDefaultApparelSizes = () => ["XS", "S", "M", "L", "XL", "XXL"];
 export const getDefaultGloveSizes = () => ["8oz", "10oz", "12oz", "14oz", "16oz"];
 
 export const getDefaultOneSizeSizes = () => ["One Size"];
-export const getDefaultSupplementSizes = () => [
-  "30 Servings",
-  "60 Servings",
-  "1kg",
-];
 
 export const getDefaultSizesByCategory = (category: string) => {
   const normalized = normalizeCategory(category);
@@ -86,19 +60,14 @@ export const getDefaultSizesByCategory = (category: string) => {
     return getDefaultShoeSizes();
   }
 
-  if (containsAnyKeyword(normalized, gloveKeywords)) {
-    return getDefaultGloveSizes();
+  if (
+    containsAnyKeyword(normalized, apparelKeywords) ||
+    containsAnyKeyword(normalized, sockKeywords)
+  ) {
+    return getDefaultApparelSizes();
   }
 
-  if (containsAnyKeyword(normalized, supplementKeywords)) {
-    return getDefaultSupplementSizes();
-  }
-
-  if (containsAnyKeyword(normalized, oneSizeKeywords)) {
-    return getDefaultOneSizeSizes();
-  }
-
-  return getDefaultApparelSizes();
+  return [];
 };
 
 export const getDefaultShoeSizeGuide = () =>
@@ -111,17 +80,12 @@ export const getDefaultSizeGuideByCategory = (category: string) => {
     return getDefaultShoeSizeGuide();
   }
 
-  if (containsAnyKeyword(normalized, gloveKeywords)) {
-    return "Glove size guide: choose by ounce (oz) based on use and body weight. Typical options: 8oz, 10oz, 12oz, 14oz, 16oz.";
+  if (
+    containsAnyKeyword(normalized, apparelKeywords) ||
+    containsAnyKeyword(normalized, sockKeywords)
+  ) {
+    return "Clothing fit guide: If you are between two sizes, choose the larger size for a relaxed fit and the smaller size for a slim fit.";
   }
 
-  if (containsAnyKeyword(normalized, supplementKeywords)) {
-    return "Supplement size guide: choose by servings or net weight. Example variants: 30 servings, 60 servings, 1kg.";
-  }
-
-  if (containsAnyKeyword(normalized, oneSizeKeywords)) {
-    return "One-size item. Product dimensions may vary slightly by style.";
-  }
-
-  return "Clothing fit guide: If you are between two sizes, choose the larger size for a relaxed fit and the smaller size for a slim fit.";
+  return "";
 };
