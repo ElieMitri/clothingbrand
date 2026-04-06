@@ -12,19 +12,21 @@ const oneSizeKeywords = [
   "bag",
   "equipment",
   "gear",
-  "muay",
-  "boxing",
-  "glove",
-  "shin",
   "mouth",
+  "mouthguard",
   "headgear",
   "wrap",
+  "shin",
+  "guard",
+  "groin",
   "pad",
   "belt",
   "rope",
   "cap",
   "hat",
 ];
+
+const gloveKeywords = ["glove", "boxing glove", "mma glove", "muay thai glove"];
 
 const supplementKeywords = [
   "supplement",
@@ -84,6 +86,10 @@ export const getDefaultSizesByCategory = (category: string) => {
     return getDefaultShoeSizes();
   }
 
+  if (containsAnyKeyword(normalized, gloveKeywords)) {
+    return getDefaultGloveSizes();
+  }
+
   if (containsAnyKeyword(normalized, supplementKeywords)) {
     return getDefaultSupplementSizes();
   }
@@ -103,6 +109,10 @@ export const getDefaultSizeGuideByCategory = (category: string) => {
 
   if (containsAnyKeyword(normalized, shoeKeywords)) {
     return getDefaultShoeSizeGuide();
+  }
+
+  if (containsAnyKeyword(normalized, gloveKeywords)) {
+    return "Glove size guide: choose by ounce (oz) based on use and body weight. Typical options: 8oz, 10oz, 12oz, 14oz, 16oz.";
   }
 
   if (containsAnyKeyword(normalized, supplementKeywords)) {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import {
   ShoppingCart,
@@ -31,7 +31,9 @@ import {
   toProductAuthenticityLabel,
 } from "../lib/productAuthenticity";
 import {
-  getDefaultSizeGuideByCategory,
+  getDefaultApparelSizes,
+  getDefaultGloveSizes,
+  getDefaultOneSizeSizes,
   getDefaultSizesByCategory,
 } from "../lib/productSizing";
 
@@ -53,20 +55,12 @@ interface Product {
   color_galleries?: Record<string, string[]>;
   sizes?: string[];
   size_guide?: string;
+  sold_out?: boolean;
+  sold_out_sizes?: string[];
   rating?: number;
   reviews_count?: number;
   material?: string;
   care_instructions?: string;
-}
-
-interface ProductReview {
-  id: string;
-  product_id: string;
-  user_id?: string;
-  user_name: string;
-  rating: number;
-  comment: string;
-  created_at?: unknown;
 }
 
 const GUEST_CART_STORAGE_KEY = "guest_cart_items_v1";
@@ -103,6 +97,34 @@ const writeGuestCart = (items: GuestCartEntry[]) => {
   window.localStorage.setItem(GUEST_CART_STORAGE_KEY, JSON.stringify(items));
   window.dispatchEvent(new Event("guest-cart-updated"));
 };
+const normalizeVariantToken = (value: string) => String(value || "").trim().toLowerCase();
+const normalizeDisplayedSizes = (context: string, sizes: string[]) => {
+  const fallbackSizes = getDefaultSizesByCategory(context);
+  const isGloveContext =
+    fallbackSizes.length > 0 && fallbackSizes.every((size) => /oz/i.test(size));
+  const isOneSizeContext =
+    fallbackSizes.length === 1 &&
+    fallbackSizes[0].toLowerCase() === getDefaultOneSizeSizes()[0].toLowerCase();
+
+  const apparelTokens = new Set(
+    getDefaultApparelSizes().map((size) => String(size).trim().toLowerCase())
+  );
+  const looksLikeApparelSizing =
+    sizes.length > 0 &&
+    sizes.every((size) => apparelTokens.has(String(size).trim().toLowerCase()));
+
+  if (looksLikeApparelSizing) {
+    return getDefaultGloveSizes();
+  }
+
+  if (isOneSizeContext && looksLikeApparelSizing) {
+    return getDefaultOneSizeSizes();
+  }
+
+  if (!isGloveContext) return sizes;
+
+  return sizes;
+};
 
 export function ProductDetail() {
   const { id } = useParams<{ id: string }>();
@@ -114,49 +136,22 @@ export function ProductDetail() {
   const [quantity, setQuantity] = useState(1);
   const [selectedImage, setSelectedImage] = useState(0);
   const [adding, setAdding] = useState(false);
-  const [activeTab, setActiveTab] = useState<
-    "description" | "details" | "size-guide" | "reviews"
-  >("description");
   const [addedToCart, setAddedToCart] = useState(false);
-  const [reviews, setReviews] = useState<ProductReview[]>([]);
-  const [loadingReviews, setLoadingReviews] = useState(false);
-  const [submittingReview, setSubmittingReview] = useState(false);
-  const [reviewForm, setReviewForm] = useState({
-    rating: 5,
-    comment: "",
-  });
-  const tabsSectionRef = useRef<HTMLDivElement | null>(null);
   const buildSizingContext = (item: Product) =>
     [item.category, item.subcategory, item.product_type]
       .map((entry) => String(entry || "").trim())
       .filter(Boolean)
       .join(" ");
-  const shouldShowSizeGuide = (item: Product) => {
-    const customGuide = String(item.size_guide || "").trim();
-    if (customGuide) return true;
-    const context = buildSizingContext(item).toLowerCase();
-    const noGuidePattern =
-      /\b(supplement|protein|whey|creatine|vitamin|amino|bcaa|eaa|mass|pre[\s-]?workout|accessories|accessory|bag|cap|hat|bottle|belt|shaker)\b/;
-    return !noGuidePattern.test(context);
-  };
 
   useEffect(() => {
     if (id) {
       loadProduct();
-      loadReviews(id);
     }
   }, [id]);
 
   useEffect(() => {
     setSelectedImage(0);
   }, [id]);
-
-  useEffect(() => {
-    if (!product) return;
-    if (activeTab === "size-guide" && !shouldShowSizeGuide(product)) {
-      setActiveTab("description");
-    }
-  }, [activeTab, product]);
 
   const loadProduct = async () => {
     try {
@@ -168,11 +163,21 @@ export function ProductDetail() {
       if (productSnap.exists()) {
         const data = { id: productSnap.id, ...productSnap.data() } as Product;
         setProduct(data);
+        const sizingContext = buildSizingContext(data);
         const availableSizes =
           data.sizes && data.sizes.length > 0
-            ? data.sizes
-            : getDefaultSizesByCategory(buildSizingContext(data));
-        setSelectedSize(availableSizes[0] || "One Size");
+            ? normalizeDisplayedSizes(sizingContext, data.sizes)
+            : getDefaultSizesByCategory(sizingContext);
+        const soldOutTokenSet = new Set(
+          (Array.isArray(data.sold_out_sizes) ? data.sold_out_sizes : []).map(
+            (size) => normalizeVariantToken(size)
+          )
+        );
+        const firstAvailableSize =
+          availableSizes.find(
+            (size) => !soldOutTokenSet.has(normalizeVariantToken(size))
+          ) || availableSizes[0];
+        setSelectedSize(firstAvailableSize || "One Size");
       } else {
         setProduct(null);
       }
@@ -199,95 +204,12 @@ export function ProductDetail() {
     return new Date(0);
   };
 
-  const loadReviews = async (productId: string) => {
-    try {
-      setLoadingReviews(true);
-      const reviewsQuery = query(
-        collection(db, "product_reviews"),
-        where("product_id", "==", productId)
-      );
-      const reviewsSnap = await getDocs(reviewsQuery);
-      const parsed = reviewsSnap.docs
-        .map((entry) => ({
-          id: entry.id,
-          ...entry.data(),
-        }))
-        .filter(
-          (entry): entry is ProductReview =>
-            typeof (entry as ProductReview).rating === "number" &&
-            typeof (entry as ProductReview).comment === "string" &&
-            typeof (entry as ProductReview).user_name === "string"
-        );
-
-      parsed.sort(
-        (a, b) =>
-          toDateValue(b.created_at).getTime() - toDateValue(a.created_at).getTime()
-      );
-      setReviews(parsed);
-    } catch (error) {
-      console.error("Error loading reviews:", error);
-      setReviews([]);
-    } finally {
-      setLoadingReviews(false);
-    }
-  };
-
-  const submitReview = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!product || !id || !user) {
-      navigate("/login");
-      return;
-    }
-    const trimmedComment = reviewForm.comment.trim();
-    if (!trimmedComment) return;
-
-    try {
-      setSubmittingReview(true);
-      const userName =
-        user.displayName?.trim() || user.email?.split("@")[0] || "Customer";
-      await addDoc(collection(db, "product_reviews"), {
-        product_id: id,
-        user_id: user.uid,
-        user_name: userName,
-        rating: reviewForm.rating,
-        comment: trimmedComment,
-        created_at: serverTimestamp(),
-      });
-
-      const updatedReviews = [
-        ...reviews,
-        {
-          id: `temp-${Date.now()}`,
-          product_id: id,
-          user_id: user.uid,
-          user_name: userName,
-          rating: reviewForm.rating,
-          comment: trimmedComment,
-          created_at: new Date(),
-        },
-      ];
-      const avgRating =
-        updatedReviews.reduce((sum, entry) => sum + entry.rating, 0) /
-        updatedReviews.length;
-
-      await updateDoc(doc(db, "products", id), {
-        rating: Number(avgRating.toFixed(1)),
-        reviews_count: updatedReviews.length,
-      });
-
-      setReviewForm({ rating: 5, comment: "" });
-      await loadReviews(id);
-      await loadProduct();
-    } catch (error) {
-      console.error("Error submitting review:", error);
-      alert("Failed to submit review");
-    } finally {
-      setSubmittingReview(false);
-    }
-  };
-
   const addToCart = async () => {
     if (!product) return;
+    if (isProductSoldOut || isSelectedSizeSoldOut) {
+      alert("This product/size is sold out.");
+      return;
+    }
 
     try {
       setAdding(true);
@@ -408,42 +330,21 @@ export function ProductDetail() {
       prev === productImages.length - 1 ? 0 : prev + 1
     );
   };
-  const sizeGuideText =
-    product.size_guide?.trim() ||
-    getDefaultSizeGuideByCategory(buildSizingContext(product));
-  const showSizeGuide = shouldShowSizeGuide(product);
-  const sizeGuideLines = sizeGuideText
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const sizeGuideRows = sizeGuideLines
-    .slice(1)
-    .filter((line) => line.includes("|"))
-    .map((line) => line.split("|").map((cell) => cell.trim()))
-    .filter((cells) => cells.length >= 2);
-  const hasStructuredSizeGuide = sizeGuideRows.length > 1;
-  const sizeGuideColumns = hasStructuredSizeGuide ? sizeGuideRows[0] : [];
-  const sizeGuideBodyRows = hasStructuredSizeGuide ? sizeGuideRows.slice(1) : [];
-  const lengthColumnIndex = sizeGuideColumns.findIndex((col) =>
-    /length\s*mm/i.test(col)
+  const availableSizes =
+    product.sizes && product.sizes.length > 0
+      ? normalizeDisplayedSizes(buildSizingContext(product), product.sizes)
+      : getDefaultSizesByCategory(buildSizingContext(product));
+  const soldOutSizeTokenSet = new Set(
+    (Array.isArray(product.sold_out_sizes) ? product.sold_out_sizes : []).map(
+      (size) => normalizeVariantToken(size)
+    )
   );
-  const displaySizeGuideColumns =
-    hasStructuredSizeGuide && lengthColumnIndex >= 0
-      ? sizeGuideColumns.map((col, idx) =>
-          idx === lengthColumnIndex ? col.replace(/mm/i, "cm") : col
-        )
-      : sizeGuideColumns;
-  const displaySizeGuideBodyRows =
-    hasStructuredSizeGuide && lengthColumnIndex >= 0
-      ? sizeGuideBodyRows.map((row) =>
-          row.map((cell, idx) => {
-            if (idx !== lengthColumnIndex) return cell;
-            const mm = Number(cell);
-            if (Number.isNaN(mm)) return cell;
-            return (mm / 10).toFixed(1);
-          })
-        )
-      : sizeGuideBodyRows;
+  const isSizeSoldOut = (size: string) =>
+    soldOutSizeTokenSet.has(normalizeVariantToken(size));
+  const areAllSizesSoldOut =
+    availableSizes.length > 0 && availableSizes.every((size) => isSizeSoldOut(size));
+  const isProductSoldOut = Boolean(product.sold_out) || areAllSizesSoldOut;
+  const isSelectedSizeSoldOut = isSizeSoldOut(selectedSize);
   const currentUserReview = user
     ? reviews.find((review) => review.user_id && review.user_id === user.uid)
     : null;
@@ -456,15 +357,6 @@ export function ProductDetail() {
       year: "numeric",
     });
   };
-  const openSizeGuideTab = () => {
-    if (!showSizeGuide) return;
-    setActiveTab("size-guide");
-    tabsSectionRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
-    });
-  };
-
   return (
     <div className="min-h-screen pt-24 pb-16 px-4 bg-gray-50">
       <div className="max-w-7xl mx-auto">
@@ -622,15 +514,33 @@ export function ProductDetail() {
                     {selectedSize}
                   </span>
                 </label>
-                {showSizeGuide && (
-                  <button
-                    onClick={openSizeGuideTab}
-                    className="text-xs text-gray-600 underline hover:text-black transition-colors font-medium"
-                  >
-                    Size Guide
-                  </button>
-                )}
               </div>
+              <div className="flex flex-wrap gap-2">
+                {availableSizes.map((size) => {
+                  const soldOut = isSizeSoldOut(size);
+                  const selected = selectedSize === size;
+                  return (
+                    <button
+                      key={`size-${size}`}
+                      type="button"
+                      onClick={() => !soldOut && setSelectedSize(size)}
+                      disabled={soldOut}
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                        soldOut
+                          ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed line-through"
+                          : selected
+                          ? "bg-black text-white border-black"
+                          : "bg-white text-gray-700 border-gray-300 hover:border-black hover:text-black"
+                      }`}
+                    >
+                      {size}
+                    </button>
+                  );
+                })}
+              </div>
+              {isProductSoldOut && (
+                <p className="text-xs font-semibold text-red-600">Sold Out</p>
+              )}
             </div>
 
             {/* Quantity */}
@@ -663,7 +573,7 @@ export function ProductDetail() {
             <div className="pt-3">
               <button
                 onClick={addToCart}
-                disabled={adding}
+                disabled={adding || isProductSoldOut || isSelectedSizeSoldOut}
                 className="w-full bg-black text-white py-3.5 px-6 rounded-xl hover:bg-gray-800 transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 text-xs tracking-wider font-bold shadow-lg hover:shadow-xl"
               >
                 {adding ? (
@@ -676,6 +586,8 @@ export function ProductDetail() {
                     <Check size={18} />
                     ADDED TO CART
                   </>
+                ) : isProductSoldOut || isSelectedSizeSoldOut ? (
+                  <>SOLD OUT</>
                 ) : (
                   <>
                     <ShoppingCart size={18} />
@@ -743,254 +655,150 @@ export function ProductDetail() {
               </div>
             </div>
 
-            {/* Tabs */}
-            <div className="pt-4" ref={tabsSectionRef}>
+            {/* Reviews */}
+            <div className="pt-4">
               <div className="flex gap-4 border-b-2 border-gray-200">
-                {[
-                  { key: "description", label: "description" },
-                  { key: "details", label: "details" },
-                  ...(showSizeGuide
-                    ? [{ key: "size-guide", label: "size guide" }]
-                    : []),
-                  { key: "reviews", label: "reviews" },
-                ].map((tab) => (
-                  <button
-                    key={tab.key}
-                    onClick={() => setActiveTab(tab.key as typeof activeTab)}
-                    className={`pb-3 text-xs tracking-wider uppercase relative font-semibold transition-colors ${
-                      activeTab === tab.key
-                        ? "text-black"
-                        : "text-gray-500 hover:text-black"
-                    }`}
-                  >
-                    {tab.label}
-                    {activeTab === tab.key && (
-                      <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-black rounded-t-full" />
-                    )}
-                  </button>
-                ))}
+                <span className="pb-3 text-xs tracking-wider uppercase relative font-semibold text-black">
+                  reviews
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-black rounded-t-full" />
+                </span>
               </div>
 
               <div className="py-4">
-                {activeTab === "description" && (
-                  <div className="prose prose-sm max-w-none">
-                    <p className="text-gray-700 leading-relaxed text-sm">
-                      {product.description}
-                    </p>
-                  </div>
-                )}
-                {activeTab === "details" && (
-                  <div className="space-y-3">
-                    {product.material && (
-                      <div className="flex justify-between items-center py-2.5 px-3 bg-gray-50 rounded-xl">
-                        <span className="text-gray-600 font-medium text-xs">
-                          Material:
-                        </span>
-                        <span className="font-bold text-xs">
-                          {product.material}
-                        </span>
-                      </div>
-                    )}
-                    {product.care_instructions && (
-                      <div className="py-2.5 px-3 bg-gray-50 rounded-xl">
-                        <span className="text-gray-600 font-medium block mb-1.5 text-xs">
-                          Care Instructions:
-                        </span>
-                        <p className="text-gray-800 font-medium text-xs">
-                          {product.care_instructions}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {showSizeGuide && activeTab === "size-guide" && (
-                  <div className="py-2.5 px-3 bg-gray-50 rounded-xl">
-                    <span className="text-gray-600 font-medium block mb-1.5 text-xs">
-                      Size Guide:
-                    </span>
-                    {hasStructuredSizeGuide ? (
-                      <div className="overflow-x-auto rounded-xl border border-slate-700 bg-slate-950">
-                        <table className="w-full min-w-[560px] text-xs">
-                          <thead className="bg-slate-800">
-                            <tr>
-                              {displaySizeGuideColumns.map((column, index) => (
-                                <th
-                                  key={`${column}-${index}`}
-                                  className="px-3 py-2 text-left font-semibold whitespace-nowrap text-cyan-100"
-                                >
-                                  {column}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {displaySizeGuideBodyRows.map((row, rowIndex) => (
-                              <tr
-                                key={`inline-row-${rowIndex}`}
-                                className={`border-t border-slate-700 ${
-                                  rowIndex % 2 === 0 ? "bg-slate-950" : "bg-slate-900"
-                                }`}
-                              >
-                                {row.map((cell, cellIndex) => (
-                                  <td
-                                    key={`inline-cell-${rowIndex}-${cellIndex}`}
-                                    className={`px-3 py-2 whitespace-nowrap ${
-                                      cellIndex === 0
-                                        ? "font-semibold text-slate-100"
-                                        : "text-slate-200"
-                                    }`}
-                                  >
-                                    {cell}
-                                  </td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <p className="text-gray-800 font-medium text-xs whitespace-pre-line">
-                        {sizeGuideText}
-                      </p>
-                    )}
-                  </div>
-                )}
-                {activeTab === "reviews" && (
-                  <div className="space-y-4">
-                    {user && !currentUserReview ? (
-                      <form
-                        onSubmit={submitReview}
-                        className="bg-gray-50 rounded-xl p-4 border border-gray-200"
-                      >
-                        <p className="text-sm font-semibold mb-3">Write a review</p>
-                        <div className="flex items-center gap-2 mb-3">
-                          <label className="text-xs text-gray-600">Rating</label>
-                          <div className="flex items-center gap-1">
-                            {[1, 2, 3, 4, 5].map((ratingValue) => (
-                              <button
-                                key={ratingValue}
-                                type="button"
-                                onClick={() =>
-                                  setReviewForm((prev) => ({
-                                    ...prev,
-                                    rating: ratingValue,
-                                  }))
+                <div className="space-y-4">
+                  {user && !currentUserReview ? (
+                    <form
+                      onSubmit={submitReview}
+                      className="bg-gray-50 rounded-xl p-4 border border-gray-200"
+                    >
+                      <p className="text-sm font-semibold mb-3">Write a review</p>
+                      <div className="flex items-center gap-2 mb-3">
+                        <label className="text-xs text-gray-600">Rating</label>
+                        <div className="flex items-center gap-1">
+                          {[1, 2, 3, 4, 5].map((ratingValue) => (
+                            <button
+                              key={ratingValue}
+                              type="button"
+                              onClick={() =>
+                                setReviewForm((prev) => ({
+                                  ...prev,
+                                  rating: ratingValue,
+                                }))
+                              }
+                              className="p-0.5"
+                              aria-label={`Rate ${ratingValue} star${ratingValue > 1 ? "s" : ""}`}
+                            >
+                              <Star
+                                size={18}
+                                className={
+                                  ratingValue <= reviewForm.rating
+                                    ? "fill-yellow-400 text-yellow-400"
+                                    : "fill-gray-200 text-gray-300"
                                 }
-                                className="p-0.5"
-                                aria-label={`Rate ${ratingValue} star${ratingValue > 1 ? "s" : ""}`}
-                              >
-                                <Star
-                                  size={18}
-                                  className={
-                                    ratingValue <= reviewForm.rating
-                                      ? "fill-yellow-400 text-yellow-400"
-                                      : "fill-gray-200 text-gray-300"
-                                  }
-                                />
-                              </button>
-                            ))}
-                          </div>
-                          <span className="text-xs text-gray-500">
-                            {reviewForm.rating}/5
-                          </span>
+                              />
+                            </button>
+                          ))}
                         </div>
-                        <textarea
-                          value={reviewForm.comment}
-                          onChange={(e) =>
-                            setReviewForm((prev) => ({
-                              ...prev,
-                              comment: e.target.value,
-                            }))
-                          }
-                          placeholder="Share your experience with this product..."
-                          className="w-full min-h-[88px] p-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-black"
-                          required
-                        />
-                        <button
-                          type="submit"
-                          disabled={submittingReview || !reviewForm.comment.trim()}
-                          className="mt-3 px-4 py-2 bg-black text-white rounded-lg text-xs font-semibold tracking-wider disabled:opacity-50"
-                        >
-                          {submittingReview ? "SUBMITTING..." : "SUBMIT REVIEW"}
-                        </button>
-                      </form>
-                    ) : user && currentUserReview ? (
-                      <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200 text-sm text-emerald-800">
-                        You already submitted a review for this product.
+                        <span className="text-xs text-gray-500">
+                          {reviewForm.rating}/5
+                        </span>
                       </div>
-                    ) : (
-                      <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 text-sm text-gray-600">
-                        Please{" "}
-                        <Link to="/login" className="underline text-black font-medium">
-                          sign in
-                        </Link>{" "}
-                        to leave a review.
-                      </div>
-                    )}
+                      <textarea
+                        value={reviewForm.comment}
+                        onChange={(e) =>
+                          setReviewForm((prev) => ({
+                            ...prev,
+                            comment: e.target.value,
+                          }))
+                        }
+                        placeholder="Share your experience with this product..."
+                        className="w-full min-h-[88px] p-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-black"
+                        required
+                      />
+                      <button
+                        type="submit"
+                        disabled={submittingReview || !reviewForm.comment.trim()}
+                        className="mt-3 px-4 py-2 bg-black text-white rounded-lg text-xs font-semibold tracking-wider disabled:opacity-50"
+                      >
+                        {submittingReview ? "SUBMITTING..." : "SUBMIT REVIEW"}
+                      </button>
+                    </form>
+                  ) : user && currentUserReview ? (
+                    <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200 text-sm text-emerald-800">
+                      You already submitted a review for this product.
+                    </div>
+                  ) : (
+                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 text-sm text-gray-600">
+                      Please{" "}
+                      <Link to="/login" className="underline text-black font-medium">
+                        sign in
+                      </Link>{" "}
+                      to leave a review.
+                    </div>
+                  )}
 
-                    {loadingReviews ? (
-                      <div className="text-center py-6 bg-gray-50 rounded-xl text-sm text-gray-500">
-                        Loading reviews...
-                      </div>
-                    ) : reviews.length === 0 ? (
-                      <div className="text-center py-8 bg-gray-50 rounded-xl">
-                        <Star size={36} className="mx-auto text-gray-300 mb-3" />
-                        <p className="text-gray-600 font-medium text-sm">
-                          No reviews yet
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Be the first to review this product!
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {reviews.map((review) => (
-                          <div
-                            key={review.id}
-                            className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-center gap-3">
-                                <div className="h-9 w-9 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs font-semibold">
-                                  {review.user_name
-                                    .split(" ")
-                                    .filter(Boolean)
-                                    .slice(0, 2)
-                                    .map((part) => part[0]?.toUpperCase() || "")
-                                    .join("")}
-                                </div>
-                                <div>
-                                  <p className="text-sm font-semibold text-gray-900">
-                                    {review.user_name}
-                                  </p>
-                                  <p className="text-xs text-gray-500">
-                                    {formatReviewDate(review.created_at) || "Verified buyer"}
-                                  </p>
-                                </div>
+                  {loadingReviews ? (
+                    <div className="text-center py-6 bg-gray-50 rounded-xl text-sm text-gray-500">
+                      Loading reviews...
+                    </div>
+                  ) : reviews.length === 0 ? (
+                    <div className="text-center py-8 bg-gray-50 rounded-xl">
+                      <Star size={36} className="mx-auto text-gray-300 mb-3" />
+                      <p className="text-gray-600 font-medium text-sm">
+                        No reviews yet
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Be the first to review this product!
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {reviews.map((review) => (
+                        <div
+                          key={review.id}
+                          className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <div className="h-9 w-9 rounded-full bg-gray-900 text-white flex items-center justify-center text-xs font-semibold">
+                                {review.user_name
+                                  .split(" ")
+                                  .filter(Boolean)
+                                  .slice(0, 2)
+                                  .map((part) => part[0]?.toUpperCase() || "")
+                                  .join("")}
                               </div>
-                              <div className="inline-flex items-center gap-0.5 px-2 py-1 rounded-full bg-amber-50 border border-amber-200">
-                                {[...Array(5)].map((_, i) => (
-                                  <Star
-                                    key={`review-star-${review.id}-${i}`}
-                                    size={12}
-                                    className={
-                                      i < review.rating
-                                        ? "fill-amber-400 text-amber-400"
-                                        : "fill-gray-200 text-gray-200"
-                                    }
-                                  />
-                                ))}
+                              <div>
+                                <p className="text-sm font-semibold text-gray-900">
+                                  {review.user_name}
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                  {formatReviewDate(review.created_at) || "Verified buyer"}
+                                </p>
                               </div>
                             </div>
-                            <p className="mt-3 text-sm text-gray-700 leading-relaxed">
-                              {review.comment}
-                            </p>
+                            <div className="inline-flex items-center gap-0.5 px-2 py-1 rounded-full bg-amber-50 border border-amber-200">
+                              {[...Array(5)].map((_, i) => (
+                                <Star
+                                  key={`review-star-${review.id}-${i}`}
+                                  size={12}
+                                  className={
+                                    i < review.rating
+                                      ? "fill-amber-400 text-amber-400"
+                                      : "fill-gray-200 text-gray-200"
+                                  }
+                                />
+                              ))}
+                            </div>
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+                          <p className="mt-3 text-sm text-gray-700 leading-relaxed">
+                            {review.comment}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

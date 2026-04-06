@@ -126,8 +126,27 @@ const resolveHomeCategoryPath = (rawSlug?: string) => {
     return "/collections";
   }
   if (normalized === "shop" || normalized === "shop-all") return "/shop";
+  const token = toCategorySlug(slug);
+  const category =
+    token === "gym" || token === "gym-crossfit" || token === "crossfit"
+      ? "Gym"
+      : token === "martial-arts" ||
+          token.includes("muay-thai") ||
+          token === "muaythai" ||
+          token.includes("boxing") ||
+          token === "mma" ||
+          token.includes("combat") ||
+          token === "sports"
+        ? "Martial Arts"
+        : token
+            .split("-")
+            .filter(Boolean)
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(" ");
 
-  return `/category/${toCategorySlug(slug)}`;
+  return category
+    ? `/shop?category=${encodeURIComponent(category)}`
+    : "/shop";
 };
 
 export function Home() {

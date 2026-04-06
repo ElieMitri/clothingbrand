@@ -31,6 +31,8 @@ interface Product {
   original_price?: number;
   image_url: string;
   category: string;
+  sold_out?: boolean;
+  sold_out_sizes?: string[];
   audience?: ProductAudience;
   authenticity?: ProductAuthenticity;
   discount_percentage?: number;
@@ -592,6 +594,11 @@ export function Sale() {
                         <Clock size={12} className="inline mr-1" />
                         Limited
                       </div>
+                      {Boolean(product.sold_out) && (
+                        <div className="absolute bottom-3 left-3 bg-red-600 text-white px-3 py-1 rounded-full text-xs font-bold">
+                          Sold Out
+                        </div>
+                      )}
                     </div>
                     <div className="p-4">
                       <h3 className="font-medium text-sm mb-2 tracking-wide line-clamp-1 text-slate-100">

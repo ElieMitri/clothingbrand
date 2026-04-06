@@ -25,6 +25,8 @@ interface Product {
   colors?: string[];
   brand?: string;
   tags?: string[];
+  sold_out?: boolean;
+  sold_out_sizes?: string[];
   audience?: ProductAudience;
   authenticity?: ProductAuthenticity;
 }
@@ -35,18 +37,50 @@ interface HomeCategoryEntry {
   slug?: string;
   image_url?: string;
 }
+const isGenericChildType = (entry: string, parentCategory: string) => {
+  const childSlug = toCategorySlug(entry || "");
+  const parentSlug = toCategorySlug(parentCategory || "");
+  if (!childSlug) return true;
+  if (childSlug === parentSlug) return true;
+  return childSlug === "all" || childSlug === "general" || childSlug === "other";
+};
+const resolveProductChildType = (product: Product) => {
+  const category = String(product.category || "").trim();
+  const subcategory = String(product.subcategory || "").trim();
+  const productType = String(product.product_type || "").trim();
+
+  if (productType && !isGenericChildType(productType, category)) {
+    return productType;
+  }
+  if (subcategory && !isGenericChildType(subcategory, category)) {
+    return subcategory;
+  }
+  return "";
+};
 const isSupplementLikeProduct = (product: Product) =>
   /\b(supplement|protein|whey|creatine|amino|bcaa|eaa|vitamin|mass|pre[\s-]?workout)\b/i.test(
     `${product.category || ""} ${product.subcategory || ""} ${product.product_type || ""} ${product.name || ""}`
   );
-const categoryMatchesSlug = (category: string, slug: string) => {
-  const categorySlug = toCategorySlug(category || "");
+const isMartialArtsLikeProduct = (product: Product) =>
+  /\b(sports|martial|muay[\s-]?thai|boxing|mma|combat|glove|wrap|shin|guard)\b/i.test(
+    `${product.category || ""} ${product.subcategory || ""} ${product.product_type || ""} ${product.name || ""}`
+  );
+const categoryMatchesSlug = (product: Product, slug: string) => {
+  const categorySlug = toCategorySlug(product.category || "");
   const selectedSlug = toCategorySlug(slug || "");
   if (!categorySlug || !selectedSlug) return false;
   if (categorySlug === selectedSlug) return true;
 
   if (selectedSlug === "gym" || selectedSlug === "gym-crossfit") {
-    return categorySlug.includes("gym") || categorySlug.includes("crossfit");
+    return (
+      categorySlug.includes("gym") ||
+      categorySlug.includes("crossfit") ||
+      isSupplementLikeProduct(product)
+    );
+  }
+
+  if (selectedSlug === "martial-arts") {
+    return isMartialArtsLikeProduct(product);
   }
 
   return false;
@@ -58,6 +92,7 @@ export function CategoryPage() {
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [displayName, setDisplayName] = useState(fromCategorySlug(slug));
+  const [selectedType, setSelectedType] = useState("all");
   const [selectedAudience, setSelectedAudience] = useState<
     ProductAudience | "all"
   >("all");
@@ -106,7 +141,7 @@ export function CategoryPage() {
           })) as Product[];
 
           const filtered = allProducts.filter(
-            (product) => categoryMatchesSlug(product.category, slug)
+            (product) => categoryMatchesSlug(product, slug)
           );
           setProducts(filtered);
           setLoading(false);
@@ -122,9 +157,35 @@ export function CategoryPage() {
       unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
   }, [slug]);
+  useEffect(() => {
+    setSelectedType("all");
+  }, [slug]);
+
+  const typeOptions = useMemo(() => {
+    const types = Array.from(
+      new Set(
+        products
+          .map((product) => resolveProductChildType(product))
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    return ["all", ...types];
+  }, [products]);
+  const shouldShowTypeFilter = typeOptions.length > 1;
+  const getProductType = (product: Product) =>
+    resolveProductChildType(product).toLowerCase();
 
   useEffect(() => {
     let filtered = [...products];
+
+    if (shouldShowTypeFilter && selectedType !== "all") {
+      filtered = filtered.filter(
+        (product) =>
+          getProductType(product) === selectedType.trim().toLowerCase()
+      );
+    }
 
     if (selectedAudience !== "all") {
       filtered = filtered.filter(
@@ -173,7 +234,15 @@ export function CategoryPage() {
     }
 
     setFilteredProducts(filtered);
-  }, [products, selectedAudience, colorInput, searchTerm, sortBy]);
+  }, [
+    products,
+    selectedType,
+    shouldShowTypeFilter,
+    selectedAudience,
+    colorInput,
+    searchTerm,
+    sortBy,
+  ]);
 
   const heading = useMemo(
     () => (displayName?.trim() ? displayName : fromCategorySlug(slug)),
@@ -201,6 +270,7 @@ export function CategoryPage() {
   }, [isFilterPanelOpen]);
 
   const activeFilterCount = [
+    shouldShowTypeFilter && selectedType !== "all",
     selectedAudience !== "all",
     colorInput.trim().length > 0,
     searchTerm.trim().length > 0,
@@ -208,6 +278,7 @@ export function CategoryPage() {
   ].filter(Boolean).length;
 
   const clearFilters = () => {
+    setSelectedType("all");
     setSelectedAudience("all");
     setColorInput("");
     setSearchTerm("");
@@ -288,6 +359,26 @@ export function CategoryPage() {
               </button>
             </div>
             <div className="p-5 space-y-4 overflow-y-auto h-[calc(100%-68px)]">
+              {shouldShowTypeFilter && (
+                <div className="space-y-1.5">
+                  <label className="text-sm text-gray-500">Type</label>
+                  <select
+                    value={selectedType}
+                    onChange={(e) => setSelectedType(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  >
+                    <option value="all">All</option>
+                    {typeOptions
+                      .filter((entry) => entry !== "all")
+                      .map((entry) => (
+                        <option key={entry} value={entry}>
+                          {entry}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <label className="text-sm text-gray-500">Search</label>
                 <input
@@ -363,6 +454,29 @@ export function CategoryPage() {
           </aside>
         </div>
 
+        {shouldShowTypeFilter && (
+          <div className="flex justify-center gap-3 md:gap-5 mb-8 flex-wrap border-b border-gray-200 pb-2">
+            {typeOptions.map((entry) => {
+              const isAll = entry === "all";
+              const isSelected = selectedType === entry;
+              const label = isAll ? "All" : entry;
+              return (
+                <button
+                  key={`type-tab-${entry}`}
+                  onClick={() => setSelectedType(entry)}
+                  className={`text-xs md:text-sm tracking-[0.12em] uppercase transition-colors pb-2 ${
+                    isSelected
+                      ? "text-black border-b-2 border-black font-medium"
+                      : "text-gray-400 hover:text-gray-600"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
             {[...Array(8)].map((_, i) => (
@@ -393,7 +507,7 @@ export function CategoryPage() {
                 to={`/product/${product.id}`}
                 className="group"
               >
-                <div className="aspect-[3/4] mb-4 overflow-hidden rounded-lg bg-white">
+                <div className="relative aspect-[3/4] mb-4 overflow-hidden rounded-lg bg-white">
                   <img
                     src={product.image_url}
                     alt={product.name}
@@ -401,6 +515,11 @@ export function CategoryPage() {
                     decoding="async"
                     className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
                   />
+                  {Boolean(product.sold_out) && (
+                    <span className="absolute top-2 left-2 px-2 py-1 bg-red-600 text-white text-[10px] font-semibold rounded">
+                      Sold Out
+                    </span>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <p className="text-xs tracking-wider text-gray-500 uppercase">

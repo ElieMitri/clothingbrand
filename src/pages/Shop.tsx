@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Filter, X } from "lucide-react";
 import { db } from "../lib/firebase";
 import { collection, onSnapshot } from "firebase/firestore";
@@ -29,6 +29,8 @@ interface Product {
   flavor?: string;
   net_weight?: string;
   is_featured?: boolean;
+  sold_out?: boolean;
+  sold_out_sizes?: string[];
   created_at?: unknown;
   audience?: ProductAudience;
   authenticity?: ProductAuthenticity;
@@ -55,9 +57,14 @@ const resolveProductChildType = (product: Product) => {
   }
   return "";
 };
+const isMartialArtsLikeProduct = (product: Product) =>
+  /\b(sports|martial|muay[\s-]?thai|boxing|mma|combat|glove|wrap|shin|guard)\b/i.test(
+    `${product.category || ""} ${product.subcategory || ""} ${product.product_type || ""} ${product.name || ""}`
+  );
 
 export function Shop() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,31 +81,24 @@ export function Shop() {
   const [categories, setCategories] = useState<string[]>(["all"]);
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
 
-  const categoryMatches = (
-    productCategory: string,
-    selectedCategoryValue: string
-  ) => {
+  const categoryMatches = (product: Product, selectedCategoryValue: string) => {
     if (selectedCategoryValue === "all") return true;
 
     const selectedSlug = toCategorySlug(selectedCategoryValue);
-    const productSlug = toCategorySlug(productCategory || "");
+    const productSlug = toCategorySlug(product.category || "");
     if (!selectedSlug || !productSlug) return false;
     if (productSlug === selectedSlug) return true;
 
     if (selectedSlug === "gym" || selectedSlug === "gym-crossfit") {
-      return productSlug.includes("gym") || productSlug.includes("crossfit");
+      return (
+        productSlug.includes("gym") ||
+        productSlug.includes("crossfit") ||
+        isSupplementLikeProduct(product)
+      );
     }
 
     if (selectedSlug === "martial-arts") {
-      return (
-        productSlug.includes("sports") ||
-        productSlug.includes("martial") ||
-        productSlug.includes("muay-thai") ||
-        productSlug.includes("muaythai") ||
-        productSlug.includes("boxing") ||
-        productSlug.includes("mma") ||
-        productSlug.includes("combat")
-      );
+      return isMartialArtsLikeProduct(product);
     }
 
     return false;
@@ -225,7 +225,7 @@ export function Shop() {
     if (selectedCategory === "all") return ["all"];
 
     const source = products.filter((product) =>
-      categoryMatches(product.category, selectedCategory)
+      categoryMatches(product, selectedCategory)
     );
     const types = Array.from(
       new Set(
@@ -261,7 +261,7 @@ export function Shop() {
 
     if (selectedCategory !== "all") {
       filtered = filtered.filter((product) =>
-        categoryMatches(product.category, selectedCategory)
+        categoryMatches(product, selectedCategory)
       );
     }
 
@@ -372,8 +372,25 @@ export function Shop() {
     searchTerm.trim().length > 0,
   ].filter(Boolean).length;
 
+  const setCategoryAndSyncUrl = (category: string) => {
+    const params = new URLSearchParams(location.search);
+    if (category === "all") {
+      params.delete("category");
+    } else {
+      params.set("category", category);
+    }
+    const nextSearch = params.toString();
+    const nextUrl = nextSearch ? `/shop?${nextSearch}` : "/shop";
+    const currentUrl = `${location.pathname}${location.search}`;
+
+    setSelectedCategory(category);
+    if (currentUrl !== nextUrl) {
+      navigate(nextUrl);
+    }
+  };
+
   const clearFilters = () => {
-    setSelectedCategory("all");
+    setCategoryAndSyncUrl("all");
     setSelectedType("all");
     setSelectedAudience("all");
     setColorInput("");
@@ -465,7 +482,7 @@ export function Shop() {
                 <label className="text-sm text-gray-500">Category</label>
                 <select
                   value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  onChange={(e) => setCategoryAndSyncUrl(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 >
                   {categoryOptions.map((category) => (
@@ -564,7 +581,7 @@ export function Shop() {
           {categoryOptions.map((category) => (
             <button
               key={category}
-              onClick={() => setSelectedCategory(category)}
+              onClick={() => setCategoryAndSyncUrl(category)}
               className={`text-sm tracking-[0.14em] uppercase transition-colors pb-2 ${
                 selectedCategory === category
                   ? "text-black border-b-2 border-black font-medium"
@@ -618,7 +635,7 @@ export function Shop() {
               No products found in this category
             </p>
             <button
-              onClick={() => setSelectedCategory("all")}
+              onClick={() => setCategoryAndSyncUrl("all")}
               className="text-black underline hover:text-gray-600"
             >
               View all products
@@ -632,7 +649,7 @@ export function Shop() {
                 to={`/product/${product.id}`}
                 className="group"
               >
-                <div className="aspect-[3/4] mb-3 overflow-hidden rounded-lg bg-white">
+                <div className="relative aspect-[3/4] mb-3 overflow-hidden rounded-lg bg-white">
                   <img
                     src={product.image_url}
                     alt={product.name}
@@ -640,6 +657,11 @@ export function Shop() {
                     decoding="async"
                     className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
                   />
+                  {Boolean(product.sold_out) && (
+                    <span className="absolute top-2 left-2 px-2 py-1 bg-red-600 text-white text-[10px] font-semibold rounded">
+                      Sold Out
+                    </span>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <p className="text-xs tracking-wider text-gray-500 uppercase">

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Plus,
@@ -78,6 +78,7 @@ interface Product {
   price: number;
   cost_price: number;
   original_price?: number;
+  commission_percentage?: number;
   description: string;
   image_url: string;
   category: string;
@@ -92,6 +93,8 @@ interface Product {
   size_stock?: Record<string, number>;
   size_guide?: string;
   stock?: number;
+  sold_out?: boolean;
+  sold_out_sizes?: string[];
   discount_percentage?: number;
   material?: string;
   care_instructions?: string;
@@ -100,6 +103,7 @@ interface Product {
   net_weight?: string;
   is_featured?: boolean;
   is_new_arrival?: boolean;
+  source_url?: string;
   created_at: DateField;
 }
 
@@ -245,6 +249,7 @@ interface LinkImportProduct {
   images?: string[];
   price?: number;
   original_price?: number;
+  commission_percentage?: number;
   colors?: string[];
   source_url?: string;
 }
@@ -285,6 +290,30 @@ const slugifyPathToken = (value: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
+const toDisplayCategoryFromToken = (value: string) => {
+  const token = slugifyPathToken(value);
+  if (!token) return "";
+  if (token === "gym" || token === "gym-crossfit" || token === "crossfit") {
+    return "Gym";
+  }
+  if (
+    token === "martial-arts" ||
+    token.includes("muay-thai") ||
+    token === "muaythai" ||
+    token.includes("boxing") ||
+    token === "mma" ||
+    token.includes("combat") ||
+    token === "sports"
+  ) {
+    return "Martial Arts";
+  }
+  return token
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+};
+
 const suggestShopMenuPath = (label: string) => {
   const token = slugifyPathToken(label);
   if (!token) return "";
@@ -292,7 +321,24 @@ const suggestShopMenuPath = (label: string) => {
   if (token === "new-arrivals" || token === "new-arrival") return "/new-arrivals";
   if (token === "collections" || token === "collection") return "/collections";
   if (token === "shop" || token === "shop-all") return "/shop";
-  return `/category/${token}`;
+  const categoryLabel = toDisplayCategoryFromToken(label) || toDisplayCategoryFromToken(token);
+  return categoryLabel
+    ? `/shop?category=${encodeURIComponent(categoryLabel)}`
+    : "/shop";
+};
+
+const normalizeHomepageShopPath = (rawPath: string) => {
+  const trimmed = String(rawPath || "").trim();
+  if (!trimmed) return "";
+  const path = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+
+  const categoryPrefixMatch = path.match(/^\/category\/([^/?#]+)/i);
+  if (!categoryPrefixMatch) return path;
+
+  const categorySlug = decodeURIComponent(categoryPrefixMatch[1] || "");
+  const categoryLabel = toDisplayCategoryFromToken(categorySlug);
+  if (!categoryLabel) return "/shop";
+  return `/shop?category=${encodeURIComponent(categoryLabel)}`;
 };
 
 const buildAutoSku = (category: string, name: string) =>
@@ -416,6 +462,20 @@ export function AdminDashboard() {
   const [subscriberSearchTerm, setSubscriberSearchTerm] = useState("");
   const [collectionSearchTerm, setCollectionSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [bulkCommissionCategory, setBulkCommissionCategory] = useState("all");
+  const [bulkCommissionPercentage, setBulkCommissionPercentage] = useState(0);
+  const [applyingBulkCommission, setApplyingBulkCommission] = useState(false);
+  const [sourceCommissionUrl, setSourceCommissionUrl] = useState("");
+  const [sourceCommissionPercentage, setSourceCommissionPercentage] =
+    useState(0);
+  const [applyingSourceCommission, setApplyingSourceCommission] = useState(false);
+  const [visibleProductCount, setVisibleProductCount] = useState(24);
+  const [openCategoryTreeNodes, setOpenCategoryTreeNodes] = useState<string[]>(
+    []
+  );
+  const [openSubcategoryTreeNodes, setOpenSubcategoryTreeNodes] = useState<
+    string[]
+  >([]);
   const [saleSettings, setSaleSettings] = useState({
     sale_title: "SEASONAL SALE",
     sale_headline: "UP TO 70% OFF",
@@ -456,6 +516,7 @@ export function AdminDashboard() {
     price: 0,
     cost_price: 0,
     original_price: 0,
+    commission_percentage: 0,
     description: "",
     image_url: "",
     category: "Men",
@@ -463,6 +524,8 @@ export function AdminDashboard() {
     audience: "men" as ProductAudience,
     authenticity: "original" as ProductAuthenticity,
     stock: 0,
+    sold_out: false,
+    sold_out_sizes: "",
     discount_percentage: 0,
     material: "",
     care_instructions: "",
@@ -1026,6 +1089,33 @@ export function AdminDashboard() {
       .map((entry) => String(entry || "").trim())
       .filter(Boolean)
       .join(" ");
+  const normalizeSizesForContext = (context: string, sizes: string[]) => {
+    const defaultSizes = getDefaultSizesByCategory(context);
+    const isGloveContext =
+      defaultSizes.length > 0 && defaultSizes.every((size) => /oz/i.test(size));
+    const isOneSizeContext =
+      defaultSizes.length === 1 &&
+      defaultSizes[0].toLowerCase() === getDefaultOneSizeSizes()[0].toLowerCase();
+
+    const apparelTokens = new Set(
+      getDefaultApparelSizes().map((size) => String(size).trim().toLowerCase())
+    );
+    const looksLikeApparelSizing =
+      sizes.length > 0 &&
+      sizes.every((size) => apparelTokens.has(String(size).trim().toLowerCase()));
+
+    if (looksLikeApparelSizing) {
+      return getDefaultGloveSizes();
+    }
+
+    if (isOneSizeContext && looksLikeApparelSizing) {
+      return getDefaultOneSizeSizes();
+    }
+
+    if (!isGloveContext) return sizes;
+
+    return sizes;
+  };
   useEffect(() => {
     if (user === undefined) return;
     const adminEmails = ["lbathletes@hotmail.com", "sammourdany@gmail.com"];
@@ -1299,7 +1389,7 @@ export function AdminDashboard() {
       const profit = order.items.reduce((sum, item) => {
         const product = prods.find((p) => p.id === item.product_id);
         if (product) {
-          return sum + (item.price - product.cost_price) * item.quantity;
+          return sum + getUnitProfitFromProduct(product, item.price) * item.quantity;
         }
         return sum;
       }, 0);
@@ -1347,7 +1437,9 @@ export function AdminDashboard() {
       const profit = order.items.reduce((itemSum, item) => {
         const product = prods.find((p) => p.id === item.product_id);
         if (product) {
-          return itemSum + (item.price - product.cost_price) * item.quantity;
+          return (
+            itemSum + getUnitProfitFromProduct(product, item.price) * item.quantity
+          );
         }
         return itemSum;
       }, 0);
@@ -1359,7 +1451,9 @@ export function AdminDashboard() {
       const profit = order.items.reduce((itemSum, item) => {
         const product = prods.find((p) => p.id === item.product_id);
         if (product) {
-          return itemSum + (item.price - product.cost_price) * item.quantity;
+          return (
+            itemSum + getUnitProfitFromProduct(product, item.price) * item.quantity
+          );
         }
         return itemSum;
       }, 0);
@@ -1402,6 +1496,17 @@ export function AdminDashboard() {
         price: product.price,
         cost_price: product.cost_price || 0,
         original_price: product.original_price || product.price,
+        commission_percentage:
+          typeof product.commission_percentage === "number"
+            ? product.commission_percentage
+            : product.cost_price > 0
+            ? Number(
+                (
+                  ((product.price - product.cost_price) / product.cost_price) *
+                  100
+                ).toFixed(2)
+              )
+            : 0,
         description: product.description,
         image_url: product.image_url,
         category: product.category,
@@ -1409,6 +1514,10 @@ export function AdminDashboard() {
         audience: normalizeProductAudience(product.audience, product.category),
         authenticity: normalizeProductAuthenticity(product.authenticity),
         stock: product.stock || 0,
+        sold_out: Boolean(product.sold_out),
+        sold_out_sizes: Array.isArray(product.sold_out_sizes)
+          ? product.sold_out_sizes.join(", ")
+          : "",
         discount_percentage: product.discount_percentage || 0,
         material: product.material || "",
         care_instructions: product.care_instructions || "",
@@ -1436,6 +1545,7 @@ export function AdminDashboard() {
         price: 0,
         cost_price: 0,
         original_price: 0,
+        commission_percentage: 0,
         description: "",
         image_url: "",
         category: categories[0] || "",
@@ -1443,6 +1553,8 @@ export function AdminDashboard() {
         audience: normalizeProductAudience(undefined, categories[0] || ""),
         authenticity: "original" as ProductAuthenticity,
         stock: 0,
+        sold_out: false,
+        sold_out_sizes: "",
         discount_percentage: 0,
         material: "",
         care_instructions: "",
@@ -1594,14 +1706,21 @@ export function AdminDashboard() {
         Object.keys(colorGalleriesFromRows).length > 0
           ? colorGalleriesFromRows
           : parseColorGalleryLinks(productForm.color_gallery_links);
+      const sizingContext = buildSizingContext();
+      const manualSizes = parseCommaSeparatedValues(productForm.sizes);
       const selectedSizes =
         isSupplementProduct
           ? getDefaultSupplementSizes()
           : !showSizingFields
           ? getDefaultOneSizeSizes()
-          : parseCommaSeparatedValues(productForm.sizes).length > 0
-          ? parseCommaSeparatedValues(productForm.sizes)
-          : getDefaultSizesByCategory(buildSizingContext());
+          : manualSizes.length > 0
+          ? normalizeSizesForContext(sizingContext, manualSizes)
+          : getDefaultSizesByCategory(sizingContext);
+      const soldOutSizesRaw = parseCommaSeparatedValues(productForm.sold_out_sizes);
+      const soldOutSizesNormalized = soldOutSizesRaw.filter((value, index, all) => {
+        const normalized = value.toLowerCase();
+        return all.findIndex((candidate) => candidate.toLowerCase() === normalized) === index;
+      });
 
       const resolvedImageUrl =
         productForm.image_url.trim() ||
@@ -1615,6 +1734,16 @@ export function AdminDashboard() {
       const normalizedCategory = normalizedTaxonomy.category;
       const normalizedSubcategory = normalizedTaxonomy.subcategory;
       const normalizedProductType = normalizedTaxonomy.productType;
+      const costPriceValue = Math.max(0, Number(productForm.cost_price || 0));
+      const commissionPercentageValue = Math.max(
+        0,
+        Number(productForm.commission_percentage || 0)
+      );
+      const retailPriceValue = Math.max(0, Number(productForm.price || 0));
+      const originalPriceValue = Math.max(
+        retailPriceValue,
+        Number(productForm.original_price || productForm.price || 0)
+      );
 
       const productData = {
         name: productForm.name,
@@ -1624,10 +1753,10 @@ export function AdminDashboard() {
           productForm.sku.trim() ||
           buildAutoSku(normalizedCategory, productForm.name) ||
           null,
-        price: Number(productForm.price),
-        cost_price: Number(productForm.cost_price),
-        original_price:
-          Number(productForm.original_price) || Number(productForm.price),
+        price: retailPriceValue,
+        cost_price: costPriceValue,
+        original_price: originalPriceValue,
+        commission_percentage: commissionPercentageValue,
         description: productForm.description,
         image_url: resolvedImageUrl,
         category: normalizedCategory,
@@ -1637,6 +1766,8 @@ export function AdminDashboard() {
           : normalizeProductAudience(productForm.audience, normalizedCategory),
         authenticity: normalizeProductAuthenticity(productForm.authenticity),
         stock: 0,
+        sold_out: Boolean(productForm.sold_out),
+        sold_out_sizes: soldOutSizesNormalized,
         discount_percentage: Number(productForm.discount_percentage),
         material: productForm.material || null,
         care_instructions: productForm.care_instructions || null,
@@ -1696,7 +1827,9 @@ export function AdminDashboard() {
       product_type: productType,
       sku: item.sku || "",
       price: Number(item.price || 0),
+      cost_price: 0,
       original_price: Number(item.original_price || item.price || 0),
+      commission_percentage: 0,
       description: item.description || "",
       image_url: item.image_url || item.images?.[0] || "",
       category,
@@ -1705,6 +1838,8 @@ export function AdminDashboard() {
         ? "unisex"
         : normalizeProductAudience(undefined, category),
       stock: 0,
+      sold_out: false,
+      sold_out_sizes: "",
       discount_percentage: 0,
       colors: Array.isArray(item.colors) ? item.colors.join(", ") : "",
       sizes: sizes.join(", "),
@@ -1821,6 +1956,8 @@ export function AdminDashboard() {
             : normalizeProductAudience(undefined, category),
           authenticity: "original",
           stock: 0,
+          sold_out: false,
+          sold_out_sizes: [],
           discount_percentage: 0,
           material: null,
           care_instructions: null,
@@ -2601,6 +2738,277 @@ export function AdminDashboard() {
     }
   };
 
+  const getCommissionFromProduct = (product: Product) => {
+    if (typeof product.commission_percentage === "number") {
+      return product.commission_percentage;
+    }
+    if (!product.cost_price || product.cost_price <= 0) return 0;
+    return Number(
+      (((product.price - product.cost_price) / product.cost_price) * 100).toFixed(2)
+    );
+  };
+
+  const getUnitCostFromProduct = (product: Product, salePrice?: number) => {
+    const commission = Math.max(0, getCommissionFromProduct(product));
+    const effectiveSalePrice = Math.max(
+      0,
+      Number(typeof salePrice === "number" ? salePrice : product.price || 0)
+    );
+
+    if (commission > 0) {
+      return Number((effectiveSalePrice * (1 - commission / 100)).toFixed(2));
+    }
+
+    return Math.max(0, Number(product.cost_price || 0));
+  };
+
+  const getUnitProfitFromProduct = (product: Product, salePrice?: number) => {
+    const effectiveSalePrice = Math.max(
+      0,
+      Number(typeof salePrice === "number" ? salePrice : product.price || 0)
+    );
+    const effectiveCost = getUnitCostFromProduct(product, effectiveSalePrice);
+    return effectiveSalePrice - effectiveCost;
+  };
+  const isProductSoldOut = (product: Product) => Boolean(product.sold_out);
+  const getSoldOutSizes = (product: Product) =>
+    Array.isArray(product.sold_out_sizes) ? product.sold_out_sizes : [];
+
+  const updateProductSoldOut = async (productId: string, soldOut: boolean) => {
+    try {
+      await updateDoc(doc(db, "products", productId), {
+        sold_out: soldOut,
+      });
+    } catch (error) {
+      console.error("Error updating sold out status:", error);
+      alert("Failed to update sold out status");
+    }
+  };
+
+  const updateProductSoldOutSizes = async (
+    productId: string,
+    soldOutSizesRaw: string
+  ) => {
+    try {
+      const soldOutSizes = parseCommaSeparatedValues(soldOutSizesRaw).filter(
+        (value, index, all) =>
+          all.findIndex((candidate) => candidate.toLowerCase() === value.toLowerCase()) ===
+          index
+      );
+      await updateDoc(doc(db, "products", productId), {
+        sold_out_sizes: soldOutSizes,
+      });
+    } catch (error) {
+      console.error("Error updating sold out sizes:", error);
+      alert("Failed to update sold out sizes");
+    }
+  };
+
+  const updateProductCommission = async (
+    productId: string,
+    commissionPercentage: number
+  ) => {
+    try {
+      const product = products.find((p) => p.id === productId);
+      if (!product) return;
+
+      const safeCommission = Math.max(0, Number(commissionPercentage || 0));
+      const costPrice = Math.max(0, Number(product.cost_price || 0));
+      const existingBasePrice = Math.max(
+        0,
+        Number(product.original_price ?? product.price ?? 0)
+      );
+      const basePrice =
+        costPrice > 0
+          ? Number((costPrice * (1 + safeCommission / 100)).toFixed(2))
+          : existingBasePrice;
+      const activeDiscount = Math.max(0, Number(product.discount_percentage || 0));
+      const finalPrice =
+        activeDiscount > 0
+          ? Number((basePrice * (1 - activeDiscount / 100)).toFixed(2))
+          : basePrice;
+
+      await updateDoc(doc(db, "products", productId), {
+        commission_percentage: safeCommission,
+        original_price: basePrice,
+        price: finalPrice,
+      });
+    } catch (error) {
+      console.error("Error updating commission:", error);
+      alert("Failed to update commission");
+    }
+  };
+
+  const applyCommissionToCategory = async () => {
+    if (bulkCommissionCategory === "all") {
+      alert("Select a target first.");
+      return;
+    }
+
+    const isSupplementTarget = bulkCommissionCategory === "__supplements__";
+    const supplementPattern =
+      /\b(supplement|protein|whey|creatine|amino|bcaa|eaa|vitamin|mass|gainer|collagen|omega|pre[\s-]?workout|electrolyte|fat[\s-]?burner|testosterone|glutamin|citrulline|carbs)\b/i;
+    const targets = products.filter((product) => {
+      if (isSupplementTarget) {
+        return supplementPattern.test(
+          `${product.category || ""} ${product.subcategory || ""} ${
+            product.product_type || ""
+          } ${product.name || ""}`
+        );
+      }
+      return String(product.category || "").trim() === bulkCommissionCategory;
+    });
+    if (targets.length === 0) {
+      alert("No products found in this category.");
+      return;
+    }
+
+    const safeCommission = Math.max(0, Number(bulkCommissionPercentage || 0));
+    const shouldProceed = window.confirm(
+      `Apply ${safeCommission}% commission to ${targets.length} product${
+        targets.length === 1 ? "" : "s"
+      } in ${isSupplementTarget ? "All Supplements" : bulkCommissionCategory}?`
+    );
+    if (!shouldProceed) return;
+
+    try {
+      setApplyingBulkCommission(true);
+      let batch = writeBatch(db);
+      let operations = 0;
+
+      for (const product of targets) {
+        const costPrice = Math.max(0, Number(product.cost_price || 0));
+        const existingBasePrice = Math.max(
+          0,
+          Number(product.original_price ?? product.price ?? 0)
+        );
+        const basePrice =
+          costPrice > 0
+            ? Number((costPrice * (1 + safeCommission / 100)).toFixed(2))
+            : existingBasePrice;
+        const activeDiscount = Math.max(0, Number(product.discount_percentage || 0));
+        const finalPrice =
+          activeDiscount > 0
+            ? Number((basePrice * (1 - activeDiscount / 100)).toFixed(2))
+            : basePrice;
+
+        batch.update(doc(db, "products", product.id), {
+          commission_percentage: safeCommission,
+          original_price: basePrice,
+          price: finalPrice,
+        });
+        operations += 1;
+
+        if (operations >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          operations = 0;
+        }
+      }
+
+      if (operations > 0) {
+        await batch.commit();
+      }
+
+      alert(`Commission updated for ${targets.length} product${targets.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      console.error("Error applying bulk commission:", error);
+      alert("Failed to apply bulk commission.");
+    } finally {
+      setApplyingBulkCommission(false);
+    }
+  };
+
+  const applyCommissionBySourceUrl = async () => {
+    const normalized = sourceCommissionUrl.trim();
+    if (!normalized) {
+      alert("Paste a source website link first.");
+      return;
+    }
+
+    let sourceHost = "";
+    try {
+      sourceHost = new URL(normalized).hostname.toLowerCase();
+    } catch {
+      alert("Please enter a valid website URL.");
+      return;
+    }
+
+    const safeCommission = Math.max(0, Number(sourceCommissionPercentage || 0));
+    const targets = products.filter((product) => {
+      const sourceUrl = String(product.source_url || "").trim();
+      if (!sourceUrl) return false;
+      try {
+        return new URL(sourceUrl).hostname.toLowerCase() === sourceHost;
+      } catch {
+        return false;
+      }
+    });
+
+    if (targets.length === 0) {
+      alert(`No imported products found for ${sourceHost}.`);
+      return;
+    }
+
+    const shouldProceed = window.confirm(
+      `Apply ${safeCommission}% commission to ${targets.length} product${
+        targets.length === 1 ? "" : "s"
+      } from ${sourceHost}?`
+    );
+    if (!shouldProceed) return;
+
+    try {
+      setApplyingSourceCommission(true);
+      let batch = writeBatch(db);
+      let operations = 0;
+
+      for (const product of targets) {
+        const costPrice = Math.max(0, Number(product.cost_price || 0));
+        const existingBasePrice = Math.max(
+          0,
+          Number(product.original_price ?? product.price ?? 0)
+        );
+        const basePrice =
+          costPrice > 0
+            ? Number((costPrice * (1 + safeCommission / 100)).toFixed(2))
+            : existingBasePrice;
+        const activeDiscount = Math.max(0, Number(product.discount_percentage || 0));
+        const finalPrice =
+          activeDiscount > 0
+            ? Number((basePrice * (1 - activeDiscount / 100)).toFixed(2))
+            : basePrice;
+
+        batch.update(doc(db, "products", product.id), {
+          commission_percentage: safeCommission,
+          original_price: basePrice,
+          price: finalPrice,
+        });
+        operations += 1;
+
+        if (operations >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          operations = 0;
+        }
+      }
+
+      if (operations > 0) {
+        await batch.commit();
+      }
+
+      alert(
+        `Commission updated for ${targets.length} product${
+          targets.length === 1 ? "" : "s"
+        } from ${sourceHost}.`
+      );
+    } catch (error) {
+      console.error("Error applying source commission:", error);
+      alert("Failed to apply commission by source.");
+    } finally {
+      setApplyingSourceCommission(false);
+    }
+  };
+
   const clearActiveSaleDiscounts = async () => {
     const discountedSnapshot = await getDocs(
       query(collection(db, "products"), where("discount_percentage", ">", 0))
@@ -2906,9 +3314,7 @@ export function AdminDashboard() {
       .map((entry, index) => ({
         id: entry.id || `menu-${index + 1}`,
         label: entry.label.trim(),
-        path: entry.path.trim().startsWith("/")
-          ? entry.path.trim()
-          : `/${entry.path.trim()}`,
+        path: normalizeHomepageShopPath(entry.path),
         special: Boolean(entry.special),
       }))
       .filter((entry) => entry.label && entry.path);
@@ -3256,29 +3662,74 @@ export function AdminDashboard() {
     a.click();
   };
 
-  const filteredProducts = products.filter((product) => {
-    const tagsText = Array.isArray(product.tags) ? product.tags.join(" ") : "";
-    const matchesSearch =
-      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      String(product.subcategory || "")
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase()) ||
-      String(product.product_type || "")
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase()) ||
-      String(product.brand || "")
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase()) ||
-      String(product.sku || "")
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase()) ||
-      tagsText.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.id.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory =
-      selectedCategory === "all" || product.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
+  const deferredProductSearch = useDeferredValue(searchTerm.trim().toLowerCase());
+  const searchableProducts = useMemo(
+    () =>
+      products.map((product) => {
+        const tagsText = Array.isArray(product.tags) ? product.tags.join(" ") : "";
+        return {
+          product,
+          categoryKey: String(product.category || "").trim(),
+          searchBlob: [
+            product.name,
+            product.category,
+            product.subcategory,
+            product.product_type,
+            product.brand,
+            product.sku,
+            tagsText,
+            product.id,
+          ]
+            .map((value) => String(value || "").toLowerCase())
+            .join(" "),
+        };
+      }),
+    [products]
+  );
+  const filteredProducts = useMemo(() => {
+    return searchableProducts
+      .filter(({ product, categoryKey, searchBlob }) => {
+        const matchesSearch =
+          deferredProductSearch.length === 0 ||
+          searchBlob.includes(deferredProductSearch);
+        const matchesCategory =
+          selectedCategory === "all" ||
+          categoryKey === selectedCategory ||
+          product.category === selectedCategory;
+        return matchesSearch && matchesCategory;
+      })
+      .map(({ product }) => product);
+  }, [deferredProductSearch, searchableProducts, selectedCategory]);
+  const visibleProducts = useMemo(
+    () => filteredProducts.slice(0, visibleProductCount),
+    [filteredProducts, visibleProductCount]
+  );
+  const hasMoreProducts = visibleProductCount < filteredProducts.length;
+  useEffect(() => {
+    setVisibleProductCount(24);
+  }, [deferredProductSearch, selectedCategory]);
+  useEffect(() => {
+    if (!showProductModal) return;
+
+    if (productForm.category) {
+      setOpenCategoryTreeNodes((prev) =>
+        prev.includes(productForm.category) ? prev : [...prev, productForm.category]
+      );
+    }
+
+    if (productForm.category && productForm.subcategory) {
+      const subcategoryKey = `${productForm.category}::${productForm.subcategory}`;
+      setOpenSubcategoryTreeNodes((prev) =>
+        prev.includes(subcategoryKey) ? prev : [...prev, subcategoryKey]
+      );
+    }
+  }, [
+    productForm.category,
+    productForm.subcategory,
+    showProductModal,
+    setOpenCategoryTreeNodes,
+    setOpenSubcategoryTreeNodes,
+  ]);
 
   const searchedOrders = orders.filter((order) => {
     return (
@@ -3504,6 +3955,30 @@ export function AdminDashboard() {
     ])
   ).sort((a, b) => a.localeCompare(b));
   const autoGeneratedSku = buildAutoSku(productForm.category, productForm.name);
+  const commissionPercentage = Math.max(
+    0,
+    Number(productForm.commission_percentage || 0)
+  );
+  const manualRetailPrice = Math.max(0, Number(productForm.price || 0));
+  const manualOriginalPrice = Math.max(
+    manualRetailPrice,
+    Number(productForm.original_price || productForm.price || 0)
+  );
+  const commissionSuggestedPrice = Number(
+    (
+      Math.max(0, Number(productForm.cost_price || 0)) *
+      (1 + commissionPercentage / 100)
+    ).toFixed(2)
+  );
+  const commissionBasedProfit = Number(
+    (manualRetailPrice * (commissionPercentage / 100)).toFixed(2)
+  );
+  const formUnitProfit =
+    commissionPercentage > 0
+      ? commissionBasedProfit
+      : manualRetailPrice - Math.max(0, Number(productForm.cost_price || 0));
+  const formProfitMargin =
+    manualRetailPrice > 0 ? (formUnitProfit / manualRetailPrice) * 100 : 0;
   const productDetailProfile = isSupplementProduct
     ? "Supplements"
     : isFootwearProduct
@@ -3898,9 +4373,42 @@ export function AdminDashboard() {
         {activeTab === "products" && (
           <div className="space-y-6">
             {/* Filters & Actions */}
-            <div className="bg-white p-4 rounded-xl shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 flex-1 w-full">
-                <div className="relative flex-1 w-full lg:max-w-md">
+            <div className="bg-white border border-gray-200 p-4 rounded-xl shadow-sm space-y-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Product Catalog</h2>
+                  <p className="text-sm text-gray-500">
+                    Showing {Math.min(visibleProducts.length, filteredProducts.length)} of{" "}
+                    {filteredProducts.length} matching products
+                    {selectedCategory !== "all" ? ` in ${selectedCategory}` : ""}.
+                  </p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+                  <button
+                    onClick={normalizeMartialArtsProducts}
+                    disabled={isNormalizingMartialArts}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-60"
+                  >
+                    <RefreshCw
+                      size={18}
+                      className={isNormalizingMartialArts ? "animate-spin" : ""}
+                    />
+                    {isNormalizingMartialArts
+                      ? "Fixing Martial Arts..."
+                      : "Fix Martial Arts Tabs"}
+                  </button>
+                  <button
+                    onClick={() => exportData(filteredProducts, "products.csv")}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gray-200 text-black px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
+                  >
+                    <Download size={20} />
+                    Export
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
+                <div className="relative flex-1 w-full">
                   <Search
                     className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
                     size={20}
@@ -3925,31 +4433,19 @@ export function AdminDashboard() {
                     </option>
                   ))}
                 </select>
-              </div>
-              <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
                 <button
-                  onClick={normalizeMartialArtsProducts}
-                  disabled={isNormalizingMartialArts}
-                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60"
+                  onClick={() => {
+                    setSearchTerm("");
+                    setSelectedCategory("all");
+                  }}
+                  className="w-full sm:w-auto px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
-                  <RefreshCw
-                    size={18}
-                    className={isNormalizingMartialArts ? "animate-spin" : ""}
-                  />
-                  {isNormalizingMartialArts
-                    ? "Fixing Martial Arts..."
-                    : "Fix Martial Arts Tabs"}
-                </button>
-                <button
-                  onClick={() => exportData(filteredProducts, "products.csv")}
-                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gray-200 text-black px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
-                >
-                  <Download size={20} />
-                  Export
+                  Clear
                 </button>
               </div>
             </div>
-            <div className="bg-white p-4 rounded-xl shadow-sm">
+
+            <div className="bg-white border border-gray-200 p-4 rounded-xl shadow-sm">
               <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-3">
                 Quick Add By Sport
               </p>
@@ -3958,7 +4454,7 @@ export function AdminDashboard() {
                   <button
                     key={preset.id}
                     onClick={() => openProductModalWithPreset(preset)}
-                    className="flex items-center justify-center gap-2 bg-black text-white px-3 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm"
+                    className="flex items-center justify-center gap-2 bg-gray-900 text-white px-3 py-2 rounded-lg hover:bg-black transition-colors text-sm"
                   >
                     <Plus size={14} />
                     {preset.label}
@@ -3967,14 +4463,87 @@ export function AdminDashboard() {
               </div>
             </div>
 
+            <div className="bg-white border border-gray-200 p-4 rounded-xl shadow-sm space-y-5">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-3">
+                  Bulk Commission Target
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3">
+                  <select
+                    value={bulkCommissionCategory}
+                    onChange={(e) => setBulkCommissionCategory(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                  >
+                    <option value="all">Select target...</option>
+                    <option value="__supplements__">All Supplements</option>
+                    {categories.map((cat) => (
+                      <option key={`bulk-${cat}`} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={bulkCommissionPercentage}
+                    onChange={(e) =>
+                      setBulkCommissionPercentage(Number(e.target.value))
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    placeholder="Commission %"
+                  />
+                  <button
+                    onClick={applyCommissionToCategory}
+                    disabled={applyingBulkCommission || bulkCommissionCategory === "all"}
+                    className="px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-60"
+                  >
+                    {applyingBulkCommission ? "Applying..." : "Apply"}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-3">
+                  Commission By Website Link
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3">
+                  <input
+                    type="url"
+                    value={sourceCommissionUrl}
+                    onChange={(e) => setSourceCommissionUrl(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    placeholder="https://example.com/collection"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={sourceCommissionPercentage}
+                    onChange={(e) =>
+                      setSourceCommissionPercentage(Number(e.target.value))
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    placeholder="Commission %"
+                  />
+                  <button
+                    onClick={applyCommissionBySourceUrl}
+                    disabled={applyingSourceCommission || !sourceCommissionUrl.trim()}
+                    className="px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-60"
+                  >
+                    {applyingSourceCommission ? "Applying..." : "Apply"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {/* Products Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredProducts.map((product) => {
-                const profit = product.price - product.cost_price;
-                const profitMargin = (
-                  ((product.price - product.cost_price) / product.price) *
-                  100
-                ).toFixed(1);
+              {visibleProducts.map((product) => {
+                const displayCost = getUnitCostFromProduct(product);
+                const profit = getUnitProfitFromProduct(product);
+                const profitMargin =
+                  product.price > 0 ? ((profit / product.price) * 100).toFixed(1) : "0.0";
 
                 return (
                   <div
@@ -3985,9 +4554,16 @@ export function AdminDashboard() {
                       <img
                         src={product.image_url}
                         alt={product.name}
+                        loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-cover"
                       />
                       <div className="absolute top-2 right-2 flex gap-2">
+                        {isProductSoldOut(product) && (
+                          <span className="bg-red-600 text-white px-2 py-1 rounded text-xs font-semibold">
+                            Sold Out
+                          </span>
+                        )}
                         {product.is_featured && (
                           <span className="bg-yellow-500 text-white px-2 py-1 rounded text-xs flex items-center gap-1">
                             <Star size={12} fill="white" />
@@ -4050,7 +4626,23 @@ export function AdminDashboard() {
                         <div className="flex justify-between items-center mb-2">
                           <span className="text-gray-600">Cost Price:</span>
                           <span className="text-gray-700">
-                            ${product.cost_price?.toFixed(2)}
+                            ${displayCost.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="text-gray-600">Commission:</span>
+                          <span className="text-gray-700">
+                            {getCommissionFromProduct(product).toFixed(2)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="text-gray-600">Availability:</span>
+                          <span
+                            className={`font-medium ${
+                              isProductSoldOut(product) ? "text-red-600" : "text-green-700"
+                            }`}
+                          >
+                            {isProductSoldOut(product) ? "Sold Out" : "In Stock"}
                           </span>
                         </div>
                         <div className="flex justify-between items-center border-t pt-2">
@@ -4103,6 +4695,18 @@ export function AdminDashboard() {
                             New
                           </button>
                         </div>
+                        <button
+                          onClick={() =>
+                            updateProductSoldOut(product.id, !isProductSoldOut(product))
+                          }
+                          className={`w-full px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                            isProductSoldOut(product)
+                              ? "bg-red-100 text-red-800 hover:bg-red-200"
+                              : "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+                          }`}
+                        >
+                          {isProductSoldOut(product) ? "Mark In Stock" : "Mark Sold Out"}
+                        </button>
 
                         {/* Sale Controls */}
                         <div>
@@ -4140,12 +4744,98 @@ export function AdminDashboard() {
                             </button>
                           </div>
                         </div>
+                        <div>
+                          <label className="text-xs text-gray-600 block mb-2">
+                            Commission %:
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              defaultValue={getCommissionFromProduct(product)}
+                              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  updateProductCommission(
+                                    product.id,
+                                    Number((e.target as HTMLInputElement).value)
+                                  );
+                                }
+                              }}
+                            />
+                            <button
+                              onClick={(e) => {
+                                const input = e.currentTarget
+                                  .previousElementSibling as HTMLInputElement;
+                                updateProductCommission(
+                                  product.id,
+                                  Number(input.value)
+                                );
+                              }}
+                              className="px-4 py-2 bg-black text-white rounded-lg text-sm hover:bg-gray-800"
+                              title="Apply commission"
+                            >
+                              <Percent size={16} />
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-600 block mb-2">
+                            Sold Out Sizes (comma separated):
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              defaultValue={getSoldOutSizes(product).join(", ")}
+                              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                              placeholder="M, L, 12oz, 30 Servings"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  updateProductSoldOutSizes(
+                                    product.id,
+                                    (e.target as HTMLInputElement).value
+                                  );
+                                }
+                              }}
+                            />
+                            <button
+                              onClick={(e) => {
+                                const input = e.currentTarget
+                                  .previousElementSibling as HTMLInputElement;
+                                updateProductSoldOutSizes(product.id, input.value);
+                              }}
+                              className="px-4 py-2 bg-black text-white rounded-lg text-sm hover:bg-gray-800"
+                              title="Apply sold out sizes"
+                            >
+                              <Save size={16} />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
                 );
               })}
             </div>
+            {filteredProducts.length === 0 && (
+              <div className="bg-white border border-gray-200 rounded-xl p-10 text-center">
+                <p className="text-gray-900 font-medium">No products match this filter.</p>
+                <p className="text-sm text-gray-500 mt-1">
+                  Try a broader search term or switch to all categories.
+                </p>
+              </div>
+            )}
+            {hasMoreProducts && (
+              <div className="flex justify-center">
+                <button
+                  onClick={() => setVisibleProductCount((prev) => prev + 24)}
+                  className="px-5 py-2.5 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 transition-colors"
+                >
+                  Load 24 More ({filteredProducts.length - visibleProducts.length} remaining)
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -4619,8 +5309,8 @@ export function AdminDashboard() {
               <div className="mb-5">
                 <p className="text-sm font-medium mb-2">Home Categories</p>
                 <p className="text-xs text-gray-500 mb-3">
-                  Slug should match your category route (example: `padel`,
-                  `running`, `tennis`).
+                  Use a category slug (example: `football`, `gym`,
+                  `martial-arts`). Home cards now open filtered Shop results.
                 </p>
 
                 <div className="space-y-3">
@@ -4644,7 +5334,7 @@ export function AdminDashboard() {
                         onChange={(e) =>
                           updateHomeCategory(index, "slug", e.target.value)
                         }
-                        placeholder="Slug (e.g. padel)"
+                        placeholder="Slug (e.g. football)"
                         className="px-3 py-2 border border-gray-300 rounded-lg"
                       />
                       <input
@@ -4701,7 +5391,7 @@ export function AdminDashboard() {
                 <p className="text-xs text-gray-500 mb-3">
                   Manage the SHOP dropdown links. You can add, remove, and reorder
                   exactly how you want. Examples for path: `/new-arrivals`,
-                  `/collections`, `/sale`, or `/category/padel`.
+                  `/collections`, `/sale`, or `/shop?category=Football`.
                 </p>
 
                 <div className="space-y-3">
@@ -4725,7 +5415,7 @@ export function AdminDashboard() {
                         onChange={(e) =>
                           updateShopMenuItem(index, "path", e.target.value)
                         }
-                        placeholder="Path (e.g. /category/padel)"
+                        placeholder="Path (e.g. /shop?category=Football)"
                         className="px-3 py-2 border border-gray-300 rounded-lg"
                       />
                       <label className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg">
@@ -5730,174 +6420,288 @@ export function AdminDashboard() {
                       Category Tree
                     </p>
                     <p className="text-sm text-gray-700">
-                      Click a node to auto-fill category, subcategory, and product
-                      type.
+                      Expand by category and subcategory. Click any node to use it,
+                      or use quick add buttons to build a new path.
                     </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenCategoryTreeNodes(categoryTree.map((node) => node.category))
+                      }
+                      className="text-xs px-2.5 py-1 rounded-full border border-gray-300 text-gray-700 hover:border-black hover:text-black"
+                    >
+                      Expand All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenCategoryTreeNodes([]);
+                        setOpenSubcategoryTreeNodes([]);
+                      }}
+                      className="text-xs px-2.5 py-1 rounded-full border border-gray-300 text-gray-700 hover:border-black hover:text-black"
+                    >
+                      Collapse All
+                    </button>
                   </div>
                 </div>
 
-                <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
-                  {categoryTree.map((categoryNode) => {
-                    const isSelectedCategory =
-                      productForm.category === categoryNode.category;
+                <div className="max-h-80 overflow-y-auto rounded-lg border border-gray-200 bg-white p-3">
+                  <ul className="space-y-2">
+                    {categoryTree.map((categoryNode) => {
+                      const isSelectedCategory =
+                        productForm.category === categoryNode.category;
+                      const isCategoryOpen =
+                        isSelectedCategory ||
+                        openCategoryTreeNodes.includes(categoryNode.category);
+                      const categoryTypeCount =
+                        categoryNode.directTypes.length +
+                        categoryNode.subcategories.reduce(
+                          (sum, subcategoryNode) => sum + subcategoryNode.types.length,
+                          0
+                        );
 
-                    return (
-                      <details
-                        key={categoryNode.category}
-                        open={isSelectedCategory}
-                        className="rounded-lg border border-gray-200 bg-white"
-                      >
-                        <summary className="list-none cursor-pointer px-3 py-2.5 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <ChevronDown
-                              size={15}
-                              className="text-gray-500 details-chevron"
-                            />
-                            <span
-                              className={`text-sm font-medium ${
-                                isSelectedCategory ? "text-black" : "text-gray-700"
-                              }`}
-                            >
-                              {categoryNode.category}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              setProductForm((prev) => ({
-                                ...prev,
-                                category: categoryNode.category,
-                                subcategory: "",
-                                product_type: "",
-                              }));
-                            }}
-                            className={`text-xs px-2.5 py-1 rounded-full border ${
+                      return (
+                        <li key={categoryNode.category}>
+                          <div
+                            className={`rounded-md border px-2.5 py-2 ${
                               isSelectedCategory
-                                ? "border-black text-black"
-                                : "border-gray-300 text-gray-600 hover:border-black hover:text-black"
+                                ? "border-black bg-gray-50"
+                                : "border-gray-200"
                             }`}
                           >
-                            Use Category
-                          </button>
-                        </summary>
-
-                        <div className="px-3 pb-3 space-y-2">
-                          {categoryNode.subcategories.map((subcategoryNode) => {
-                            const isSelectedSubcategory =
-                              isSelectedCategory &&
-                              productForm.subcategory === subcategoryNode.name;
-
-                            return (
-                              <div
-                                key={`${categoryNode.category}-${subcategoryNode.name}`}
-                                className="rounded-md border border-gray-200 p-2"
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setOpenCategoryTreeNodes((prev) =>
+                                    prev.includes(categoryNode.category)
+                                      ? prev.filter((node) => node !== categoryNode.category)
+                                      : [...prev, categoryNode.category]
+                                  )
+                                }
+                                className="p-1 rounded hover:bg-gray-100"
+                                aria-label={
+                                  isCategoryOpen
+                                    ? `Collapse ${categoryNode.category}`
+                                    : `Expand ${categoryNode.category}`
+                                }
                               >
-                                <div className="flex items-center justify-between gap-2">
-                                  <span
-                                    className={`text-sm ${
-                                      isSelectedSubcategory
-                                        ? "text-black font-medium"
-                                        : "text-gray-700"
-                                    }`}
-                                  >
-                                    {subcategoryNode.name}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setProductForm((prev) => ({
-                                        ...prev,
-                                        category: categoryNode.category,
-                                        subcategory: subcategoryNode.name,
-                                      }))
-                                    }
-                                    className={`text-xs px-2 py-1 rounded-full border ${
-                                      isSelectedSubcategory
-                                        ? "border-black text-black"
-                                        : "border-gray-300 text-gray-600 hover:border-black hover:text-black"
-                                    }`}
-                                  >
-                                    Use Subcategory
-                                  </button>
-                                </div>
-
-                                {subcategoryNode.types.length > 0 && (
-                                  <div className="mt-2 flex flex-wrap gap-1.5">
-                                    {subcategoryNode.types.map((productType) => {
-                                      const isSelectedType =
-                                        isSelectedSubcategory &&
-                                        productForm.product_type === productType;
-                                      return (
-                                        <button
-                                          type="button"
-                                          key={`${subcategoryNode.name}-${productType}`}
-                                          onClick={() =>
-                                            setProductForm((prev) => ({
-                                              ...prev,
-                                              category: categoryNode.category,
-                                              subcategory: subcategoryNode.name,
-                                              product_type: productType,
-                                            }))
-                                          }
-                                          className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-                                            isSelectedType
-                                              ? "bg-black text-white border-black"
-                                              : "bg-white text-gray-700 border-gray-300 hover:border-black hover:text-black"
-                                          }`}
-                                        >
-                                          {productType}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
+                                {isCategoryOpen ? (
+                                  <ChevronDown size={14} className="text-gray-600" />
+                                ) : (
+                                  <ChevronRight size={14} className="text-gray-600" />
                                 )}
-                              </div>
-                            );
-                          })}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setProductForm((prev) => ({
+                                    ...prev,
+                                    category: categoryNode.category,
+                                    subcategory: "",
+                                    product_type: "",
+                                  }))
+                                }
+                                className={`text-sm font-medium ${
+                                  isSelectedCategory
+                                    ? "text-black"
+                                    : "text-gray-800 hover:text-black"
+                                }`}
+                              >
+                                {categoryNode.category}
+                              </button>
+                              <span className="ml-auto text-[11px] text-gray-500">
+                                {categoryNode.subcategories.length} sub • {categoryTypeCount} types
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setProductForm((prev) => ({
+                                    ...prev,
+                                    category: categoryNode.category,
+                                    subcategory: "",
+                                    product_type: "",
+                                  }))
+                                }
+                                className="text-xs px-2 py-1 rounded-full border border-gray-300 text-gray-700 hover:border-black hover:text-black"
+                                title="Add a subcategory under this category"
+                              >
+                                + Sub
+                              </button>
+                            </div>
 
-                          {categoryNode.directTypes.length > 0 && (
-                            <div className="rounded-md border border-dashed border-gray-200 p-2">
-                              <p className="text-[11px] uppercase tracking-[0.12em] text-gray-500 mb-2">
-                                Types (No Subcategory)
-                              </p>
-                              <div className="flex flex-wrap gap-1.5">
-                                {categoryNode.directTypes.map((productType) => {
-                                  const isSelectedType =
+                            {isCategoryOpen && (
+                              <ul className="mt-2 ml-3 pl-3 border-l border-gray-200 space-y-2">
+                                {categoryNode.subcategories.map((subcategoryNode) => {
+                                  const subcategoryKey = `${categoryNode.category}::${subcategoryNode.name}`;
+                                  const isSelectedSubcategory =
                                     isSelectedCategory &&
-                                    !productForm.subcategory &&
-                                    productForm.product_type === productType;
+                                    productForm.subcategory === subcategoryNode.name;
+                                  const isSubcategoryOpen =
+                                    isSelectedSubcategory ||
+                                    openSubcategoryTreeNodes.includes(subcategoryKey);
+
                                   return (
-                                    <button
-                                      type="button"
-                                      key={`${categoryNode.category}-${productType}`}
-                                      onClick={() =>
-                                        setProductForm((prev) => ({
-                                          ...prev,
-                                          category: categoryNode.category,
-                                          subcategory: "",
-                                          product_type: productType,
-                                        }))
-                                      }
-                                      className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-                                        isSelectedType
-                                          ? "bg-black text-white border-black"
-                                          : "bg-white text-gray-700 border-gray-300 hover:border-black hover:text-black"
-                                      }`}
-                                    >
-                                      {productType}
-                                    </button>
+                                    <li key={subcategoryKey}>
+                                      <div
+                                        className={`rounded-md border px-2 py-1.5 ${
+                                          isSelectedSubcategory
+                                            ? "border-black bg-gray-50"
+                                            : "border-gray-200"
+                                        }`}
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setOpenSubcategoryTreeNodes((prev) =>
+                                                prev.includes(subcategoryKey)
+                                                  ? prev.filter((node) => node !== subcategoryKey)
+                                                  : [...prev, subcategoryKey]
+                                              )
+                                            }
+                                            className="p-1 rounded hover:bg-gray-100"
+                                            aria-label={
+                                              isSubcategoryOpen
+                                                ? `Collapse ${subcategoryNode.name}`
+                                                : `Expand ${subcategoryNode.name}`
+                                            }
+                                          >
+                                            {isSubcategoryOpen ? (
+                                              <ChevronDown size={13} className="text-gray-600" />
+                                            ) : (
+                                              <ChevronRight size={13} className="text-gray-600" />
+                                            )}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setProductForm((prev) => ({
+                                                ...prev,
+                                                category: categoryNode.category,
+                                                subcategory: subcategoryNode.name,
+                                                product_type: "",
+                                              }))
+                                            }
+                                            className={`text-sm ${
+                                              isSelectedSubcategory
+                                                ? "font-medium text-black"
+                                                : "text-gray-700 hover:text-black"
+                                            }`}
+                                          >
+                                            {subcategoryNode.name}
+                                          </button>
+                                          <span className="ml-auto text-[11px] text-gray-500">
+                                            {subcategoryNode.types.length} types
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setProductForm((prev) => ({
+                                                ...prev,
+                                                category: categoryNode.category,
+                                                subcategory: subcategoryNode.name,
+                                                product_type: "",
+                                              }))
+                                            }
+                                            className="text-xs px-2 py-1 rounded-full border border-gray-300 text-gray-700 hover:border-black hover:text-black"
+                                            title="Add a type under this subcategory"
+                                          >
+                                            + Type
+                                          </button>
+                                        </div>
+
+                                        {isSubcategoryOpen &&
+                                          subcategoryNode.types.length > 0 && (
+                                            <ul className="mt-2 ml-3 pl-3 border-l border-gray-200 space-y-1">
+                                              {subcategoryNode.types.map((productType) => {
+                                                const isSelectedType =
+                                                  isSelectedSubcategory &&
+                                                  productForm.product_type === productType;
+                                                return (
+                                                  <li
+                                                    key={`${subcategoryKey}-${productType}`}
+                                                    className="flex items-center justify-between gap-2"
+                                                  >
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        setProductForm((prev) => ({
+                                                          ...prev,
+                                                          category: categoryNode.category,
+                                                          subcategory: subcategoryNode.name,
+                                                          product_type: productType,
+                                                        }))
+                                                      }
+                                                      className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                                                        isSelectedType
+                                                          ? "bg-black text-white border-black"
+                                                          : "bg-white text-gray-700 border-gray-300 hover:border-black hover:text-black"
+                                                      }`}
+                                                    >
+                                                      {productType}
+                                                    </button>
+                                                  </li>
+                                                );
+                                              })}
+                                            </ul>
+                                          )}
+                                      </div>
+                                    </li>
                                   );
                                 })}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </details>
-                    );
-                  })}
+
+                                {categoryNode.directTypes.length > 0 && (
+                                  <li className="rounded-md border border-dashed border-gray-200 p-2">
+                                    <p className="text-[11px] uppercase tracking-[0.12em] text-gray-500 mb-2">
+                                      Types (No Subcategory)
+                                    </p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {categoryNode.directTypes.map((productType) => {
+                                        const isSelectedType =
+                                          isSelectedCategory &&
+                                          !productForm.subcategory &&
+                                          productForm.product_type === productType;
+                                        return (
+                                          <button
+                                            type="button"
+                                            key={`${categoryNode.category}-${productType}`}
+                                            onClick={() =>
+                                              setProductForm((prev) => ({
+                                                ...prev,
+                                                category: categoryNode.category,
+                                                subcategory: "",
+                                                product_type: productType,
+                                              }))
+                                            }
+                                            className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                                              isSelectedType
+                                                ? "bg-black text-white border-black"
+                                                : "bg-white text-gray-700 border-gray-300 hover:border-black hover:text-black"
+                                            }`}
+                                          >
+                                            {productType}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </li>
+                                )}
+                              </ul>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Tip: use <span className="font-medium">+ Sub</span> or{" "}
+                  <span className="font-medium">+ Type</span>, then fill the input
+                  fields above to add a new branch quickly.
+                </p>
               </div>
 
               <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
@@ -5913,24 +6717,6 @@ export function AdminDashboard() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Retail Price ($) *
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={productForm.price}
-                    onChange={(e) =>
-                      setProductForm({
-                        ...productForm,
-                        price: Number(e.target.value),
-                      })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                  />
-                </div>
-
                 <div>
                   <label className="block text-sm font-medium mb-2">
                     Cost Price ($)
@@ -5949,17 +6735,89 @@ export function AdminDashboard() {
                   />
                 </div>
 
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Commission (%)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={productForm.commission_percentage}
+                    onChange={(e) =>
+                      setProductForm({
+                        ...productForm,
+                        commission_percentage: Number(e.target.value),
+                      })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Retail Price ($)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={productForm.price}
+                    onChange={(e) =>
+                      setProductForm({
+                        ...productForm,
+                        price: Number(e.target.value),
+                      })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Original Price ($)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={productForm.original_price}
+                    onChange={(e) =>
+                      setProductForm({
+                        ...productForm,
+                        original_price: Number(e.target.value),
+                      })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">
+                    Commission Suggested Retail (optional)
+                  </span>
+                  <span className="text-xl font-semibold text-gray-900">
+                    ${commissionSuggestedPrice.toFixed(2)}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Current original price: ${manualOriginalPrice.toFixed(2)}
+                </p>
               </div>
 
               {/* Profit Display */}
-              {productForm.price > 0 && productForm.cost_price >= 0 && (
+              {manualRetailPrice > 0 && productForm.cost_price >= 0 && (
                 <div className="bg-green-50 p-4 rounded-lg">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-gray-700 font-medium">
                       Profit per Unit:
                     </span>
                     <span className="text-lg font-bold text-green-600">
-                      ${(productForm.price - productForm.cost_price).toFixed(2)}
+                      ${formUnitProfit.toFixed(2)}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
@@ -5967,11 +6825,7 @@ export function AdminDashboard() {
                       Profit Margin:
                     </span>
                     <span className="text-lg font-bold text-green-600">
-                      {(
-                        ((productForm.price - productForm.cost_price) /
-                          productForm.price) *
-                        100
-                      ).toFixed(1)}
+                      {formProfitMargin.toFixed(1)}
                       %
                     </span>
                   </div>
@@ -5992,24 +6846,6 @@ export function AdminDashboard() {
                       setProductForm({
                         ...productForm,
                         discount_percentage: Number(e.target.value),
-                      })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Original Price (optional)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={productForm.original_price}
-                    onChange={(e) =>
-                      setProductForm({
-                        ...productForm,
-                        original_price: Number(e.target.value),
                       })
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
@@ -6220,6 +7056,40 @@ export function AdminDashboard() {
                 </p>
               </div>
               )}
+
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(productForm.sold_out)}
+                    onChange={(e) =>
+                      setProductForm({ ...productForm, sold_out: e.target.checked })
+                    }
+                    className="h-4 w-4"
+                  />
+                  <span className="text-sm font-medium">Mark Entire Product as Sold Out</span>
+                </label>
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Sold Out Sizes / Variants
+                  </label>
+                  <input
+                    type="text"
+                    value={productForm.sold_out_sizes}
+                    onChange={(e) =>
+                      setProductForm({
+                        ...productForm,
+                        sold_out_sizes: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    placeholder="M, L, 12oz, 30 Servings"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Works for clothing sizes, glove ounces, and supplement variants.
+                  </p>
+                </div>
+              </div>
 
               <div>
                 <label className="block text-sm font-medium mb-2">

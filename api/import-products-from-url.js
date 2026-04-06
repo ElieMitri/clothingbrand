@@ -33,6 +33,32 @@ const toArray = (value) => {
   return [value];
 };
 
+const uniqueNonEmpty = (values) =>
+  Array.from(
+    new Set(
+      toArray(values)
+        .map((entry) => normalizeWhitespace(entry))
+        .filter(Boolean)
+    )
+  );
+
+const collectTextSnippets = (value, bucket = []) => {
+  if (!value) return bucket;
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectTextSnippets(entry, bucket));
+    return bucket;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const normalized = normalizeWhitespace(String(value));
+    if (normalized) bucket.push(normalized);
+    return bucket;
+  }
+  if (typeof value !== "object") return bucket;
+
+  Object.values(value).forEach((entry) => collectTextSnippets(entry, bucket));
+  return bucket;
+};
+
 const sanitizeUrl = (candidate, baseUrl) => {
   const raw = String(candidate || "").trim();
   if (!raw) return "";
@@ -72,6 +98,118 @@ const parseJsonLdBlocks = (html) => {
     match = regex.exec(html);
   }
   return blocks;
+};
+
+const readBalancedJsonSlice = (text, startIndex) => {
+  const start = Number(startIndex);
+  const startChar = text[start];
+  if (start < 0 || !["{", "["].includes(startChar)) return "";
+
+  const stack = [startChar];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start + 1; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{" || char === "[") {
+      stack.push(char);
+      continue;
+    }
+    if (char === "}" || char === "]") {
+      const expected = char === "}" ? "{" : "[";
+      if (stack[stack.length - 1] !== expected) return "";
+      stack.pop();
+      if (stack.length === 0) {
+        return text.slice(start, index + 1);
+      }
+    }
+  }
+
+  return "";
+};
+
+const extractJsonCandidatesFromScript = (rawScript) => {
+  const raw = String(rawScript || "").trim();
+  if (!raw) return [];
+
+  const candidates = [raw];
+  const assignmentIndex = raw.indexOf("=");
+  if (assignmentIndex >= 0) {
+    candidates.push(raw.slice(assignmentIndex + 1).replace(/;+\s*$/, "").trim());
+  }
+
+  const firstObjectIndex = raw.search(/[{[]/);
+  if (firstObjectIndex >= 0) {
+    const balanced = readBalancedJsonSlice(raw, firstObjectIndex);
+    if (balanced) candidates.push(balanced);
+  }
+
+  return Array.from(new Set(candidates.filter(Boolean)));
+};
+
+const extractImageUrls = (value, baseUrl, bucket = []) => {
+  if (!value) return bucket;
+
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (!normalized) return bucket;
+
+    if (normalized.includes(",")) {
+      normalized
+        .split(",")
+        .map((entry) => entry.trim().split(/\s+/)[0])
+        .map((entry) => sanitizeUrl(entry, baseUrl))
+        .filter(Boolean)
+        .forEach((entry) => bucket.push(entry));
+      return bucket;
+    }
+
+    const sanitized = sanitizeUrl(normalized, baseUrl);
+    if (sanitized) bucket.push(sanitized);
+    return bucket;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => extractImageUrls(entry, baseUrl, bucket));
+    return bucket;
+  }
+
+  if (typeof value !== "object") return bucket;
+
+  const likelyImageFields = [
+    "url",
+    "src",
+    "srcset",
+    "href",
+    "image",
+    "images",
+    "featured_image",
+    "thumbnail",
+    "secure_url",
+    "contentUrl",
+  ];
+
+  likelyImageFields.forEach((field) => {
+    if (value[field]) extractImageUrls(value[field], baseUrl, bucket);
+  });
+
+  return bucket;
 };
 
 const collectSchemaEntities = (value, bucket = []) => {
@@ -181,11 +319,21 @@ const extractCandidateLinks = (html, baseUrl) => {
 
 const looksLikeProductUrl = (urlString) => {
   const lower = String(urlString || "").toLowerCase();
+  if (!lower) return false;
+  if (/\.(jpg|jpeg|png|webp|gif|svg)(\?|$)/.test(lower)) return false;
+  if (/\/(collections|category|categories|blogs?|about|contact|account|cart|checkout)(\/|$)/.test(lower)) {
+    return false;
+  }
   return (
     /\/product(s)?\//.test(lower) ||
+    /\/shop\//.test(lower) ||
     /\/p\//.test(lower) ||
+    /\/item(s)?\//.test(lower) ||
+    /\/dp\//.test(lower) ||
     lower.includes("sku") ||
-    lower.includes("item")
+    lower.includes("item") ||
+    lower.includes("product_id=") ||
+    lower.includes("variant=")
   );
 };
 
@@ -225,6 +373,64 @@ const buildPaginatedUrls = (sourceUrl, maxPages = MAX_LISTING_PAGES) => {
 const supplementKeywordRegex =
   /\b(supplement|vitamin|whey|protein|creatine|amino|bcaa|eaa|mass|pre[\s-]?workout|fat[\s-]?burner|glutamine|electrolyte|collagen|omega|liver support)\b/i;
 
+const categoryInferenceRules = [
+  { category: "Football", pattern: /\b(football|soccer|cleat|studs|goalkeeper|goalie)\b/i },
+  { category: "Futsal", pattern: /\b(futsal)\b/i },
+  { category: "Basketball", pattern: /\b(basketball|nba)\b/i },
+  { category: "Running", pattern: /\b(running|jogging|marathon|trail[\s-]?run)\b/i },
+  { category: "Boxing", pattern: /\b(boxing|boxe|punching)\b/i },
+  { category: "Muay Thai", pattern: /\b(muay[\s-]?thai|thai[\s-]?boxing)\b/i },
+  { category: "Padel", pattern: /\b(padel)\b/i },
+  { category: "Tennis", pattern: /\b(tennis)\b/i },
+  { category: "Swimming", pattern: /\b(swim|swimming|goggles|swimsuit)\b/i },
+  { category: "Gym", pattern: /\b(gym|crossfit|fitness|training)\b/i },
+];
+
+const productTypeInferenceRules = [
+  { type: "Boots", pattern: /\b(boots|cleat|studs)\b/i },
+  { type: "Jerseys", pattern: /\b(jersey|shirt|kit)\b/i },
+  { type: "Shorts", pattern: /\b(shorts)\b/i },
+  { type: "Balls", pattern: /\b(ball)\b/i },
+  { type: "Goalkeeper Gloves", pattern: /\b(goalkeeper|goalie|keeper)\b/i },
+  { type: "Shin Guards", pattern: /\b(shin[\s-]?guard)\b/i },
+  { type: "Socks", pattern: /\b(socks?)\b/i },
+];
+
+const isGenericCategoryName = (value) => {
+  const slug = normalizeWhitespace(value).toLowerCase();
+  return (
+    !slug ||
+    [
+      "all",
+      "general",
+      "products",
+      "product",
+      "shop",
+      "store",
+      "catalog",
+      "catalogue",
+      "featured",
+      "uncategorized",
+      "misc",
+      "other",
+    ].includes(slug)
+  );
+};
+
+const inferCategoryFromContext = (context) => {
+  const normalized = normalizeWhitespace(context).toLowerCase();
+  if (!normalized) return "";
+  const match = categoryInferenceRules.find((entry) => entry.pattern.test(normalized));
+  return match?.category || "";
+};
+
+const inferProductTypeFromContext = (context) => {
+  const normalized = normalizeWhitespace(context).toLowerCase();
+  if (!normalized) return "";
+  const match = productTypeInferenceRules.find((entry) => entry.pattern.test(normalized));
+  return match?.type || "";
+};
+
 const normalizeImportedCategory = ({
   sourceUrl,
   productType,
@@ -249,12 +455,55 @@ const normalizeImportedCategory = ({
   }
 
   if (supplementKeywordRegex.test(context)) {
-    return "Gym Supplements";
+    return "Gym";
   }
   if (supplementKeywordRegex.test(handle.replace(/-/g, " "))) {
-    return "Gym Supplements";
+    return "Gym";
   }
+
+  const inferred = inferCategoryFromContext(
+    `${context} ${handle.replace(/-/g, " ")} ${sourceUrl}`
+  );
+  if (inferred) return inferred;
+
   return normalizeWhitespace(productType) || "General";
+};
+
+const normalizeImportedTaxonomy = (entry, sourceUrl) => {
+  const title = normalizeWhitespace(entry.name || "");
+  const description = normalizeWhitespace(entry.description || "");
+  const tagBlob = collectTextSnippets(entry.tags || []).join(" ");
+  const urlBlob = normalizeWhitespace(entry.source_url || sourceUrl || "");
+  const contextBlob = `${title} ${description} ${entry.category || ""} ${entry.product_type || ""} ${tagBlob} ${urlBlob}`;
+
+  let category = normalizeWhitespace(entry.category);
+  let productType = normalizeWhitespace(entry.product_type);
+
+  if (supplementKeywordRegex.test(contextBlob)) {
+    category = "Gym";
+  }
+
+  if (isGenericCategoryName(category)) {
+    category = inferCategoryFromContext(contextBlob) || category;
+  }
+
+  if (!productType || isGenericCategoryName(productType)) {
+    productType = inferProductTypeFromContext(contextBlob) || productType;
+  }
+
+  if (!category) {
+    category = normalizeImportedCategory({
+      sourceUrl,
+      productType,
+      title,
+      tags: collectTextSnippets(entry.tags || []),
+    });
+  }
+
+  return {
+    category: normalizeWhitespace(category) || "General",
+    product_type: normalizeWhitespace(productType),
+  };
 };
 
 const collectProductLikeObjects = (value, bucket = []) => {
@@ -299,59 +548,58 @@ const parseProductsFromGenericScriptJson = (html, pageUrl) => {
       continue;
     }
 
-    const startsWithJson =
-      raw.startsWith("{") || raw.startsWith("[") || raw.includes('"props"');
-    if (!startsWithJson) {
-      match = scriptRegex.exec(html);
-      continue;
-    }
+    const jsonCandidates = extractJsonCandidatesFromScript(raw);
+    jsonCandidates.forEach((jsonCandidate) => {
+      try {
+        const parsed = JSON.parse(jsonCandidate);
+        const candidates = collectProductLikeObjects(parsed);
+        candidates.forEach((entry) => {
+          const images = uniqueNonEmpty(extractImageUrls(
+            entry.images || entry.image || entry.featured_image,
+            pageUrl
+          ));
+          const price =
+            parseNumber(entry.price) ||
+            parseNumber(entry.sale_price) ||
+            parseNumber(entry.variants?.[0]?.price) ||
+            parseNumber(entry.price_min) ||
+            0;
+          const originalPrice =
+            parseNumber(entry.compare_at_price) ||
+            parseNumber(entry.variants?.[0]?.compare_at_price) ||
+            parseNumber(entry.price_max) ||
+            price;
+          const handle = normalizeWhitespace(entry.handle);
+          const sourceFromHandle = handle
+            ? sanitizeUrl(`/products/${handle}`, pageUrl)
+            : "";
 
-    try {
-      const parsed = JSON.parse(raw);
-      const candidates = collectProductLikeObjects(parsed);
-      candidates.forEach((entry) => {
-        const images = toArray(entry.images || entry.image || entry.featured_image)
-          .map((url) => sanitizeUrl(url?.src || url, pageUrl))
-          .filter(Boolean);
-        const price =
-          parseNumber(entry.price) ||
-          parseNumber(entry.sale_price) ||
-          parseNumber(entry.variants?.[0]?.price) ||
-          0;
-        const originalPrice =
-          parseNumber(entry.compare_at_price) ||
-          parseNumber(entry.variants?.[0]?.compare_at_price) ||
-          price;
-        const handle = normalizeWhitespace(entry.handle);
-        const sourceFromHandle = handle
-          ? sanitizeUrl(`/products/${handle}`, pageUrl)
-          : "";
-
-        products.push({
-          name: normalizeWhitespace(entry.name || entry.title),
-          description: stripHtml(entry.description || entry.body_html),
-          brand: normalizeWhitespace(entry.vendor || entry.brand),
-          sku: normalizeWhitespace(entry.sku || entry.variants?.[0]?.sku),
-          category: normalizeWhitespace(
-            entry.product_type || entry.type || entry.category
-          ),
-          product_type: normalizeWhitespace(
-            entry.product_type || entry.type || entry.category
-          ),
-          image_url: images[0] || "",
-          images,
-          price,
-          original_price: originalPrice,
-          currency: normalizeWhitespace(
-            entry.currency || entry.priceCurrency || ""
-          ),
-          colors: [],
-          source_url: sanitizeUrl(entry.url, pageUrl) || sourceFromHandle || pageUrl,
+          products.push({
+            name: normalizeWhitespace(entry.name || entry.title),
+            description: stripHtml(entry.description || entry.body_html),
+            brand: normalizeWhitespace(entry.vendor || entry.brand),
+            sku: normalizeWhitespace(entry.sku || entry.variants?.[0]?.sku),
+            category: normalizeWhitespace(
+              entry.product_type || entry.type || entry.category
+            ),
+            product_type: normalizeWhitespace(
+              entry.product_type || entry.type || entry.category
+            ),
+            image_url: images[0] || "",
+            images,
+            price,
+            original_price: originalPrice,
+            currency: normalizeWhitespace(
+              entry.currency || entry.priceCurrency || ""
+            ),
+            colors: uniqueNonEmpty(entry.color || entry.colors || []),
+            source_url: sanitizeUrl(entry.url, pageUrl) || sourceFromHandle || pageUrl,
+          });
         });
-      });
-    } catch {
-      // Not valid JSON; ignore script block.
-    }
+      } catch {
+        // Not valid JSON; ignore this candidate.
+      }
+    });
 
     match = scriptRegex.exec(html);
   }
@@ -368,30 +616,42 @@ const parseProductsFromHtmlCards = (html, pageUrl) => {
   while (match) {
     const href = sanitizeUrl(match[1], pageUrl);
     const block = String(match[2] || "");
-    const imgMatch = block.match(/<img[^>]+src=["']([^"']+)["']/i);
-    const nameMatch =
-      block.match(/<(h2|h3|h4|span)[^>]*>([^<]{3,})<\/\1>/i) ||
-      block.match(/title=["']([^"']{3,})["']/i);
+    const imgMatch =
+      block.match(/<img[^>]+(?:src|data-src|data-original)=["']([^"']+)["']/i) ||
+      block.match(/data-image=["']([^"']+)["']/i);
+    const headingMatch = block.match(/<(h1|h2|h3|h4|span)[^>]*>([^<]{3,})<\/\1>/i);
+    const titleAttrMatch = block.match(/title=["']([^"']{3,})["']/i);
+    const name = normalizeWhitespace(headingMatch?.[2] || titleAttrMatch?.[1] || "");
     const priceMatch = block.match(/([$€£]\s?\d[\d.,]*)|(\d[\d.,]*\s?(USD|EUR|LBP))/i);
+    const dataPriceMatch = block.match(/data-(?:price|amount)=["']([^"']+)["']/i);
 
-    if (!href || !nameMatch || !priceMatch) {
+    if (!href || !name) {
       match = cardRegex.exec(html);
       continue;
     }
 
+    const parsedPrice =
+      parseNumber(priceMatch?.[0]) ||
+      parseNumber(dataPriceMatch?.[1]) ||
+      0;
+    if (parsedPrice <= 0) {
+      match = cardRegex.exec(html);
+      continue;
+    }
+
+    const imageUrl = sanitizeUrl(imgMatch?.[1], pageUrl);
+
     cards.push({
-      name: normalizeWhitespace(nameMatch[2] || nameMatch[1]),
+      name,
       description: "",
       brand: "",
       sku: "",
       category: "",
       product_type: "",
-      image_url: sanitizeUrl(imgMatch?.[1], pageUrl),
-      images: sanitizeUrl(imgMatch?.[1], pageUrl)
-        ? [sanitizeUrl(imgMatch?.[1], pageUrl)]
-        : [],
-      price: parseNumber(priceMatch[0]) || 0,
-      original_price: parseNumber(priceMatch[0]) || 0,
+      image_url: imageUrl,
+      images: imageUrl ? [imageUrl] : [],
+      price: parsedPrice,
+      original_price: parsedPrice,
       currency: "",
       colors: [],
       source_url: href,
@@ -484,14 +744,14 @@ const parseProductsFromHtml = (html, pageUrl) => {
   const directProducts = entities
     .map((entity) => extractProductFromEntity(entity, pageUrl))
     .filter(Boolean);
-
-  if (directProducts.length > 0) return dedupeProducts(directProducts);
-
   const scriptJsonProducts = parseProductsFromGenericScriptJson(html, pageUrl);
-  if (scriptJsonProducts.length > 0) return dedupeProducts(scriptJsonProducts);
-
   const htmlCardProducts = parseProductsFromHtmlCards(html, pageUrl);
-  if (htmlCardProducts.length > 0) return dedupeProducts(htmlCardProducts);
+  const combinedProducts = dedupeProducts([
+    ...directProducts,
+    ...scriptJsonProducts,
+    ...htmlCardProducts,
+  ]);
+  if (combinedProducts.length > 0) return combinedProducts;
 
   const ogTitle = extractMeta(html, "og:title") || extractMeta(html, "twitter:title");
   const ogDescription =
@@ -558,6 +818,38 @@ const ensureSafePublicUrl = (url) => {
   }
 };
 
+const enrichImportedProduct = (entry, sourceUrl) => {
+  const taxonomy = normalizeImportedTaxonomy(entry, sourceUrl);
+  const images = uniqueNonEmpty(
+    toArray(entry.images)
+      .map((url) => sanitizeUrl(url, sourceUrl))
+      .filter(Boolean)
+  );
+  const imageUrl = sanitizeUrl(entry.image_url, sourceUrl) || images[0] || "";
+  const parsedPrice = Number(entry.price || 0);
+  const price = Number.isFinite(parsedPrice) ? Math.max(parsedPrice, 0) : 0;
+  const parsedOriginalPrice = Number(entry.original_price || entry.price || 0);
+  const originalPrice = Number.isFinite(parsedOriginalPrice)
+    ? Math.max(parsedOriginalPrice, price)
+    : price;
+
+  return {
+    name: normalizeWhitespace(entry.name),
+    description: normalizeWhitespace(entry.description),
+    brand: normalizeWhitespace(entry.brand),
+    sku: normalizeWhitespace(entry.sku),
+    category: taxonomy.category,
+    product_type: taxonomy.product_type,
+    image_url: imageUrl,
+    images: imageUrl && images.length === 0 ? [imageUrl] : images,
+    price,
+    original_price: originalPrice,
+    currency: normalizeWhitespace(entry.currency),
+    colors: uniqueNonEmpty(entry.colors),
+    source_url: sanitizeUrl(entry.source_url, sourceUrl) || sourceUrl,
+  };
+};
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -596,11 +888,14 @@ export default async function handler(req, res) {
       if (dedupeProducts(discovered).length >= MAX_PRODUCTS) break;
     }
 
-    if (parsedProducts.length === 0 && discovered.length > 0) {
-      parsedProducts = dedupeProducts(discovered).slice(0, MAX_PRODUCTS);
+    if (discovered.length > 0) {
+      parsedProducts = dedupeProducts([...parsedProducts, ...discovered]).slice(
+        0,
+        MAX_PRODUCTS
+      );
     }
 
-    if (parsedProducts.length === 0 && detailCandidates.length > 0) {
+    if (parsedProducts.length < 20 && detailCandidates.length > 0) {
       const uniqueDetailLinks = Array.from(new Set(detailCandidates)).slice(
         0,
         MAX_DETAIL_PAGES
@@ -615,30 +910,15 @@ export default async function handler(req, res) {
           // Skip individual detail pages that fail.
         }
       }
-      parsedProducts = dedupeProducts(discovered).slice(0, MAX_PRODUCTS);
+      parsedProducts = dedupeProducts([...parsedProducts, ...discovered]).slice(
+        0,
+        MAX_PRODUCTS
+      );
     }
 
     const limitedProducts = parsedProducts
       .slice(0, MAX_PRODUCTS)
-      .map((entry) => ({
-        name: normalizeWhitespace(entry.name),
-        description: normalizeWhitespace(entry.description),
-        brand: normalizeWhitespace(entry.brand),
-        sku: normalizeWhitespace(entry.sku),
-        category: normalizeWhitespace(entry.category),
-        product_type: normalizeWhitespace(entry.product_type),
-        image_url: sanitizeUrl(entry.image_url, sourceUrl),
-        images: toArray(entry.images)
-          .map((url) => sanitizeUrl(url, sourceUrl))
-          .filter(Boolean),
-        price: Number(entry.price || 0),
-        original_price: Number(entry.original_price || entry.price || 0),
-        currency: normalizeWhitespace(entry.currency),
-        colors: toArray(entry.colors)
-          .map((color) => normalizeWhitespace(color))
-          .filter(Boolean),
-        source_url: sanitizeUrl(entry.source_url, sourceUrl) || sourceUrl,
-      }))
+      .map((entry) => enrichImportedProduct(entry, sourceUrl))
       .filter((entry) => Boolean(entry.name));
 
     if (limitedProducts.length === 0) {
