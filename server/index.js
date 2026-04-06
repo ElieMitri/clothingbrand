@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
+import importProductsFromUrl from "../api/import-products-from-url.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1068,6 +1069,8 @@ app.post(
   "/api/send-newsletter-subscriber-discord",
   sendNewsletterSubscriberDiscord
 );
+app.post("/import-products-from-url", importProductsFromUrl);
+app.post("/api/import-products-from-url", importProductsFromUrl);
 
 app.listen(3001, () => {
   const webhookUrl = String(process.env.DISCORD_ORDER_WEBHOOK_URL || "").trim();

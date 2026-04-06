@@ -11,7 +11,6 @@ import {
   Plus,
   Check,
   Star,
-  Zap,
 } from "lucide-react";
 import { db } from "../lib/firebase";
 import {
@@ -53,9 +52,7 @@ interface Product {
   color_images?: Record<string, string>;
   color_galleries?: Record<string, string[]>;
   sizes?: string[];
-  size_stock?: Record<string, number>;
   size_guide?: string;
-  stock?: number;
   rating?: number;
   reviews_count?: number;
   material?: string;
@@ -134,14 +131,13 @@ export function ProductDetail() {
       .map((entry) => String(entry || "").trim())
       .filter(Boolean)
       .join(" ");
-
-  const getAvailableStockForSize = (item: Product, size: string) => {
-    const sizeStockMap = item.size_stock || {};
-    const hasSizeStock = Object.keys(sizeStockMap).length > 0;
-    if (hasSizeStock) {
-      return Number(sizeStockMap[size] || 0);
-    }
-    return Number(item.stock || 0);
+  const shouldShowSizeGuide = (item: Product) => {
+    const customGuide = String(item.size_guide || "").trim();
+    if (customGuide) return true;
+    const context = buildSizingContext(item).toLowerCase();
+    const noGuidePattern =
+      /\b(supplement|protein|whey|creatine|vitamin|amino|bcaa|eaa|mass|pre[\s-]?workout|accessories|accessory|bag|cap|hat|bottle|belt|shaker)\b/;
+    return !noGuidePattern.test(context);
   };
 
   useEffect(() => {
@@ -154,6 +150,13 @@ export function ProductDetail() {
   useEffect(() => {
     setSelectedImage(0);
   }, [id]);
+
+  useEffect(() => {
+    if (!product) return;
+    if (activeTab === "size-guide" && !shouldShowSizeGuide(product)) {
+      setActiveTab("description");
+    }
+  }, [activeTab, product]);
 
   const loadProduct = async () => {
     try {
@@ -169,11 +172,7 @@ export function ProductDetail() {
           data.sizes && data.sizes.length > 0
             ? data.sizes
             : getDefaultSizesByCategory(buildSizingContext(data));
-        const firstInStockSize =
-          availableSizes.find(
-            (size) => getAvailableStockForSize(data, size) > 0
-          ) || availableSizes[0];
-        setSelectedSize(firstInStockSize || "One Size");
+        setSelectedSize(availableSizes[0] || "One Size");
       } else {
         setProduct(null);
       }
@@ -292,16 +291,6 @@ export function ProductDetail() {
 
     try {
       setAdding(true);
-      const availableStock = getAvailableStockForSize(product, selectedSize);
-      if (availableStock < 1) {
-        alert(`Size ${selectedSize} is currently out of stock.`);
-        return;
-      }
-      if (quantity > availableStock) {
-        alert(`Only ${availableStock} units are currently in stock.`);
-        return;
-      }
-
       if (user) {
         const cartsRef = collection(db, "carts");
         const q = query(
@@ -315,10 +304,6 @@ export function ProductDetail() {
         if (!querySnapshot.empty) {
           const existingItem = querySnapshot.docs[0];
           const currentQuantity = existingItem.data().quantity || 0;
-          if (availableStock > 0 && currentQuantity + quantity > availableStock) {
-            alert(`Only ${availableStock} units are currently in stock.`);
-            return;
-          }
           await updateDoc(doc(db, "carts", existingItem.id), {
             quantity: currentQuantity + quantity,
           });
@@ -338,14 +323,9 @@ export function ProductDetail() {
         );
 
         if (existingIndex >= 0) {
-          const nextQuantity = guestCart[existingIndex].quantity + quantity;
-          if (availableStock > 0 && nextQuantity > availableStock) {
-            alert(`Only ${availableStock} units are currently in stock.`);
-            return;
-          }
           guestCart[existingIndex] = {
             ...guestCart[existingIndex],
-            quantity: nextQuantity,
+            quantity: guestCart[existingIndex].quantity + quantity,
           };
         } else {
           guestCart.push({
@@ -428,18 +408,10 @@ export function ProductDetail() {
       prev === productImages.length - 1 ? 0 : prev + 1
     );
   };
-  const sizes =
-    product.sizes && product.sizes.length > 0
-      ? product.sizes
-      : getDefaultSizesByCategory(buildSizingContext(product));
   const sizeGuideText =
     product.size_guide?.trim() ||
     getDefaultSizeGuideByCategory(buildSizingContext(product));
-  const hasPerSizeStock = Object.keys(product.size_stock || {}).length > 0;
-  const selectedSizeStock = getAvailableStockForSize(product, selectedSize);
-  const availableForSelection = hasPerSizeStock
-    ? selectedSizeStock
-    : Number(product.stock || 0);
+  const showSizeGuide = shouldShowSizeGuide(product);
   const sizeGuideLines = sizeGuideText
     .split("\n")
     .map((line) => line.trim())
@@ -485,6 +457,7 @@ export function ProductDetail() {
     });
   };
   const openSizeGuideTab = () => {
+    if (!showSizeGuide) return;
     setActiveTab("size-guide");
     tabsSectionRef.current?.scrollIntoView({
       behavior: "smooth",
@@ -523,7 +496,7 @@ export function ProductDetail() {
               <img
                 src={productImages[selectedImage] || productImages[0]}
                 alt={product.name}
-                className="w-full h-full object-contain p-4 md:p-6"
+                className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
               />
 
               {productImages.length > 1 && (
@@ -553,13 +526,6 @@ export function ProductDetail() {
                   </div>
                 )}
 
-              {/* Stock Badge */}
-              {product.stock && product.stock < 10 && (
-                <div className="absolute top-4 right-4 px-4 py-2 bg-orange-500 text-white font-semibold rounded-full shadow-lg flex items-center gap-2">
-                  <Zap size={16} />
-                  Only {product.stock} left
-                </div>
-              )}
             </div>
 
             {/* Thumbnail Images */}
@@ -578,7 +544,7 @@ export function ProductDetail() {
                     <img
                       src={img}
                       alt={`${product.name} ${index + 1}`}
-                      className="w-full h-full object-contain bg-white p-1"
+                      className="w-full h-full object-cover object-center bg-white"
                     />
                   </button>
                 ))}
@@ -647,7 +613,7 @@ export function ProductDetail() {
               {product.description}
             </p>
 
-            {/* Size Selection */}
+            {/* Single serving/size (read-only) */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="block text-xs tracking-wider font-bold uppercase">
@@ -656,34 +622,14 @@ export function ProductDetail() {
                     {selectedSize}
                   </span>
                 </label>
-                <button
-                  onClick={openSizeGuideTab}
-                  className="text-xs text-gray-600 underline hover:text-black transition-colors font-medium"
-                >
-                  Size Guide
-                </button>
-              </div>
-                <div className="grid grid-cols-6 gap-2">
-                  {sizes.map((size) => (
-                    <button
-                      key={size}
-                      onClick={() => setSelectedSize(size)}
-                      disabled={
-                        hasPerSizeStock && getAvailableStockForSize(product, size) <= 0
-                      }
-                      className={`py-2.5 border-2 rounded-xl transition-all text-xs font-bold shadow-sm hover:shadow-md ${
-                        selectedSize === size
-                          ? "border-black bg-black text-white scale-105"
-                          : "border-gray-300 hover:border-black"
-                      } ${
-                        hasPerSizeStock && getAvailableStockForSize(product, size) <= 0
-                          ? "opacity-40 cursor-not-allowed line-through"
-                          : ""
-                      }`}
-                    >
-                      {size}
-                    </button>
-                  ))}
+                {showSizeGuide && (
+                  <button
+                    onClick={openSizeGuideTab}
+                    className="text-xs text-gray-600 underline hover:text-black transition-colors font-medium"
+                  >
+                    Size Guide
+                  </button>
+                )}
               </div>
             </div>
 
@@ -703,29 +649,13 @@ export function ProductDetail() {
                   <span className="px-6 font-bold text-base">{quantity}</span>
                   <button
                     onClick={() =>
-                      setQuantity((prev) =>
-                        Math.min(
-                          availableForSelection > 0 ? availableForSelection : 1,
-                          prev + 1
-                        )
-                      )
+                      setQuantity((prev) => prev + 1)
                     }
-                    disabled={availableForSelection <= 0 || quantity >= availableForSelection}
                     className="p-3 hover:bg-gray-100 transition-colors rounded-r-xl"
                   >
                     <Plus size={16} />
                   </button>
                 </div>
-                {(hasPerSizeStock || typeof product.stock === "number") && (
-                  <span className="text-xs text-gray-600">
-                    <span className="font-semibold">
-                      {hasPerSizeStock
-                        ? selectedSizeStock
-                        : Number(product.stock || 0)}
-                    </span>{" "}
-                    available for {selectedSize}
-                  </span>
-                )}
               </div>
             </div>
 
@@ -733,7 +663,7 @@ export function ProductDetail() {
             <div className="pt-3">
               <button
                 onClick={addToCart}
-                disabled={adding || availableForSelection <= 0}
+                disabled={adding}
                 className="w-full bg-black text-white py-3.5 px-6 rounded-xl hover:bg-gray-800 transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 text-xs tracking-wider font-bold shadow-lg hover:shadow-xl"
               >
                 {adding ? (
@@ -819,7 +749,9 @@ export function ProductDetail() {
                 {[
                   { key: "description", label: "description" },
                   { key: "details", label: "details" },
-                  { key: "size-guide", label: "size guide" },
+                  ...(showSizeGuide
+                    ? [{ key: "size-guide", label: "size guide" }]
+                    : []),
                   { key: "reviews", label: "reviews" },
                 ].map((tab) => (
                   <button
@@ -871,7 +803,7 @@ export function ProductDetail() {
                     )}
                   </div>
                 )}
-                {activeTab === "size-guide" && (
+                {showSizeGuide && activeTab === "size-guide" && (
                   <div className="py-2.5 px-3 bg-gray-50 rounded-xl">
                     <span className="text-gray-600 font-medium block mb-1.5 text-xs">
                       Size Guide:

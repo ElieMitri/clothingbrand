@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { Filter, X } from "lucide-react";
 import { collection, doc, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { fromCategorySlug, toCategorySlug } from "../lib/category";
@@ -34,6 +35,22 @@ interface HomeCategoryEntry {
   slug?: string;
   image_url?: string;
 }
+const isSupplementLikeProduct = (product: Product) =>
+  /\b(supplement|protein|whey|creatine|amino|bcaa|eaa|vitamin|mass|pre[\s-]?workout)\b/i.test(
+    `${product.category || ""} ${product.subcategory || ""} ${product.product_type || ""} ${product.name || ""}`
+  );
+const categoryMatchesSlug = (category: string, slug: string) => {
+  const categorySlug = toCategorySlug(category || "");
+  const selectedSlug = toCategorySlug(slug || "");
+  if (!categorySlug || !selectedSlug) return false;
+  if (categorySlug === selectedSlug) return true;
+
+  if (selectedSlug === "gym" || selectedSlug === "gym-crossfit") {
+    return categorySlug.includes("gym") || categorySlug.includes("crossfit");
+  }
+
+  return false;
+};
 
 export function CategoryPage() {
   const { slug = "" } = useParams<{ slug: string }>();
@@ -49,6 +66,7 @@ export function CategoryPage() {
   const [sortBy, setSortBy] = useState<"featured" | "price-low" | "price-high">(
     "featured"
   );
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -88,7 +106,7 @@ export function CategoryPage() {
           })) as Product[];
 
           const filtered = allProducts.filter(
-            (product) => toCategorySlug(product.category) === toCategorySlug(slug)
+            (product) => categoryMatchesSlug(product.category, slug)
           );
           setProducts(filtered);
           setLoading(false);
@@ -162,6 +180,40 @@ export function CategoryPage() {
     [displayName, slug]
   );
 
+  useEffect(() => {
+    if (!isFilterPanelOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isFilterPanelOpen]);
+
+  useEffect(() => {
+    if (!isFilterPanelOpen) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsFilterPanelOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [isFilterPanelOpen]);
+
+  const activeFilterCount = [
+    selectedAudience !== "all",
+    colorInput.trim().length > 0,
+    searchTerm.trim().length > 0,
+    sortBy !== "featured",
+  ].filter(Boolean).length;
+
+  const clearFilters = () => {
+    setSelectedAudience("all");
+    setColorInput("");
+    setSearchTerm("");
+    setSortBy("featured");
+  };
+
   return (
     <div className="min-h-screen pt-24 pb-12 px-4 bg-white">
       <div className="max-w-7xl mx-auto">
@@ -169,64 +221,146 @@ export function CategoryPage() {
           <h1 className="text-4xl md:text-5xl font-light tracking-wider uppercase">
             {heading}
           </h1>
-          <Link to="/shop" className="text-sm underline hover:text-cyan-200">
-            View All Products
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/shop" className="text-sm underline hover:text-cyan-200">
+              View All Products
+            </Link>
+            <button
+              type="button"
+              onClick={() => setIsFilterPanelOpen(true)}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium hover:border-black transition-colors"
+            >
+              <Filter size={16} />
+              Filters
+              {activeFilterCount > 0 ? (
+                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-black px-1.5 text-[11px] font-semibold text-white">
+                  {activeFilterCount}
+                </span>
+              ) : null}
+            </button>
+          </div>
         </div>
 
-        <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-gray-500">Search</label>
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[180px]"
-              placeholder="Name, type, brand..."
-            />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-gray-500">Color</label>
-            <input
-              type="text"
-              value={colorInput}
-              onChange={(e) => setColorInput(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[150px]"
-              placeholder="Black, White..."
-            />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-gray-500">Audience</label>
-            <select
-              value={selectedAudience}
-              onChange={(e) =>
-                setSelectedAudience(e.target.value as ProductAudience | "all")
-              }
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+        <div className="mb-8 flex items-center justify-between gap-3">
+          <p className="text-sm text-gray-500">
+            Showing {filteredProducts.length} product
+            {filteredProducts.length === 1 ? "" : "s"}
+          </p>
+          {activeFilterCount > 0 ? (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-sm text-gray-500 hover:text-black underline underline-offset-4"
             >
-              <option value="all">All</option>
-              <option value="men">Men</option>
-              <option value="women">Women</option>
-              <option value="unisex">Unisex</option>
-            </select>
-          </div>
+              Clear filters
+            </button>
+          ) : null}
+        </div>
 
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-gray-500">Sort</label>
-            <select
-              value={sortBy}
-              onChange={(e) =>
-                setSortBy(e.target.value as "featured" | "price-low" | "price-high")
-              }
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-            >
-              <option value="featured">Featured</option>
-              <option value="price-low">Price: Low to High</option>
-              <option value="price-high">Price: High to Low</option>
-            </select>
-          </div>
+        <div
+          className={`fixed inset-x-0 top-[84px] bottom-0 z-[140] transition-opacity duration-300 ${
+            isFilterPanelOpen
+              ? "opacity-100 pointer-events-auto"
+              : "opacity-0 pointer-events-none"
+          }`}
+          aria-hidden={!isFilterPanelOpen}
+        >
+          <button
+            type="button"
+            onClick={() => setIsFilterPanelOpen(false)}
+            className="absolute inset-0 bg-black/35"
+            aria-label="Close filter panel"
+          />
+          <aside
+            className={`absolute right-0 top-0 h-full w-[360px] max-w-[90vw] bg-white border-l border-gray-200 shadow-2xl transition-transform duration-300 ease-out ${
+              isFilterPanelOpen ? "translate-x-0" : "translate-x-full"
+            }`}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold">Filters</h2>
+              <button
+                type="button"
+                onClick={() => setIsFilterPanelOpen(false)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
+                aria-label="Close filters"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 space-y-4 overflow-y-auto h-[calc(100%-68px)]">
+              <div className="space-y-1.5">
+                <label className="text-sm text-gray-500">Search</label>
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  placeholder="Name, type, brand..."
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm text-gray-500">Color</label>
+                <input
+                  type="text"
+                  value={colorInput}
+                  onChange={(e) => setColorInput(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  placeholder="Black, White..."
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm text-gray-500">Audience</label>
+                <select
+                  value={selectedAudience}
+                  onChange={(e) =>
+                    setSelectedAudience(e.target.value as ProductAudience | "all")
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value="all">All</option>
+                  <option value="men">Men</option>
+                  <option value="women">Women</option>
+                  <option value="unisex">Unisex</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm text-gray-500">Sort</label>
+                <select
+                  value={sortBy}
+                  onChange={(e) =>
+                    setSortBy(
+                      e.target.value as "featured" | "price-low" | "price-high"
+                    )
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value="featured">Featured</option>
+                  <option value="price-low">Price: Low to High</option>
+                  <option value="price-high">Price: High to Low</option>
+                </select>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsFilterPanelOpen(false)}
+                  className="flex-1 rounded-lg bg-black px-3 py-2 text-sm text-white hover:bg-gray-800"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          </aside>
         </div>
 
         {loading ? (
@@ -259,22 +393,29 @@ export function CategoryPage() {
                 to={`/product/${product.id}`}
                 className="group"
               >
-                <div className="aspect-[3/4] bg-gray-100 mb-4 overflow-hidden rounded-lg p-2">
+                <div className="aspect-[3/4] mb-4 overflow-hidden rounded-lg bg-white">
                   <img
                     src={product.image_url}
                     alt={product.name}
-                    className="w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-500"
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
                   />
                 </div>
                 <div className="space-y-2">
                   <p className="text-xs tracking-wider text-gray-500 uppercase">
-                    {product.category} •{" "}
-                    {
-                      audienceLabelMap[
-                        normalizeProductAudience(product.audience, product.category)
-                      ]
-                    }{" "}
-                    • {toProductAuthenticityLabel(product.authenticity)}
+                    {[
+                      product.category,
+                      !isSupplementLikeProduct(product)
+                        ? audienceLabelMap[
+                            normalizeProductAudience(product.audience, product.category)
+                          ]
+                        : "",
+                      toProductAuthenticityLabel(product.authenticity),
+                    ]
+                      .map((entry) => String(entry || "").trim())
+                      .filter(Boolean)
+                      .join(" • ")}
                   </p>
                   <h3 className="font-light text-lg">{product.name}</h3>
                   <p className="text-gray-900 font-medium">

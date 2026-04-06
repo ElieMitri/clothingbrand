@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Filter, Tag, Clock, TrendingDown, ArrowRight } from "lucide-react";
 import { db } from "../lib/firebase";
@@ -22,6 +22,7 @@ import {
   ProductAuthenticity,
   toProductAuthenticityLabel,
 } from "../lib/productAuthenticity";
+import { toCategorySlug } from "../lib/category";
 
 interface Product {
   id: string;
@@ -64,6 +65,21 @@ export function Sale() {
   const [subscribeStatus, setSubscribeStatus] = useState<
     "idle" | "success" | "exists" | "error"
   >("idle");
+  const categorySupportsAudienceFilter = (categoryName: string) => {
+    const slug = toCategorySlug(categoryName || "");
+    return (
+      slug.includes("shoe") ||
+      slug.includes("sneaker") ||
+      slug.includes("cloth") ||
+      slug.includes("apparel")
+    );
+  };
+  const shouldShowAudienceFilter = useMemo(() => {
+    if (selectedCategories.length === 0) return false;
+    return selectedCategories.every((category) =>
+      categorySupportsAudienceFilter(category)
+    );
+  }, [selectedCategories]);
 
   const categories = Array.from(
     new Set(
@@ -175,7 +191,20 @@ export function Sale() {
 
   useEffect(() => {
     filterAndSortProducts();
-  }, [products, selectedCategories, selectedAudience, selectedDiscount, sortBy]);
+  }, [
+    products,
+    selectedCategories,
+    selectedAudience,
+    selectedDiscount,
+    sortBy,
+    shouldShowAudienceFilter,
+  ]);
+
+  useEffect(() => {
+    if (!shouldShowAudienceFilter && selectedAudience !== "all") {
+      setSelectedAudience("all");
+    }
+  }, [shouldShowAudienceFilter, selectedAudience]);
 
   useEffect(() => {
     setTimeLeft(getCountdown(saleEndAt));
@@ -243,7 +272,7 @@ export function Sale() {
       );
     }
 
-    if (selectedAudience !== "all") {
+    if (shouldShowAudienceFilter && selectedAudience !== "all") {
       filtered = filtered.filter(
         (p) =>
           normalizeProductAudience(p.audience, p.category) === selectedAudience
@@ -352,7 +381,7 @@ export function Sale() {
           <p className="text-slate-300 mb-6">
             {isSaleExpired
               ? "This sale ended when the countdown reached zero."
-              : "The sale is currently disabled from admin settings."}
+              : "There are no current sales available."}
           </p>
           <Link to="/shop" className="text-cyan-200 underline hover:text-cyan-100">
             Continue to Shop
@@ -435,15 +464,17 @@ export function Sale() {
             >
               <Filter size={18} />
               <span className="text-sm tracking-wide">FILTERS</span>
-              {(selectedCategories.length > 0 || selectedAudience !== "all") && (
+              {(selectedCategories.length > 0 ||
+                (shouldShowAudienceFilter && selectedAudience !== "all")) && (
                 <span className="ml-1 px-2 py-0.5 bg-cyan-400 text-slate-950 text-xs rounded-full">
-                  {selectedCategories.length + (selectedAudience !== "all" ? 1 : 0)}
+                  {selectedCategories.length +
+                    (shouldShowAudienceFilter && selectedAudience !== "all" ? 1 : 0)}
                 </span>
               )}
             </button>
 
             {(selectedCategories.length > 0 ||
-              selectedAudience !== "all" ||
+              (shouldShowAudienceFilter && selectedAudience !== "all") ||
               selectedDiscount !== "all") && (
               <button
                 onClick={clearFilters}
@@ -496,21 +527,23 @@ export function Sale() {
                 </div>
               </div>
 
-              <div>
-                <h3 className="font-medium text-sm tracking-wider mb-4">AUDIENCE</h3>
-                <select
-                  value={selectedAudience}
-                  onChange={(e) =>
-                    setSelectedAudience(e.target.value as ProductAudience | "all")
-                  }
-                  className="w-full px-3 py-2 border border-slate-600 rounded-lg bg-slate-950/70 text-slate-100 text-sm focus:outline-none focus:border-cyan-300"
-                >
-                  <option value="all">All</option>
-                  <option value="men">Men</option>
-                  <option value="women">Women</option>
-                  <option value="unisex">Unisex</option>
-                </select>
-              </div>
+              {shouldShowAudienceFilter && (
+                <div>
+                  <h3 className="font-medium text-sm tracking-wider mb-4">AUDIENCE</h3>
+                  <select
+                    value={selectedAudience}
+                    onChange={(e) =>
+                      setSelectedAudience(e.target.value as ProductAudience | "all")
+                    }
+                    className="w-full px-3 py-2 border border-slate-600 rounded-lg bg-slate-950/70 text-slate-100 text-sm focus:outline-none focus:border-cyan-300"
+                  >
+                    <option value="all">All</option>
+                    <option value="men">Men</option>
+                    <option value="women">Women</option>
+                    <option value="unisex">Unisex</option>
+                  </select>
+                </div>
+              )}
             </div>
           )}
 
@@ -544,11 +577,13 @@ export function Sale() {
                     to={`/product/${product.id}`}
                     className="group surface-card rounded-xl overflow-hidden border border-slate-700 hover:shadow-xl transition-all"
                   >
-                    <div className="aspect-[3/4] bg-slate-900 overflow-hidden relative p-2">
+                    <div className="aspect-[3/4] bg-white overflow-hidden relative">
                       <img
                         src={product.image_url}
                         alt={product.name}
-                        className="w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-500"
+                        loading="lazy"
+                        decoding="async"
+                        className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
                       />
                       <div className="absolute top-3 left-3 bg-rose-600 text-white px-3 py-1 rounded-full text-xs font-bold">
                         -{product.discount_percentage}%

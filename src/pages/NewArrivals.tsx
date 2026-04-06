@@ -382,11 +382,13 @@ export function NewArrivals() {
                     to={`/product/${product.id}`}
                     className="group"
                   >
-                    <div className="aspect-[3/4] bg-gray-100 rounded-lg mb-3 overflow-hidden relative p-2">
+                    <div className="aspect-[3/4] rounded-lg mb-3 overflow-hidden relative bg-white">
                       <img
                         src={product.image_url}
                         alt={product.name}
-                        className="w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-500"
+                        loading="lazy"
+                        decoding="async"
+                        className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
                       />
                       <div className="absolute top-3 left-3 bg-black text-white text-xs px-3 py-1 tracking-wider">
                         NEW

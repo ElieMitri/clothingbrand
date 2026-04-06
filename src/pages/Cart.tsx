@@ -38,8 +38,6 @@ interface CartItem {
     price: number;
     image_url: string;
     category?: string;
-    stock?: number;
-    size_stock?: Record<string, number>;
   };
 }
 
@@ -53,8 +51,6 @@ interface RawCartItem {
     price: number;
     image_url: string;
     category?: string;
-    stock?: number;
-    size_stock?: Record<string, number>;
   };
 }
 
@@ -261,12 +257,6 @@ export function Cart() {
             if (!productSnap.exists()) return null;
 
             const productData = productSnap.data();
-            const sizeStockMap = (productData.size_stock ||
-              {}) as Record<string, number>;
-            const hasSizeStock = Object.keys(sizeStockMap).length > 0;
-            const availableStock = hasSizeStock
-              ? Number(sizeStockMap[entry.size] || 0)
-              : Number(productData.stock || 0);
 
             const mappedItem: RawCartItem = {
               id: `${entry.product_id}__${entry.size}`,
@@ -278,8 +268,6 @@ export function Cart() {
                 price: productData.price,
                 image_url: productData.image_url,
                 category: productData.category,
-                stock: availableStock,
-                size_stock: hasSizeStock ? sizeStockMap : undefined,
               },
             };
             return mappedItem;
@@ -304,13 +292,6 @@ export function Cart() {
 
           if (productSnap.exists()) {
             const productData = productSnap.data();
-            const sizeStockMap = (productData.size_stock ||
-              {}) as Record<string, number>;
-            const hasSizeStock = Object.keys(sizeStockMap).length > 0;
-            const sizeKey = String(cartData.size || "");
-            const availableStock = hasSizeStock
-              ? Number(sizeStockMap[sizeKey] || 0)
-              : Number(productData.stock || 0);
             const mappedItem: RawCartItem = {
               id: cartDoc.id,
               product_id: cartData.product_id,
@@ -321,8 +302,6 @@ export function Cart() {
                 price: productData.price,
                 image_url: productData.image_url,
                 category: productData.category,
-                stock: availableStock,
-                size_stock: hasSizeStock ? sizeStockMap : undefined,
               },
             };
             return mappedItem;
@@ -345,12 +324,6 @@ export function Cart() {
 
     try {
       const currentItem = cartItems.find((item) => item.id === itemId);
-      const availableStock = Number(currentItem?.product.stock || 0);
-
-      if (availableStock > 0 && newQuantity > availableStock) {
-        alert(`Only ${availableStock} units are currently in stock.`);
-        return;
-      }
 
       if (!currentItem) return;
       setUpdating(itemId);
@@ -877,18 +850,12 @@ export function Cart() {
                               onClick={() =>
                                 updateQuantity(item.id, item.quantity + 1)
                               }
-                              disabled={
-                                updating === item.id ||
-                                (item.product.stock || 0) <= item.quantity
-                              }
+                              disabled={updating === item.id}
                               className="p-2 hover:bg-gray-100 transition-colors disabled:opacity-50"
                             >
                               <Plus size={16} />
                             </button>
                           </div>
-                          <span className="text-xs text-gray-500">
-                            Stock: {item.product.stock || 0}
-                          </span>
                         </div>
 
                         <div className="text-left sm:text-right">

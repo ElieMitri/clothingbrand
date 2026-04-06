@@ -112,6 +112,24 @@ function CedarLogo({ className = "" }: { className?: string }) {
 
 const formatPrice = (value: number) => `$${value.toFixed(2)}`;
 
+const resolveHomeCategoryPath = (rawSlug?: string) => {
+  const slug = String(rawSlug || "").trim();
+  if (!slug) return "/shop";
+  if (slug.startsWith("/")) return slug;
+
+  const normalized = slug.toLowerCase();
+  if (normalized === "sale") return "/sale";
+  if (normalized === "new-arrivals" || normalized === "new-arrival") {
+    return "/new-arrivals";
+  }
+  if (normalized === "collections" || normalized === "collection") {
+    return "/collections";
+  }
+  if (normalized === "shop" || normalized === "shop-all") return "/shop";
+
+  return `/category/${toCategorySlug(slug)}`;
+};
+
 export function Home() {
   const { user } = useAuth();
   const [featuredProducts, setFeaturedProducts] = useState<Product[]>([]);
@@ -760,11 +778,7 @@ export function Home() {
               {categories.map((category, index) => (
                 <Link
                   key={category.id}
-                  to={
-                    category.slug
-                      ? `/category/${toCategorySlug(category.slug)}`
-                      : "/shop"
-                  }
+                  to={resolveHomeCategoryPath(category.slug)}
                   className={`group relative overflow-hidden rounded-3xl border border-slate-700/70 min-h-[220px] md:min-h-[320px] ${
                     index === 0 ? "md:col-span-2" : ""
                   }`}
@@ -858,11 +872,13 @@ export function Home() {
                 to={`/product/${product.id}`}
                 className="group surface-card rounded-3xl overflow-hidden hover:-translate-y-1"
               >
-                <div className="relative aspect-[3/4] overflow-hidden p-2 bg-slate-900/40">
+                <div className="relative aspect-[3/4] overflow-hidden bg-white">
                   <img
                     src={product.image_url}
                     alt={product.name}
-                    className="w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-700"
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-700"
                   />
                   <div className="absolute top-3 left-3 inline-flex items-center gap-1 rounded-full bg-cyan-500/85 px-3 py-1 text-[11px] font-semibold tracking-wide text-slate-950">
                     <Star size={12} />
@@ -962,11 +978,13 @@ export function Home() {
                 to={`/product/${product.id}`}
                 className="group surface-card rounded-2xl overflow-hidden"
               >
-                <div className="aspect-[3/4] overflow-hidden p-2 bg-slate-900/40">
+                <div className="aspect-[3/4] overflow-hidden bg-white">
                   <img
                     src={product.image_url}
                     alt={product.name}
-                    className="w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-700"
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-700"
                   />
                 </div>
                 <div className="p-4">

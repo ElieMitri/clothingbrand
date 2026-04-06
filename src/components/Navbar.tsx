@@ -283,11 +283,7 @@ export function Navbar() {
         .filter((entry) => entry.name && entry.path)
         .filter((entry) => entry.path !== "/new-arrivals");
 
-      const withRequired = normalized.some((entry) => entry.path === "/sale")
-        ? normalized
-        : [...normalized, { name: "Sale", path: "/sale", special: true }];
-
-      const unique = withRequired.filter(
+      const unique = normalized.filter(
         (entry, index, arr) =>
           arr.findIndex((item) => item.path === entry.path) === index
       );

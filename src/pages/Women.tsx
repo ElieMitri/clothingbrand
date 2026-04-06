@@ -390,7 +390,9 @@ export function Women() {
                         <img
                           src={product.image_url}
                           alt={product.name}
-                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                          loading="lazy"
+                          decoding="async"
+                          className="w-full h-full object-cover object-center scale-[1.12] group-hover:scale-[1.16] transition-transform duration-700"
                         />
 
                         {/* Badges */}

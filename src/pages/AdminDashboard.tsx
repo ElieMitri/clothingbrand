@@ -55,7 +55,6 @@ import {
 import {
   ProductAuthenticity,
   normalizeProductAuthenticity,
-  productAuthenticityLabelMap,
 } from "../lib/productAuthenticity";
 import {
   getDefaultApparelSizes,
@@ -126,8 +125,7 @@ interface Order {
   status: OrderStatus;
   cancel_reason?: string;
   status_note?: string;
-  stock_deducted?: boolean;
-  stock_restored?: boolean;
+  exchange_processed_at?: DateField;
   created_at: DateField;
 }
 
@@ -236,6 +234,20 @@ interface ColorGalleryRow {
   color: string;
   urls: string;
 }
+interface LinkImportProduct {
+  name: string;
+  description?: string;
+  brand?: string;
+  sku?: string;
+  category?: string;
+  product_type?: string;
+  image_url?: string;
+  images?: string[];
+  price?: number;
+  original_price?: number;
+  colors?: string[];
+  source_url?: string;
+}
 
 interface Analytics {
   totalRevenue: number;
@@ -258,6 +270,101 @@ interface MonthlyRevenue {
   orders: number;
 }
 
+interface QuickAddProductPreset {
+  id: string;
+  label: string;
+  category: string;
+  subcategory?: string;
+  product_type?: string;
+}
+
+const slugifyPathToken = (value: string) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+const suggestShopMenuPath = (label: string) => {
+  const token = slugifyPathToken(label);
+  if (!token) return "";
+  if (token === "sale") return "/sale";
+  if (token === "new-arrivals" || token === "new-arrival") return "/new-arrivals";
+  if (token === "collections" || token === "collection") return "/collections";
+  if (token === "shop" || token === "shop-all") return "/shop";
+  return `/category/${token}`;
+};
+
+const buildAutoSku = (category: string, name: string) =>
+  `${slugifyPathToken(category)}-${slugifyPathToken(name)}`
+    .replace(/^-+|-+$/g, "")
+    .toUpperCase();
+
+const normalizeAdminProductTaxonomy = (
+  categoryValue: string,
+  subcategoryValue?: string | null,
+  productTypeValue?: string | null
+) => {
+  const category = String(categoryValue || "").trim();
+  const subcategory = String(subcategoryValue || "").trim();
+  const productType = String(productTypeValue || "").trim();
+
+  // Avoid generic top-level "Sports" tabs in Shop:
+  // Sports -> Muay Thai -> Shin Guards
+  // becomes:
+  // Category: Muay Thai, Subcategory: Shin Guards
+  if (slugifyPathToken(category) === "sports" && subcategory) {
+    return {
+      category: subcategory,
+      subcategory: productType || "",
+      productType,
+    };
+  }
+
+  return { category, subcategory, productType };
+};
+
+const quickAddProductPresets: QuickAddProductPreset[] = [
+  { id: "football", label: "Football", category: "Football" },
+  { id: "futsal", label: "Futsal", category: "Futsal" },
+  { id: "basketball", label: "Basketball", category: "Basketball" },
+  { id: "running", label: "Running", category: "Running" },
+  { id: "boxing", label: "Boxing", category: "Boxing" },
+  { id: "muay-thai", label: "Muay Thai", category: "Muay Thai" },
+  { id: "padel", label: "Padel", category: "Padel" },
+  { id: "tennis", label: "Tennis", category: "Tennis" },
+  { id: "swimming", label: "Swimming", category: "Swimming" },
+  { id: "gym", label: "Gym / Crossfit", category: "Crossfit" },
+  {
+    id: "accessories",
+    label: "Accessories",
+    category: "Accessories",
+    subcategory: "Accessories",
+    product_type: "Accessories",
+  },
+  {
+    id: "bags",
+    label: "Bags",
+    category: "Accessories",
+    subcategory: "Bags",
+    product_type: "Bags",
+  },
+  {
+    id: "bands",
+    label: "Bands",
+    category: "Accessories",
+    subcategory: "Bands",
+    product_type: "Bands",
+  },
+  {
+    id: "herbal-supplements",
+    label: "Herbal Supplements",
+    category: "Herbal Supplements",
+    subcategory: "Supplements",
+    product_type: "Herbal Supplement",
+  },
+];
+
 export function AdminDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -272,6 +379,7 @@ export function AdminDashboard() {
   >("overview");
   const [isSideNavOpen, setIsSideNavOpen] = useState(false);
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(false);
+  const [isNormalizingMartialArts, setIsNormalizingMartialArts] = useState(false);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -329,6 +437,17 @@ export function AdminDashboard() {
   // Edit/Add Product Modal
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [productEntryMode, setProductEntryMode] = useState<"manual" | "link">(
+    "manual"
+  );
+  const [importUrl, setImportUrl] = useState("");
+  const [importingFromLink, setImportingFromLink] = useState(false);
+  const [addingImportedProducts, setAddingImportedProducts] = useState(false);
+  const [deletingImportedProducts, setDeletingImportedProducts] = useState(false);
+  const [importedProducts, setImportedProducts] = useState<LinkImportProduct[]>(
+    []
+  );
+  const [importError, setImportError] = useState("");
   const [productForm, setProductForm] = useState({
     name: "",
     brand: "",
@@ -363,7 +482,6 @@ export function AdminDashboard() {
   const [colorGalleryRows, setColorGalleryRows] = useState<ColorGalleryRow[]>(
     []
   );
-  const [sizeStockMap, setSizeStockMap] = useState<Record<string, number>>({});
 
   // Edit Order Modal
   const [showOrderModal, setShowOrderModal] = useState(false);
@@ -487,10 +605,24 @@ export function AdminDashboard() {
       Array.from(
         new Set([
           ...categories,
+          "Men",
+          "Women",
+          "Kids",
+          "Unisex",
+          "Apparel",
+          "Activewear",
+          "Training",
           "Shoes",
           "Socks",
+          "Running Shoes",
+          "Football Boots",
+          "Futsal Shoes",
+          "Basketball Shoes",
+          "Tennis Shoes",
           "Muay Thai",
           "Boxing",
+          "MMA",
+          "Martial Arts",
           "Running",
           "Football",
           "Futsal",
@@ -504,12 +636,265 @@ export function AdminDashboard() {
           "Gym Wear",
           "Gym Gear",
           "Supplements",
+          "Herbal Supplements",
+          "Vitamins",
+          "Wellness",
+          "Recovery",
           "Gym Supplements",
           "Sports Equipment",
           "Accessories",
+          "Bags",
+          "Hydration",
         ])
       ).sort((a, b) => a.localeCompare(b)),
     [categories]
+  );
+  const suggestedBrandOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          products
+            .map((product) => String(product.brand || "").trim())
+            .filter(Boolean)
+            .concat([
+              "Nike",
+              "Adidas",
+              "Puma",
+              "Under Armour",
+              "Reebok",
+              "New Balance",
+              "Asics",
+              "Mizuno",
+              "Yonex",
+              "Babolat",
+              "Head",
+              "Wilson",
+              "Everlast",
+              "Twins Special",
+              "Fairtex",
+              "Venum",
+              "Title Boxing",
+              "Bad Boy",
+              "Rival",
+              "RDX",
+              "Leone 1947",
+              "Muscle Madness",
+              "Optimum Nutrition",
+              "Applied Nutrition",
+              "Kevin Levrone",
+              "Nutrex",
+              "Real Pharm",
+              "Perfect Sports",
+              "BioTechUSA",
+              "MyProtein",
+              "Dymatize",
+              "BSN",
+              "Cellucor",
+              "Now Sports",
+              "Nature's Bounty",
+              "Solgar",
+              "Himalaya",
+            ])
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [products]
+  );
+  const suggestedTypeOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          products
+            .map((product) => String(product.product_type || "").trim())
+            .filter(Boolean)
+            .concat([
+              "T-Shirt",
+              "Tank Top",
+              "Long Sleeve",
+              "Hoodie",
+              "Sweatshirt",
+              "Jacket",
+              "Joggers",
+              "Leggings",
+              "Shorts",
+              "Tracksuit",
+              "Sports Bra",
+              "Compression Top",
+              "Compression Shorts",
+              "Socks",
+              "Cap",
+              "Backpack",
+              "Gym Bag",
+              "Bottle",
+              "Shaker",
+              "Fitness Gloves",
+              "Lifting Belt",
+              "Resistance Band",
+              "Skipping Rope",
+              "MMA Gloves",
+              "Boxing Gloves",
+              "Shin Guards",
+              "Hand Wraps",
+              "Mouthguard",
+              "Running Shoes",
+              "Football Boots",
+              "Futsal Shoes",
+              "Basketball Shoes",
+              "Tennis Shoes",
+              "Whey",
+              "Creatine",
+              "Amino Acid",
+              "Pre Workout",
+              "Vitamins",
+              "Mass Gainer",
+              "Protein Powder",
+              "Herbal Supplement",
+              "Herbal Tea",
+              "Ashwagandha",
+              "Omega 3",
+              "Multivitamin",
+              "Electrolytes",
+              "Collagen",
+              "Joint Support",
+              "Fat Burner",
+              "Energy Gel",
+              "Accessories",
+            ])
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [products]
+  );
+  const suggestedSubcategoryOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          products
+            .map((product) => String(product.subcategory || "").trim())
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [products]
+  );
+  const suggestedSubcategoryByCategory = useMemo(() => {
+    const map = new Map<string, string[]>();
+    products.forEach((product) => {
+      const category = String(product.category || "").trim();
+      const subcategory = String(product.subcategory || "").trim();
+      if (!category || !subcategory) return;
+      if (!map.has(category)) map.set(category, []);
+      map.get(category)?.push(subcategory);
+    });
+
+    const normalized: Record<string, string[]> = {};
+    Array.from(map.entries()).forEach(([category, entries]) => {
+      normalized[category] = Array.from(new Set(entries)).sort((a, b) =>
+        a.localeCompare(b)
+      );
+    });
+    return normalized;
+  }, [products]);
+  const categoryTree = useMemo(() => {
+    const normalize = (value: string | null | undefined) =>
+      String(value || "").trim();
+    const treeMap = new Map<
+      string,
+      {
+        directTypes: Set<string>;
+        subcategories: Map<string, Set<string>>;
+      }
+    >();
+
+    const ensureCategoryNode = (category: string) => {
+      if (!treeMap.has(category)) {
+        treeMap.set(category, {
+          directTypes: new Set<string>(),
+          subcategories: new Map<string, Set<string>>(),
+        });
+      }
+      return treeMap.get(category)!;
+    };
+
+    const addTreeEntry = (
+      categoryValue: string | null | undefined,
+      subcategoryValue?: string | null,
+      productTypeValue?: string | null
+    ) => {
+      const category = normalize(categoryValue);
+      if (!category) return;
+
+      const subcategory = normalize(subcategoryValue);
+      const productType = normalize(productTypeValue);
+      const categoryNode = ensureCategoryNode(category);
+
+      if (subcategory) {
+        if (!categoryNode.subcategories.has(subcategory)) {
+          categoryNode.subcategories.set(subcategory, new Set<string>());
+        }
+        if (productType) {
+          categoryNode.subcategories.get(subcategory)?.add(productType);
+        }
+        return;
+      }
+
+      if (productType) {
+        categoryNode.directTypes.add(productType);
+      }
+    };
+
+    products.forEach((product) =>
+      addTreeEntry(product.category, product.subcategory, product.product_type)
+    );
+    quickAddProductPresets.forEach((preset) =>
+      addTreeEntry(preset.category, preset.subcategory, preset.product_type)
+    );
+    categories.forEach((category) => addTreeEntry(category));
+
+    return Array.from(treeMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([category, node]) => ({
+        category,
+        directTypes: Array.from(node.directTypes).sort((a, b) =>
+          a.localeCompare(b)
+        ),
+        subcategories: Array.from(node.subcategories.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([name, types]) => ({
+            name,
+            types: Array.from(types).sort((a, b) => a.localeCompare(b)),
+          })),
+      }));
+  }, [categories, products]);
+  const suggestedTagOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          products
+            .flatMap((product) => product.tags || [])
+            .map((tag) => String(tag || "").trim())
+            .filter(Boolean)
+            .concat([
+              "training",
+              "performance",
+              "gym",
+              "lifestyle",
+              "new",
+              "sale",
+              "combat",
+              "supplement",
+              "herbal",
+              "football",
+              "running",
+              "basketball",
+              "tennis",
+              "boxing",
+              "mma",
+              "apparel",
+              "footwear",
+              "accessories",
+              "recovery",
+            ])
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [products]
   );
   const toDate = (value: DateField): Date => {
     if (value instanceof Timestamp) return value.toDate();
@@ -641,30 +1026,6 @@ export function AdminDashboard() {
       .map((entry) => String(entry || "").trim())
       .filter(Boolean)
       .join(" ");
-
-  const sizeOptionsForStock = useMemo(() => {
-    const explicitSizes = parseCommaSeparatedValues(productForm.sizes);
-    if (explicitSizes.length > 0) {
-      return explicitSizes;
-    }
-    return getDefaultSizesByCategory(buildSizingContext());
-  }, [
-    productForm.sizes,
-    productForm.category,
-    productForm.subcategory,
-    productForm.product_type,
-  ]);
-
-  useEffect(() => {
-    setSizeStockMap((prev) => {
-      const next: Record<string, number> = {};
-      sizeOptionsForStock.forEach((size) => {
-        next[size] = Number(prev[size] || 0);
-      });
-      return next;
-    });
-  }, [sizeOptionsForStock]);
-
   useEffect(() => {
     if (user === undefined) return;
     const adminEmails = ["lbathletes@hotmail.com", "sammourdany@gmail.com"];
@@ -1005,7 +1366,7 @@ export function AdminDashboard() {
       return sum + profit;
     }, 0);
 
-    const lowStockProducts = prods.filter((p) => (p.stock || 0) < 10).length;
+    const lowStockProducts = 0;
     const profitMargin =
       totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(2) : "0";
 
@@ -1024,6 +1385,13 @@ export function AdminDashboard() {
   };
 
   const openProductModal = (product?: Product) => {
+    setProductEntryMode("manual");
+    setImportUrl("");
+    setImportedProducts([]);
+    setImportError("");
+    setImportingFromLink(false);
+    setAddingImportedProducts(false);
+
     if (product) {
       setEditingProduct(product);
       setProductForm({
@@ -1058,7 +1426,6 @@ export function AdminDashboard() {
       });
       setColorImageRows(colorImageLinksToRows(product.color_images));
       setColorGalleryRows(colorGalleryLinksToRows(product.color_galleries));
-      setSizeStockMap(product.size_stock || {});
     } else {
       setEditingProduct(null);
       setProductForm({
@@ -1093,9 +1460,19 @@ export function AdminDashboard() {
       });
       setColorImageRows([]);
       setColorGalleryRows([]);
-      setSizeStockMap({});
     }
     setShowProductModal(true);
+  };
+
+  const openProductModalWithPreset = (preset: QuickAddProductPreset) => {
+    openProductModal();
+    setProductForm((prev) => ({
+      ...prev,
+      category: preset.category,
+      subcategory: preset.subcategory || "",
+      product_type: preset.product_type || preset.subcategory || "",
+      audience: normalizeProductAudience(undefined, preset.category),
+    }));
   };
 
   const openOrderModal = (order?: Order) => {
@@ -1201,8 +1578,8 @@ export function AdminDashboard() {
 
   const saveProduct = async () => {
     try {
-      if (!productForm.name || !productForm.image_url || !productForm.category) {
-        alert("Please fill in product name, category, and main image.");
+      if (!productForm.name || !productForm.description || !productForm.category) {
+        alert("Please fill in product name, description, and category.");
         return;
       }
 
@@ -1218,38 +1595,48 @@ export function AdminDashboard() {
           ? colorGalleriesFromRows
           : parseColorGalleryLinks(productForm.color_gallery_links);
       const selectedSizes =
-        parseCommaSeparatedValues(productForm.sizes).length > 0
+        isSupplementProduct
+          ? getDefaultSupplementSizes()
+          : !showSizingFields
+          ? getDefaultOneSizeSizes()
+          : parseCommaSeparatedValues(productForm.sizes).length > 0
           ? parseCommaSeparatedValues(productForm.sizes)
           : getDefaultSizesByCategory(buildSizingContext());
-      const cleanedSizeStock = selectedSizes.reduce((acc, size) => {
-        acc[size] = Math.max(0, Number(sizeStockMap[size] || 0));
-        return acc;
-      }, {} as Record<string, number>);
-      const totalStockFromSizes = Object.values(cleanedSizeStock).reduce(
-        (sum, value) => sum + Number(value || 0),
-        0
+
+      const resolvedImageUrl =
+        productForm.image_url.trim() ||
+        additionalImages[0] ||
+        "/logo-transparent.png";
+      const normalizedTaxonomy = normalizeAdminProductTaxonomy(
+        productForm.category,
+        productForm.subcategory,
+        productForm.product_type
       );
-      const hasPerSizeStock = Object.keys(cleanedSizeStock).length > 0;
+      const normalizedCategory = normalizedTaxonomy.category;
+      const normalizedSubcategory = normalizedTaxonomy.subcategory;
+      const normalizedProductType = normalizedTaxonomy.productType;
 
       const productData = {
         name: productForm.name,
         brand: productForm.brand.trim() || null,
-        product_type: productForm.product_type.trim() || null,
-        sku: productForm.sku.trim() || null,
+        product_type: normalizedProductType || null,
+        sku:
+          productForm.sku.trim() ||
+          buildAutoSku(normalizedCategory, productForm.name) ||
+          null,
         price: Number(productForm.price),
         cost_price: Number(productForm.cost_price),
         original_price:
           Number(productForm.original_price) || Number(productForm.price),
         description: productForm.description,
-        image_url: productForm.image_url,
-        category: productForm.category,
-        subcategory: productForm.subcategory || null,
-        audience: normalizeProductAudience(
-          productForm.audience,
-          productForm.category
-        ),
+        image_url: resolvedImageUrl,
+        category: normalizedCategory,
+        subcategory: normalizedSubcategory || null,
+        audience: isSupplementProduct
+          ? "unisex"
+          : normalizeProductAudience(productForm.audience, normalizedCategory),
         authenticity: normalizeProductAuthenticity(productForm.authenticity),
-        stock: hasPerSizeStock ? totalStockFromSizes : Number(productForm.stock),
+        stock: 0,
         discount_percentage: Number(productForm.discount_percentage),
         material: productForm.material || null,
         care_instructions: productForm.care_instructions || null,
@@ -1260,11 +1647,11 @@ export function AdminDashboard() {
           ? productForm.colors.split(",").map((c) => c.trim())
           : [],
         sizes: selectedSizes,
-        size_stock: cleanedSizeStock,
+        size_stock: {},
         images:
           additionalImages.length > 0
             ? additionalImages
-            : [productForm.image_url],
+            : [resolvedImageUrl],
         color_images: colorImages,
         color_galleries: colorGalleries,
         size_guide: productForm.size_guide || null,
@@ -1288,6 +1675,384 @@ export function AdminDashboard() {
     } catch (error) {
       console.error("Error saving product:", error);
       alert("Failed to save product");
+    }
+  };
+
+  const mapImportedProductToForm = (item: LinkImportProduct) => {
+    const category = item.category?.trim() || categories[0] || "Men";
+    const productType = item.product_type?.trim() || "";
+    const isSupplement =
+      /\b(supplement|herbal|protein|whey|creatine|pre[\s-]?workout|bcaa|vitamin|mass|collagen|omega|electrolyte|gainer)\b/.test(
+        `${category} ${productType}`.toLowerCase()
+      );
+    const sizes = isSupplement
+      ? getDefaultSupplementSizes()
+      : getDefaultSizesByCategory(`${category} ${productType}`);
+
+    setProductForm((prev) => ({
+      ...prev,
+      name: item.name || "",
+      brand: item.brand || "",
+      product_type: productType,
+      sku: item.sku || "",
+      price: Number(item.price || 0),
+      original_price: Number(item.original_price || item.price || 0),
+      description: item.description || "",
+      image_url: item.image_url || item.images?.[0] || "",
+      category,
+      subcategory: "",
+      audience: isSupplement
+        ? "unisex"
+        : normalizeProductAudience(undefined, category),
+      stock: 0,
+      discount_percentage: 0,
+      colors: Array.isArray(item.colors) ? item.colors.join(", ") : "",
+      sizes: sizes.join(", "),
+      images: Array.isArray(item.images) ? item.images.join(", ") : "",
+      authenticity: "original" as ProductAuthenticity,
+      is_featured: false,
+      is_new_arrival: false,
+    }));
+
+    setColorImageRows([]);
+    setColorGalleryRows([]);
+    setProductEntryMode("manual");
+  };
+
+  const importProductsFromUrl = async () => {
+    const normalized = importUrl.trim();
+    if (!normalized) {
+      setImportError("Please add a product or collection URL.");
+      return;
+    }
+
+    try {
+      setImportingFromLink(true);
+      setImportError("");
+      setImportedProducts([]);
+
+      const response = await fetch("/api/import-products-from-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: normalized }),
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error || "Could not parse products from this URL."
+        );
+      }
+
+      const parsedProducts = Array.isArray(payload?.products)
+        ? (payload.products as LinkImportProduct[])
+        : [];
+
+      if (parsedProducts.length === 0) {
+        throw new Error(
+          "No products were detected. Try a direct product page or a collection page."
+        );
+      }
+
+      setImportedProducts(parsedProducts);
+    } catch (error) {
+      console.error("Error importing products from URL:", error);
+      setImportError(
+        error instanceof Error ? error.message : "Failed to import products."
+      );
+    } finally {
+      setImportingFromLink(false);
+    }
+  };
+
+  const addImportedProductsToStore = async () => {
+    if (importedProducts.length === 0) {
+      setImportError("Import products first, then add them.");
+      return;
+    }
+
+    try {
+      setAddingImportedProducts(true);
+      setImportError("");
+
+      const batch = writeBatch(db);
+      let validCount = 0;
+      importedProducts.forEach((item) => {
+        const name = String(item.name || "").trim();
+        if (!name) return;
+
+        const category = String(item.category || "").trim() || "General";
+        const productType = String(item.product_type || "").trim();
+        const importedIsSupplement =
+          /\b(supplement|herbal|protein|whey|creatine|pre[\s-]?workout|bcaa|vitamin|mass|amino|collagen|omega|electrolyte|gainer)\b/i.test(
+            `${category} ${productType} ${item.name || ""} ${
+              Array.isArray(item.colors) ? item.colors.join(" ") : ""
+            }`
+          );
+        const imageUrl = String(item.image_url || item.images?.[0] || "").trim();
+        const images =
+          Array.isArray(item.images) && item.images.length > 0
+            ? item.images.filter(Boolean)
+            : imageUrl
+            ? [imageUrl]
+            : [];
+        const sizes = getDefaultSizesByCategory(`${category} ${productType}`);
+        const price = Math.max(0, Number(item.price || 0));
+        const originalPrice = Math.max(
+          price,
+          Number(item.original_price || item.price || 0)
+        );
+
+        const productRef = doc(collection(db, "products"));
+        batch.set(productRef, {
+          name,
+          brand: String(item.brand || "").trim() || null,
+          product_type: productType || null,
+          sku: String(item.sku || "").trim() || null,
+          price,
+          cost_price: 0,
+          original_price: originalPrice,
+          description: String(item.description || "").trim(),
+          image_url: imageUrl,
+          category,
+          subcategory: null,
+          audience: importedIsSupplement
+            ? "unisex"
+            : normalizeProductAudience(undefined, category),
+          authenticity: "original",
+          stock: 0,
+          discount_percentage: 0,
+          material: null,
+          care_instructions: null,
+          tags: [],
+          flavor: null,
+          net_weight: null,
+          colors: Array.isArray(item.colors)
+            ? item.colors
+                .map((color) => String(color || "").trim())
+                .filter(Boolean)
+            : [],
+          sizes,
+          size_stock: {},
+          images,
+          color_images: {},
+          color_galleries: {},
+          size_guide: null,
+          is_featured: false,
+          is_new_arrival: false,
+          created_at: Timestamp.now(),
+          source_url: String(item.source_url || "").trim() || null,
+        });
+        validCount += 1;
+      });
+
+      if (validCount === 0) {
+        throw new Error("No valid products found in import data.");
+      }
+
+      await batch.commit();
+      alert(
+        `Successfully added ${validCount} imported product${validCount === 1 ? "" : "s"}!`
+      );
+      setShowProductModal(false);
+    } catch (error) {
+      console.error("Error adding imported products:", error);
+      setImportError(
+        error instanceof Error
+          ? error.message
+          : "Failed to add imported products."
+      );
+    } finally {
+      setAddingImportedProducts(false);
+    }
+  };
+
+  const normalizeMartialArtsProducts = async () => {
+    if (isNormalizingMartialArts) return;
+
+    const isCombatCategory = (value: string) => {
+      const slug = slugifyPathToken(value || "");
+      return (
+        slug === "sports" ||
+        slug === "martial-arts" ||
+        slug.includes("muay-thai") ||
+        slug === "muaythai" ||
+        slug.includes("boxing") ||
+        slug === "mma" ||
+        slug.includes("combat")
+      );
+    };
+    const isGeneric = (value: string) => {
+      const slug = slugifyPathToken(value || "");
+      return !slug || slug === "sports" || slug === "martial-arts" || slug === "general";
+    };
+    const inferMartialChildType = (product: Product) => {
+      const text = [
+        product.name,
+        product.subcategory,
+        product.product_type,
+        Array.isArray(product.tags) ? product.tags.join(" ") : "",
+      ]
+        .map((entry) => String(entry || "").toLowerCase())
+        .join(" ");
+
+      if (/\bshin\s*guards?\b/.test(text)) return "Shin Guards";
+      if (/\bmouth\s*guard(s)?\b/.test(text)) return "Mouthguards";
+      if (/\bhand\s*wraps?\b|\bwraps?\b/.test(text)) return "Hand Wraps";
+      if (/\bboxing\b.*\bgloves?\b|\bgloves?\b.*\bboxing\b/.test(text)) return "Boxing Gloves";
+      if (/\bmma\b.*\bgloves?\b|\bgloves?\b.*\bmma\b/.test(text)) return "MMA Gloves";
+      if (/\bgloves?\b/.test(text)) return "Gloves";
+      if (/\brash\s*guard(s)?\b|\brashguard(s)?\b/.test(text)) return "Rashguards";
+      if (/\bshorts?\b|\btrunks?\b/.test(text)) return "Shorts";
+      if (/\bhead\s*gear\b|\bheadgear\b/.test(text)) return "Headgear";
+      if (/\bgroin\s*guard(s)?\b/.test(text)) return "Groin Guards";
+      if (/\bgi\b|\bkimono\b/.test(text)) return "Gi";
+      if (/\bfocus\s*mitt(s)?\b|\bthai\s*pad(s)?\b|\bkick\s*pad(s)?\b|\bpunching\s*bag(s)?\b/.test(text)) {
+        return "Pads & Bags";
+      }
+
+      const existingType = String(product.product_type || "").trim();
+      const existingSubcategory = String(product.subcategory || "").trim();
+      if (!isGeneric(existingType)) return existingType;
+      if (!isGeneric(existingSubcategory)) return existingSubcategory;
+      return "Equipment";
+    };
+
+    const targets = products.filter((product) =>
+      isCombatCategory(String(product.category || ""))
+    );
+    if (targets.length === 0) {
+      alert("No Sports/Martial Arts products found to normalize.");
+      return;
+    }
+
+    const shouldProceed = window.confirm(
+      `Normalize ${targets.length} combat products to Martial Arts taxonomy now?`
+    );
+    if (!shouldProceed) return;
+
+    try {
+      setIsNormalizingMartialArts(true);
+      let updatedCount = 0;
+      let batch = writeBatch(db);
+      let operations = 0;
+
+      for (const product of targets) {
+        const childType = inferMartialChildType(product);
+        const nextCategory = "Martial Arts";
+        const nextSubcategory = childType;
+        const nextProductType = childType;
+
+        const currentCategory = String(product.category || "").trim();
+        const currentSubcategory = String(product.subcategory || "").trim();
+        const currentProductType = String(product.product_type || "").trim();
+
+        const needsUpdate =
+          currentCategory !== nextCategory ||
+          currentSubcategory !== nextSubcategory ||
+          currentProductType !== nextProductType;
+
+        if (!needsUpdate) continue;
+
+        batch.update(doc(db, "products", product.id), {
+          category: nextCategory,
+          subcategory: nextSubcategory,
+          product_type: nextProductType,
+        });
+        operations += 1;
+        updatedCount += 1;
+
+        if (operations >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          operations = 0;
+        }
+      }
+
+      if (operations > 0) {
+        await batch.commit();
+      }
+
+      alert(
+        updatedCount > 0
+          ? `Normalized ${updatedCount} product${updatedCount === 1 ? "" : "s"} to Martial Arts taxonomy.`
+          : "All combat products were already normalized."
+      );
+    } catch (error) {
+      console.error("Failed to normalize martial arts products:", error);
+      alert("Failed to normalize Martial Arts products.");
+    } finally {
+      setIsNormalizingMartialArts(false);
+    }
+  };
+
+  const deleteImportedProductsForSource = async () => {
+    const normalized = importUrl.trim();
+    if (!normalized) {
+      setImportError("Paste a source URL first so we know what to delete.");
+      return;
+    }
+
+    let sourceHost = "";
+    try {
+      sourceHost = new URL(normalized).hostname.toLowerCase();
+    } catch {
+      setImportError("Please enter a valid source URL.");
+      return;
+    }
+
+    const shouldDelete = window.confirm(
+      `Delete all products imported from ${sourceHost}? This cannot be undone.`
+    );
+    if (!shouldDelete) return;
+
+    try {
+      setDeletingImportedProducts(true);
+      setImportError("");
+
+      const snapshot = await getDocs(collection(db, "products"));
+      const matchingIds: string[] = [];
+
+      snapshot.docs.forEach((entry) => {
+        const sourceUrl = String(entry.data()?.source_url || "").trim();
+        if (!sourceUrl) return;
+        try {
+          const productSourceHost = new URL(sourceUrl).hostname.toLowerCase();
+          if (productSourceHost === sourceHost) {
+            matchingIds.push(entry.id);
+          }
+        } catch {
+          // Ignore malformed source_url values.
+        }
+      });
+
+      if (matchingIds.length === 0) {
+        alert(`No imported products found for ${sourceHost}.`);
+        return;
+      }
+
+      let deletedCount = 0;
+      for (let i = 0; i < matchingIds.length; i += 450) {
+        const batch = writeBatch(db);
+        const chunk = matchingIds.slice(i, i + 450);
+        chunk.forEach((id) => batch.delete(doc(db, "products", id)));
+        await batch.commit();
+        deletedCount += chunk.length;
+      }
+
+      alert(
+        `Deleted ${deletedCount} imported product${deletedCount === 1 ? "" : "s"} from ${sourceHost}.`
+      );
+      setImportedProducts([]);
+    } catch (error) {
+      console.error("Error deleting imported products:", error);
+      setImportError(
+        error instanceof Error
+          ? error.message
+          : "Failed to delete imported products."
+      );
+    } finally {
+      setDeletingImportedProducts(false);
     }
   };
 
@@ -1454,6 +2219,7 @@ export function AdminDashboard() {
       };
 
       const nextStatus = orderForm.status as OrderStatus;
+
       if (nextStatus !== editingOrder.status) {
         await updateOrderStatusWithInventory({
           orderId: editingOrder.id,
@@ -1498,7 +2264,7 @@ export function AdminDashboard() {
         }
       }
 
-      await updateDoc(doc(db, "orders", editingOrder.id), orderData);
+      await updateDoc(doc(db, "orders", editingOrder.id), orderData as never);
 
       // Update user's order subcollection if exists
       if (editingOrder.user_id) {
@@ -2022,10 +2788,29 @@ export function AdminDashboard() {
   ) => {
     setHomepageSettings((prev) => {
       const nextItems = [...prev.shop_menu_items];
-      nextItems[index] = {
-        ...nextItems[index],
-        [field]: value,
-      };
+      const currentItem = nextItems[index];
+      if (!currentItem) return prev;
+
+      if (field === "label" && typeof value === "string") {
+        const nextLabel = value;
+        const previousSuggestedPath = suggestShopMenuPath(currentItem.label);
+        const currentPath = String(currentItem.path || "").trim();
+        const shouldAutoUpdatePath =
+          !currentPath || currentPath === previousSuggestedPath;
+
+        nextItems[index] = {
+          ...currentItem,
+          label: nextLabel,
+          path: shouldAutoUpdatePath
+            ? suggestShopMenuPath(nextLabel)
+            : currentItem.path,
+        };
+      } else {
+        nextItems[index] = {
+          ...currentItem,
+          [field]: value,
+        };
+      }
       return {
         ...prev,
         shop_menu_items: nextItems,
@@ -2041,7 +2826,7 @@ export function AdminDashboard() {
         {
           id: `menu-${Date.now()}`,
           label: "",
-          path: "/category/",
+          path: "",
           special: false,
         },
       ],
@@ -2121,7 +2906,9 @@ export function AdminDashboard() {
       .map((entry, index) => ({
         id: entry.id || `menu-${index + 1}`,
         label: entry.label.trim(),
-        path: entry.path.trim(),
+        path: entry.path.trim().startsWith("/")
+          ? entry.path.trim()
+          : `/${entry.path.trim()}`,
         special: Boolean(entry.special),
       }))
       .filter((entry) => entry.label && entry.path);
@@ -2682,6 +3469,51 @@ export function AdminDashboard() {
     { id: "subscribers", label: "Subscribers", icon: Mail },
   ];
   const activeTabMeta = tabs.find((tab) => tab.id === activeTab) || tabs[0];
+  const isManualProductEntry = editingProduct !== null || productEntryMode === "manual";
+  const productContextLabel = [
+    productForm.category,
+    productForm.subcategory,
+    productForm.product_type,
+  ]
+    .join(" ")
+    .toLowerCase();
+  const isSupplementProduct =
+    /\b(supplement|herbal|protein|whey|creatine|pre[\s-]?workout|bcaa|vitamin|mass|collagen|omega|electrolyte|gainer)\b/.test(
+      productContextLabel
+    );
+  const isFootwearProduct = /\b(shoe|sneaker|boot|cleat|runner|running)\b/.test(
+    productContextLabel
+  );
+  const isAccessoryLikeProduct =
+    /\b(accessories|accessory|bag|cap|hat|bottle|belt|shaker)\b/.test(
+      productContextLabel
+    );
+  const isCombatGearProduct =
+    /\b(glove|boxing|muay thai|mma|wrap|shin|guard|mouthguard)\b/.test(
+      productContextLabel
+    );
+  const showSizingFields = !isSupplementProduct && !isAccessoryLikeProduct;
+  const showSizeGuideField = showSizingFields;
+  const showMaterialAndCareFields = !isSupplementProduct;
+  const showSupplementFields = isSupplementProduct;
+  const showAudienceField = !isSupplementProduct;
+  const categoryAwareSubcategoryOptions = Array.from(
+    new Set([
+      ...(suggestedSubcategoryByCategory[productForm.category] || []),
+      ...suggestedSubcategoryOptions,
+    ])
+  ).sort((a, b) => a.localeCompare(b));
+  const autoGeneratedSku = buildAutoSku(productForm.category, productForm.name);
+  const productDetailProfile = isSupplementProduct
+    ? "Supplements"
+    : isFootwearProduct
+    ? "Footwear"
+    : isCombatGearProduct
+    ? "Combat Gear"
+    : isAccessoryLikeProduct
+    ? "Accessories"
+    : "Apparel / General";
+
   const handleTabSelect = (tabId: (typeof tabs)[number]["id"]) => {
     setActiveTab(tabId);
     setIsSideNavOpen(false);
@@ -2998,9 +3830,7 @@ export function AdminDashboard() {
                   {analytics.totalProducts}
                 </h3>
                 <p className="text-sm text-gray-600">Total Products</p>
-                <p className="text-xs text-red-500 mt-2">
-                  {analytics.lowStockProducts} low stock
-                </p>
+                <p className="text-xs text-gray-500 mt-2">Inventory tracking disabled</p>
               </div>
 
               <div className="bg-white p-6 rounded-xl shadow-sm">
@@ -3098,19 +3928,42 @@ export function AdminDashboard() {
               </div>
               <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
                 <button
+                  onClick={normalizeMartialArtsProducts}
+                  disabled={isNormalizingMartialArts}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60"
+                >
+                  <RefreshCw
+                    size={18}
+                    className={isNormalizingMartialArts ? "animate-spin" : ""}
+                  />
+                  {isNormalizingMartialArts
+                    ? "Fixing Martial Arts..."
+                    : "Fix Martial Arts Tabs"}
+                </button>
+                <button
                   onClick={() => exportData(filteredProducts, "products.csv")}
                   className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gray-200 text-black px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
                 >
                   <Download size={20} />
                   Export
                 </button>
-                <button
-                  onClick={() => openProductModal()}
-                  className="w-full sm:w-auto flex items-center justify-center gap-2 bg-black text-white px-6 py-2 rounded-lg hover:bg-gray-800 transition-colors"
-                >
-                  <Plus size={20} />
-                  Add Product
-                </button>
+              </div>
+            </div>
+            <div className="bg-white p-4 rounded-xl shadow-sm">
+              <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-3">
+                Quick Add By Sport
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-7 gap-2">
+                {quickAddProductPresets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    onClick={() => openProductModalWithPreset(preset)}
+                    className="flex items-center justify-center gap-2 bg-black text-white px-3 py-2 rounded-lg hover:bg-gray-800 transition-colors text-sm"
+                  >
+                    <Plus size={14} />
+                    {preset.label}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -3148,12 +4001,6 @@ export function AdminDashboard() {
                           </span>
                         )}
                       </div>
-                      {(product.stock || 0) < 5 && (
-                        <div className="absolute bottom-2 left-2 bg-red-500 text-white px-2 py-1 rounded text-xs flex items-center gap-1">
-                          <AlertCircle size={12} />
-                          Low Stock
-                        </div>
-                      )}
                     </div>
                     <div className="p-4">
                       <div className="flex items-start justify-between mb-2">
@@ -3212,17 +4059,6 @@ export function AdminDashboard() {
                             ${profit?.toFixed(2)} ({profitMargin}%)
                           </span>
                         </div>
-                      </div>
-
-                      <div className="flex items-center justify-between text-sm mb-3">
-                        <span className="text-gray-600">
-                          Stock: {product.stock || 0}
-                        </span>
-                        {(product.stock || 0) < 10 && (
-                          <span className="text-red-600 text-xs font-semibold">
-                            Low!
-                          </span>
-                        )}
                       </div>
 
                       {/* Quick Actions */}
@@ -4696,6 +5532,36 @@ export function AdminDashboard() {
               </button>
             </div>
 
+            {!editingProduct && (
+              <div className="px-6 pt-5">
+                <div className="inline-flex rounded-lg border border-gray-200 p-1 bg-gray-50">
+                  <button
+                    type="button"
+                    onClick={() => setProductEntryMode("manual")}
+                    className={`px-4 py-2 text-sm rounded-md transition-colors ${
+                      productEntryMode === "manual"
+                        ? "bg-black text-white"
+                        : "text-gray-700 hover:bg-white"
+                    }`}
+                  >
+                    Add Manually
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setProductEntryMode("link")}
+                    className={`px-4 py-2 text-sm rounded-md transition-colors ${
+                      productEntryMode === "link"
+                        ? "bg-black text-white"
+                        : "text-gray-700 hover:bg-white"
+                    }`}
+                  >
+                    Import From Link
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {isManualProductEntry ? (
             <div className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2">
@@ -4722,8 +5588,14 @@ export function AdminDashboard() {
                       setProductForm({ ...productForm, brand: e.target.value })
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                    placeholder="Nike, Everlast, Optimum Nutrition..."
+                    placeholder="Nike, Everlast..."
+                    list="admin-product-brands"
                   />
+                  <datalist id="admin-product-brands">
+                    {suggestedBrandOptions.map((brand) => (
+                      <option key={brand} value={brand} />
+                    ))}
+                  </datalist>
                 </div>
 
                 <div>
@@ -4740,22 +5612,24 @@ export function AdminDashboard() {
                       })
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                    placeholder="Shoes, Gloves, Protein, Shorts..."
+                    placeholder="Type product type..."
+                    list="admin-product-types"
                   />
+                  <datalist id="admin-product-types">
+                    {suggestedTypeOptions.map((type) => (
+                      <option key={type} value={type} />
+                    ))}
+                  </datalist>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-2">
-                    SKU (optional)
-                  </label>
+                  <label className="block text-sm font-medium mb-2">SKU</label>
                   <input
                     type="text"
-                    value={productForm.sku}
-                    onChange={(e) =>
-                      setProductForm({ ...productForm, sku: e.target.value })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                    placeholder="LB-GLV-12OZ-BLK"
+                    value={productForm.sku || autoGeneratedSku}
+                    onChange={(e) => setProductForm({ ...productForm, sku: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black bg-gray-50"
+                    placeholder={autoGeneratedSku || "LB-GLV-12OZ-BLK"}
                   />
                 </div>
               </div>
@@ -4772,11 +5646,12 @@ export function AdminDashboard() {
                       setProductForm({
                         ...productForm,
                         category: e.target.value.trim(),
+                        subcategory: "",
                       })
                     }
-                    list="admin-product-categories"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                    placeholder="Type a category (e.g. Socks, Muay Thai, Supplements, Football Gear)"
+                    placeholder="Type category..."
+                    list="admin-product-categories"
                   />
                   <datalist id="admin-product-categories">
                     {suggestedCategoryOptions.map((cat) => (
@@ -4799,35 +5674,42 @@ export function AdminDashboard() {
                       })
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                    placeholder="T-Shirts"
+                    placeholder="Type subcategory..."
+                    list="admin-product-subcategories"
                   />
+                  <datalist id="admin-product-subcategories">
+                    {categoryAwareSubcategoryOptions.map((subcategory) => (
+                      <option key={subcategory} value={subcategory} />
+                    ))}
+                  </datalist>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Audience
-                  </label>
-                  <select
-                    value={productForm.audience}
-                    onChange={(e) =>
-                      setProductForm({
-                        ...productForm,
-                        audience: e.target.value as ProductAudience,
-                      })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                  >
-                    <option value="men">Men</option>
-                    <option value="women">Women</option>
-                    <option value="unisex">Unisex</option>
-                  </select>
-                </div>
+                {showAudienceField && (
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Audience
+                    </label>
+                    <input
+                      type="text"
+                      value={productForm.audience}
+                      onChange={(e) =>
+                        setProductForm({
+                          ...productForm,
+                          audience: e.target.value as ProductAudience,
+                        })
+                      }
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                      placeholder="men, women, or unisex"
+                    />
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium mb-2">
                     Authenticity
                   </label>
-                  <select
+                  <input
+                    type="text"
                     value={productForm.authenticity}
                     onChange={(e) =>
                       setProductForm({
@@ -4836,18 +5718,201 @@ export function AdminDashboard() {
                       })
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                  >
-                    <option value="original">
-                      {productAuthenticityLabelMap.original}
-                    </option>
-                    <option value="copy_a">
-                      {productAuthenticityLabelMap.copy_a}
-                    </option>
-                  </select>
+                    placeholder="original or copy_a"
+                  />
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.14em] text-gray-500">
+                      Category Tree
+                    </p>
+                    <p className="text-sm text-gray-700">
+                      Click a node to auto-fill category, subcategory, and product
+                      type.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                  {categoryTree.map((categoryNode) => {
+                    const isSelectedCategory =
+                      productForm.category === categoryNode.category;
+
+                    return (
+                      <details
+                        key={categoryNode.category}
+                        open={isSelectedCategory}
+                        className="rounded-lg border border-gray-200 bg-white"
+                      >
+                        <summary className="list-none cursor-pointer px-3 py-2.5 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <ChevronDown
+                              size={15}
+                              className="text-gray-500 details-chevron"
+                            />
+                            <span
+                              className={`text-sm font-medium ${
+                                isSelectedCategory ? "text-black" : "text-gray-700"
+                              }`}
+                            >
+                              {categoryNode.category}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setProductForm((prev) => ({
+                                ...prev,
+                                category: categoryNode.category,
+                                subcategory: "",
+                                product_type: "",
+                              }));
+                            }}
+                            className={`text-xs px-2.5 py-1 rounded-full border ${
+                              isSelectedCategory
+                                ? "border-black text-black"
+                                : "border-gray-300 text-gray-600 hover:border-black hover:text-black"
+                            }`}
+                          >
+                            Use Category
+                          </button>
+                        </summary>
+
+                        <div className="px-3 pb-3 space-y-2">
+                          {categoryNode.subcategories.map((subcategoryNode) => {
+                            const isSelectedSubcategory =
+                              isSelectedCategory &&
+                              productForm.subcategory === subcategoryNode.name;
+
+                            return (
+                              <div
+                                key={`${categoryNode.category}-${subcategoryNode.name}`}
+                                className="rounded-md border border-gray-200 p-2"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span
+                                    className={`text-sm ${
+                                      isSelectedSubcategory
+                                        ? "text-black font-medium"
+                                        : "text-gray-700"
+                                    }`}
+                                  >
+                                    {subcategoryNode.name}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setProductForm((prev) => ({
+                                        ...prev,
+                                        category: categoryNode.category,
+                                        subcategory: subcategoryNode.name,
+                                      }))
+                                    }
+                                    className={`text-xs px-2 py-1 rounded-full border ${
+                                      isSelectedSubcategory
+                                        ? "border-black text-black"
+                                        : "border-gray-300 text-gray-600 hover:border-black hover:text-black"
+                                    }`}
+                                  >
+                                    Use Subcategory
+                                  </button>
+                                </div>
+
+                                {subcategoryNode.types.length > 0 && (
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {subcategoryNode.types.map((productType) => {
+                                      const isSelectedType =
+                                        isSelectedSubcategory &&
+                                        productForm.product_type === productType;
+                                      return (
+                                        <button
+                                          type="button"
+                                          key={`${subcategoryNode.name}-${productType}`}
+                                          onClick={() =>
+                                            setProductForm((prev) => ({
+                                              ...prev,
+                                              category: categoryNode.category,
+                                              subcategory: subcategoryNode.name,
+                                              product_type: productType,
+                                            }))
+                                          }
+                                          className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                                            isSelectedType
+                                              ? "bg-black text-white border-black"
+                                              : "bg-white text-gray-700 border-gray-300 hover:border-black hover:text-black"
+                                          }`}
+                                        >
+                                          {productType}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {categoryNode.directTypes.length > 0 && (
+                            <div className="rounded-md border border-dashed border-gray-200 p-2">
+                              <p className="text-[11px] uppercase tracking-[0.12em] text-gray-500 mb-2">
+                                Types (No Subcategory)
+                              </p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {categoryNode.directTypes.map((productType) => {
+                                  const isSelectedType =
+                                    isSelectedCategory &&
+                                    !productForm.subcategory &&
+                                    productForm.product_type === productType;
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={`${categoryNode.category}-${productType}`}
+                                      onClick={() =>
+                                        setProductForm((prev) => ({
+                                          ...prev,
+                                          category: categoryNode.category,
+                                          subcategory: "",
+                                          product_type: productType,
+                                        }))
+                                      }
+                                      className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                                        isSelectedType
+                                          ? "bg-black text-white border-black"
+                                          : "bg-white text-gray-700 border-gray-300 hover:border-black hover:text-black"
+                                      }`}
+                                    >
+                                      {productType}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </details>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.14em] text-gray-500">
+                  Category Profile
+                </p>
+                <p className="text-sm text-gray-800 mt-1">
+                  {productDetailProfile} details are currently shown.
+                  {isSupplementProduct
+                    ? " Supplements are forced to Unisex and use supplement-specific fields."
+                    : ""}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">
                     Retail Price ($) *
@@ -4884,23 +5949,6 @@ export function AdminDashboard() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Total Stock
-                  </label>
-                  <input
-                    type="number"
-                    value={sizeOptionsForStock.reduce(
-                      (sum, size) => sum + Number(sizeStockMap[size] || 0),
-                      0
-                    )}
-                    readOnly
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-700"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Auto-calculated from per-size stock below.
-                  </p>
-                </div>
               </div>
 
               {/* Profit Display */}
@@ -5104,9 +6152,7 @@ export function AdminDashboard() {
 
 
               <div>
-                <label className="block text-sm font-medium mb-2">
-                  Colors (comma-separated)
-                </label>
+                <label className="block text-sm font-medium mb-2">Colors</label>
                 <input
                   type="text"
                   value={productForm.colors}
@@ -5118,48 +6164,47 @@ export function AdminDashboard() {
                 />
               </div>
 
+              {showSizingFields && (
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-medium">
-                    Sizes (comma-separated)
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => applySizePreset("shoe")}
-                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                    >
-                      Shoe
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => applySizePreset("apparel")}
-                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                    >
-                      Apparel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => applySizePreset("one-size")}
-                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                    >
-                      One Size
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => applySizePreset("glove-oz")}
-                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                    >
-                      Glove OZ
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => applySizePreset("supplement")}
-                      className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-                    >
-                      Supplement
-                    </button>
-                  </div>
+                  <label className="block text-sm font-medium">Sizes</label>
+                </div>
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => applySizePreset("shoe")}
+                    className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                  >
+                    Shoe
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applySizePreset("apparel")}
+                    className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                  >
+                    Apparel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applySizePreset("one-size")}
+                    className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                  >
+                    One Size
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applySizePreset("glove-oz")}
+                    className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                  >
+                    Glove OZ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applySizePreset("supplement")}
+                    className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                  >
+                    Supplement
+                  </button>
                 </div>
                 <input
                   type="text"
@@ -5168,48 +6213,13 @@ export function AdminDashboard() {
                     setProductForm({ ...productForm, sizes: e.target.value })
                   }
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                  placeholder={
-                    productForm.category.trim().toLowerCase().includes("shoe")
-                      ? "36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48"
-                      : "XS, S, M, L, XL or One Size or 8oz, 10oz, 12oz..."
-                  }
+                  placeholder="XS, S, M, L or 8oz, 10oz, 12oz..."
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   Leave blank to auto-fill defaults based on category.
                 </p>
               </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Stock Per Size
-                </label>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  {sizeOptionsForStock.map((size) => (
-                    <label
-                      key={size}
-                      className="border border-gray-200 rounded-lg p-2 flex items-center justify-between gap-2"
-                    >
-                      <span className="text-xs font-semibold">{size}</span>
-                      <input
-                        type="number"
-                        min="0"
-                        value={Number(sizeStockMap[size] || 0)}
-                        onChange={(e) =>
-                          setSizeStockMap((prev) => ({
-                            ...prev,
-                            [size]: Math.max(0, Number(e.target.value || 0)),
-                          }))
-                        }
-                        className="w-20 px-2 py-1 border border-gray-300 rounded text-sm text-right focus:outline-none focus:border-black"
-                      />
-                    </label>
-                  ))}
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Enter quantity for each size. Checkout will now deduct stock by
-                  selected size.
-                </p>
-              </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium mb-2">
@@ -5363,9 +6373,10 @@ export function AdminDashboard() {
                 </p>
               </div>
 
+              {showSizeGuideField && (
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Size Guide (all products)
+                  Size Guide
                 </label>
                 <textarea
                   value={productForm.size_guide}
@@ -5380,7 +6391,9 @@ export function AdminDashboard() {
                   placeholder="Example: S = chest 88-94 cm, M = 95-101 cm..."
                 />
               </div>
+              )}
 
+              {showMaterialAndCareFields && (
               <div>
                 <label className="block text-sm font-medium mb-2">
                   Material
@@ -5395,7 +6408,9 @@ export function AdminDashboard() {
                   placeholder="100% Cotton"
                 />
               </div>
+              )}
 
+              {showMaterialAndCareFields && (
               <div>
                 <label className="block text-sm font-medium mb-2">
                   Care Instructions
@@ -5413,11 +6428,12 @@ export function AdminDashboard() {
                   placeholder="Machine wash cold..."
                 />
               </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    Tags (comma-separated)
+                    Tags
                   </label>
                   <input
                     type="text"
@@ -5426,44 +6442,155 @@ export function AdminDashboard() {
                       setProductForm({ ...productForm, tags: e.target.value })
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                    placeholder="muay thai, training, gym, whey, recovery"
+                    placeholder="training, gym, lifestyle"
+                    list="admin-product-tags"
                   />
+                  <datalist id="admin-product-tags">
+                    {suggestedTagOptions.map((tag) => (
+                      <option key={tag} value={tag} />
+                    ))}
+                  </datalist>
+                </div>
+
+                {showSupplementFields && (
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Flavor (if applicable)
+                    </label>
+                    <input
+                      type="text"
+                      value={productForm.flavor}
+                      onChange={(e) =>
+                        setProductForm({ ...productForm, flavor: e.target.value })
+                      }
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                      placeholder="Chocolate, Vanilla..."
+                    />
+                  </div>
+                )}
+              </div>
+
+              {showSupplementFields && (
+                <div>
+                    <label className="block text-sm font-medium mb-2">
+                    Net Weight / Size
+                  </label>
+                  <input
+                    type="text"
+                    value={productForm.net_weight}
+                    onChange={(e) =>
+                      setProductForm({
+                        ...productForm,
+                        net_weight: e.target.value,
+                      })
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    placeholder="2.2lb / 1kg / 30 servings"
+                  />
+                </div>
+              )}
+            </div>
+            ) : (
+              <div className="p-6 space-y-4">
+                <div className="rounded-lg border border-gray-200 p-4 bg-gray-50">
+                  <p className="text-sm text-gray-700">
+                    Paste a product URL or a collection URL. We will try to detect and import every product on that page.
+                  </p>
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    Flavor (supplements)
+                    Product/Collection URL
                   </label>
-                  <input
-                    type="text"
-                    value={productForm.flavor}
-                    onChange={(e) =>
-                      setProductForm({ ...productForm, flavor: e.target.value })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                    placeholder="Chocolate, Vanilla, Fruit Punch..."
-                  />
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="url"
+                      value={importUrl}
+                      onChange={(e) => setImportUrl(e.target.value)}
+                      placeholder="https://example.com/collections/new-arrivals"
+                      className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    />
+                    <button
+                      type="button"
+                      onClick={importProductsFromUrl}
+                      disabled={importingFromLink}
+                      className="px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {importingFromLink ? "Scanning..." : "Scan Link"}
+                    </button>
+                  </div>
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={deleteImportedProductsForSource}
+                      disabled={deletingImportedProducts || importingFromLink}
+                      className="text-sm px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {deletingImportedProducts
+                        ? "Deleting Imported Products..."
+                        : "Delete Imported Products For This Source"}
+                    </button>
+                  </div>
                 </div>
-              </div>
 
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Net Weight (supplements)
-                </label>
-                <input
-                  type="text"
-                  value={productForm.net_weight}
-                  onChange={(e) =>
-                    setProductForm({
-                      ...productForm,
-                      net_weight: e.target.value,
-                    })
-                  }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                  placeholder="1kg / 2lb / 500g"
-                />
+                {importError && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {importError}
+                  </div>
+                )}
+
+                {importedProducts.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-gray-800">
+                        Found {importedProducts.length} product
+                        {importedProducts.length === 1 ? "" : "s"}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => mapImportedProductToForm(importedProducts[0])}
+                        className="text-sm px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                      >
+                        Load first item into manual form
+                      </button>
+                    </div>
+
+                    <div className="max-h-72 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                      {importedProducts.map((product, index) => (
+                        <div
+                          key={`${product.name}-${index}`}
+                          className="p-3 flex items-center gap-3"
+                        >
+                          <div className="w-14 h-14 rounded-lg overflow-hidden border border-gray-200 bg-white flex items-center justify-center">
+                            {product.image_url ? (
+                              <img
+                                src={product.image_url}
+                                alt={product.name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <Package size={18} className="text-gray-400" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-gray-900 truncate">
+                              {product.name}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">
+                              {product.category || "Uncategorized"}
+                              {product.product_type ? ` • ${product.product_type}` : ""}
+                            </p>
+                          </div>
+                          <p className="text-sm font-semibold text-gray-900">
+                            ${Number(product.price || 0).toFixed(2)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
+            )}
 
             <div className="p-6 border-t border-gray-200 flex flex-col sm:flex-row gap-3 sticky bottom-0 bg-white">
               <button
@@ -5473,11 +6600,29 @@ export function AdminDashboard() {
                 Cancel
               </button>
               <button
-                onClick={saveProduct}
+                onClick={
+                  isManualProductEntry ? saveProduct : addImportedProductsToStore
+                }
+                disabled={
+                  !isManualProductEntry &&
+                  (importedProducts.length === 0 ||
+                    importingFromLink ||
+                    addingImportedProducts)
+                }
                 className="flex-1 px-6 py-3 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
               >
                 <Save size={20} />
-                {editingProduct ? "Update Product" : "Add Product"}
+                {isManualProductEntry
+                  ? editingProduct
+                    ? "Update Product"
+                    : "Add Product"
+                  : addingImportedProducts
+                  ? "Adding Imported Products..."
+                  : importedProducts.length > 0
+                  ? `Add ${importedProducts.length} Imported Product${
+                      importedProducts.length === 1 ? "" : "s"
+                    }`
+                  : "Add Imported Products"}
               </button>
             </div>
           </div>

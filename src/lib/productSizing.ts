@@ -28,6 +28,9 @@ const oneSizeKeywords = [
 
 const supplementKeywords = [
   "supplement",
+  "herbal",
+  "wellness",
+  "recovery",
   "protein",
   "creatine",
   "pre-workout",
@@ -37,6 +40,9 @@ const supplementKeywords = [
   "gainer",
   "vitamin",
   "whey",
+  "collagen",
+  "omega",
+  "electrolyte",
 ];
 
 const normalizeCategory = (category: string) => category.trim().toLowerCase();

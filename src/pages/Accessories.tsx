@@ -349,7 +349,9 @@ export function Accessories() {
                       <img
                         src={product.image_url}
                         alt={product.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        loading="lazy"
+                        decoding="async"
+                        className="w-full h-full object-cover object-center scale-[1.1] group-hover:scale-[1.14] transition-transform duration-500"
                       />
                     </div>
                     <p className="text-xs text-gray-500 mb-1">
@@ -379,7 +381,9 @@ export function Accessories() {
                       <img
                         src={product.image_url}
                         alt={product.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        loading="lazy"
+                        decoding="async"
+                        className="w-full h-full object-cover object-center scale-[1.1] group-hover:scale-[1.14] transition-transform duration-500"
                       />
                     </div>
                     <div className="flex-1">

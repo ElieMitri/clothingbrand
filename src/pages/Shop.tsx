@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
+import { Filter, X } from "lucide-react";
 import { db } from "../lib/firebase";
 import { collection, onSnapshot } from "firebase/firestore";
+import { toCategorySlug } from "../lib/category";
 import {
   ProductAudience,
   audienceLabelMap,
@@ -32,7 +34,30 @@ interface Product {
   authenticity?: ProductAuthenticity;
 }
 
+const isGenericChildType = (entry: string, parentCategory: string) => {
+  const childSlug = toCategorySlug(entry || "");
+  const parentSlug = toCategorySlug(parentCategory || "");
+  if (!childSlug) return true;
+  if (childSlug === parentSlug) return true;
+  return childSlug === "all" || childSlug === "general" || childSlug === "other";
+};
+
+const resolveProductChildType = (product: Product) => {
+  const category = String(product.category || "").trim();
+  const subcategory = String(product.subcategory || "").trim();
+  const productType = String(product.product_type || "").trim();
+
+  if (productType && !isGenericChildType(productType, category)) {
+    return productType;
+  }
+  if (subcategory && !isGenericChildType(subcategory, category)) {
+    return subcategory;
+  }
+  return "";
+};
+
 export function Shop() {
+  const location = useLocation();
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,11 +72,53 @@ export function Shop() {
   );
   const [searchTerm, setSearchTerm] = useState("");
   const [categories, setCategories] = useState<string[]>(["all"]);
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
+
+  const categoryMatches = (
+    productCategory: string,
+    selectedCategoryValue: string
+  ) => {
+    if (selectedCategoryValue === "all") return true;
+
+    const selectedSlug = toCategorySlug(selectedCategoryValue);
+    const productSlug = toCategorySlug(productCategory || "");
+    if (!selectedSlug || !productSlug) return false;
+    if (productSlug === selectedSlug) return true;
+
+    if (selectedSlug === "gym" || selectedSlug === "gym-crossfit") {
+      return productSlug.includes("gym") || productSlug.includes("crossfit");
+    }
+
+    if (selectedSlug === "martial-arts") {
+      return (
+        productSlug.includes("sports") ||
+        productSlug.includes("martial") ||
+        productSlug.includes("muay-thai") ||
+        productSlug.includes("muaythai") ||
+        productSlug.includes("boxing") ||
+        productSlug.includes("mma") ||
+        productSlug.includes("combat")
+      );
+    }
+
+    return false;
+  };
+  const categorySupportsAudienceFilter = (categoryName: string) => {
+    const slug = toCategorySlug(categoryName || "");
+    return (
+      slug.includes("shoe") ||
+      slug.includes("sneaker") ||
+      slug.includes("cloth") ||
+      slug.includes("apparel")
+    );
+  };
 
   const getProductType = (product: Product) =>
-    String(product.subcategory || product.product_type || "")
-      .trim()
-      .toLowerCase();
+    resolveProductChildType(product).toLowerCase();
+  const isSupplementLikeProduct = (product: Product) =>
+    /\b(supplement|protein|whey|creatine|amino|bcaa|eaa|vitamin|mass|pre[\s-]?workout)\b/i.test(
+      `${product.category || ""} ${product.subcategory || ""} ${product.product_type || ""} ${product.name || ""}`
+    );
 
   const toDateValue = (value: unknown) => {
     if (value && typeof value === "object" && "toDate" in (value as object)) {
@@ -67,6 +134,22 @@ export function Shop() {
       if (!Number.isNaN(parsed.getTime())) return parsed;
     }
     return new Date(0);
+  };
+  const getDisplayCategoryName = (categoryName: string) => {
+    const slug = toCategorySlug(categoryName || "");
+    if (slug.includes("gym") || slug.includes("crossfit")) return "Gym";
+    if (
+      slug.includes("sports") ||
+      slug.includes("martial") ||
+      slug.includes("muay-thai") ||
+      slug.includes("muaythai") ||
+      slug.includes("boxing") ||
+      slug.includes("mma") ||
+      slug.includes("combat")
+    ) {
+      return "Martial Arts";
+    }
+    return categoryName;
   };
 
   useEffect(() => {
@@ -103,15 +186,51 @@ export function Shop() {
     setSelectedType("all");
   }, [selectedCategory]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const categoryParam = params.get("category");
+    if (!categoryParam) {
+      if (location.pathname === "/shop") {
+        setSelectedCategory("all");
+      }
+      return;
+    }
+    const requestedCategory = categoryParam.trim();
+    const requestedSlug = toCategorySlug(requestedCategory);
+    if (
+      requestedSlug.includes("sports") ||
+      requestedSlug.includes("martial") ||
+      requestedSlug.includes("muay-thai") ||
+      requestedSlug.includes("muaythai") ||
+      requestedSlug.includes("boxing") ||
+      requestedSlug.includes("mma") ||
+      requestedSlug.includes("combat")
+    ) {
+      setSelectedCategory("Martial Arts");
+      return;
+    }
+    setSelectedCategory(requestedCategory);
+  }, [location.pathname, location.search]);
+
+  const categoryOptions = useMemo(() => {
+    const normalized = Array.from(
+      new Set(
+        categories.map((entry) => getDisplayCategoryName(entry)).filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+    return normalized;
+  }, [categories]);
+
   const typeOptions = useMemo(() => {
-    const source =
-      selectedCategory === "all"
-        ? products
-        : products.filter((product) => product.category === selectedCategory);
+    if (selectedCategory === "all") return ["all"];
+
+    const source = products.filter((product) =>
+      categoryMatches(product.category, selectedCategory)
+    );
     const types = Array.from(
       new Set(
         source
-          .map((product) => product.subcategory || product.product_type || "")
+          .map((product) => resolveProductChildType(product))
           .map((entry) => entry.trim())
           .filter(Boolean)
       )
@@ -119,22 +238,41 @@ export function Shop() {
 
     return ["all", ...types];
   }, [products, selectedCategory]);
+  const shouldShowTypeFilter = selectedCategory !== "all" && typeOptions.length > 1;
+  const shouldShowAudienceFilter = useMemo(() => {
+    if (selectedCategory === "all") return false;
+    return categorySupportsAudienceFilter(selectedCategory);
+  }, [selectedCategory]);
+
+  useEffect(() => {
+    if (!shouldShowTypeFilter && selectedType !== "all") {
+      setSelectedType("all");
+    }
+  }, [shouldShowTypeFilter, selectedType]);
+
+  useEffect(() => {
+    if (!shouldShowAudienceFilter && selectedAudience !== "all") {
+      setSelectedAudience("all");
+    }
+  }, [shouldShowAudienceFilter, selectedAudience]);
 
   useEffect(() => {
     let filtered = [...products];
 
     if (selectedCategory !== "all") {
-      filtered = filtered.filter((product) => product.category === selectedCategory);
+      filtered = filtered.filter((product) =>
+        categoryMatches(product.category, selectedCategory)
+      );
     }
 
-    if (selectedType !== "all") {
+    if (shouldShowTypeFilter && selectedType !== "all") {
       filtered = filtered.filter(
         (product) =>
           getProductType(product) === selectedType.trim().toLowerCase()
       );
     }
 
-    if (selectedAudience !== "all") {
+    if (shouldShowAudienceFilter && selectedAudience !== "all") {
       filtered = filtered.filter(
         (product) =>
           normalizeProductAudience(product.audience, product.category) ===
@@ -197,95 +335,233 @@ export function Shop() {
     products,
     selectedCategory,
     selectedType,
+    shouldShowTypeFilter,
     selectedAudience,
+    shouldShowAudienceFilter,
     colorInput,
     sortBy,
     searchTerm,
   ]);
 
+  useEffect(() => {
+    if (!isFilterPanelOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isFilterPanelOpen]);
+
+  useEffect(() => {
+    if (!isFilterPanelOpen) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsFilterPanelOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [isFilterPanelOpen]);
+
+  const activeFilterCount = [
+    selectedCategory !== "all",
+    shouldShowTypeFilter && selectedType !== "all",
+    shouldShowAudienceFilter && selectedAudience !== "all",
+    colorInput.trim().length > 0,
+    sortBy !== "featured",
+    searchTerm.trim().length > 0,
+  ].filter(Boolean).length;
+
+  const clearFilters = () => {
+    setSelectedCategory("all");
+    setSelectedType("all");
+    setSelectedAudience("all");
+    setColorInput("");
+    setSortBy("featured");
+    setSearchTerm("");
+  };
+
   return (
-    <div className="min-h-screen pt-20 pb-10 px-4 bg-white">
+    <div className="min-h-screen pt-20 pb-20 px-4 bg-white">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-4xl md:text-5xl font-light text-center mb-8 tracking-[0.14em]">
-          SHOP
-        </h1>
-
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-5">
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-sm text-gray-500">Search</label>
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Name, brand, type, SKU..."
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[220px]"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-sm text-gray-500">Type</label>
-            <select
-              value={selectedType}
-              onChange={(e) => setSelectedType(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[180px]"
-            >
-              <option value="all">Everything</option>
-              {typeOptions
-                .filter((entry) => entry !== "all")
-                .map((entry) => (
-                  <option key={entry} value={entry}>
-                    {entry}
-                  </option>
-                ))}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-sm text-gray-500">Audience</label>
-            <select
-              value={selectedAudience}
-              onChange={(e) =>
-                setSelectedAudience(e.target.value as ProductAudience | "all")
-              }
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[150px]"
-            >
-              <option value="all">All</option>
-              <option value="men">Men</option>
-              <option value="women">Women</option>
-              <option value="unisex">Unisex</option>
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-sm text-gray-500">Color</label>
-            <input
-              type="text"
-              value={colorInput}
-              onChange={(e) => setColorInput(e.target.value)}
-              placeholder="Black, White, Navy..."
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[170px]"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-sm text-gray-500">Sort</label>
-            <select
-              value={sortBy}
-              onChange={(e) =>
-                setSortBy(e.target.value as "featured" | "price-low" | "price-high")
-              }
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm min-w-[190px]"
-            >
-              <option value="featured">Featured</option>
-              <option value="price-low">Price: Low to High</option>
-              <option value="price-high">Price: High to Low</option>
-            </select>
-          </div>
+        <div className="mb-8 flex items-center justify-between gap-3">
+          <h1 className="text-4xl md:text-5xl font-light tracking-[0.14em]">SHOP</h1>
+          <button
+            type="button"
+            onClick={() => setIsFilterPanelOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium hover:border-black transition-colors"
+          >
+            <Filter size={16} />
+            Filters
+            {activeFilterCount > 0 ? (
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-black px-1.5 text-[11px] font-semibold text-white">
+                {activeFilterCount}
+              </span>
+            ) : null}
+          </button>
         </div>
 
-        {/* Category Filter */}
+        <div className="flex items-center justify-between gap-4 mb-5">
+          <p className="text-sm text-gray-500">
+            Showing {filteredProducts.length} product
+            {filteredProducts.length === 1 ? "" : "s"}
+          </p>
+          {activeFilterCount > 0 ? (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-sm text-gray-500 hover:text-black underline underline-offset-4"
+            >
+              Clear filters
+            </button>
+          ) : null}
+        </div>
+
+        <div
+          className={`fixed inset-x-0 top-[84px] bottom-0 z-[140] transition-opacity duration-300 ${
+            isFilterPanelOpen
+              ? "opacity-100 pointer-events-auto"
+              : "opacity-0 pointer-events-none"
+          }`}
+          aria-hidden={!isFilterPanelOpen}
+        >
+          <button
+            type="button"
+            onClick={() => setIsFilterPanelOpen(false)}
+            className="absolute inset-0 bg-black/35"
+            aria-label="Close filter panel"
+          />
+
+          <aside
+            className={`absolute right-0 top-0 h-full w-[360px] max-w-[90vw] bg-white border-l border-gray-200 shadow-2xl transition-transform duration-300 ease-out ${
+              isFilterPanelOpen ? "translate-x-0" : "translate-x-full"
+            }`}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold">Filters</h2>
+              <button
+                type="button"
+                onClick={() => setIsFilterPanelOpen(false)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
+                aria-label="Close filters"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 overflow-y-auto h-[calc(100%-68px)]">
+              <div className="space-y-1.5">
+                <label className="text-sm text-gray-500">Search</label>
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Name, brand, type, SKU..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm text-gray-500">Category</label>
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  {categoryOptions.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {shouldShowTypeFilter && (
+                <div className="space-y-1.5">
+                  <label className="text-sm text-gray-500">Type</label>
+                  <select
+                    value={selectedType}
+                    onChange={(e) => setSelectedType(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  >
+                    <option value="all">Everything</option>
+                    {typeOptions
+                      .filter((entry) => entry !== "all")
+                      .map((entry) => (
+                        <option key={entry} value={entry}>
+                          {entry}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+
+              {shouldShowAudienceFilter && (
+                <div className="space-y-1.5">
+                  <label className="text-sm text-gray-500">Audience</label>
+                  <select
+                    value={selectedAudience}
+                    onChange={(e) =>
+                      setSelectedAudience(e.target.value as ProductAudience | "all")
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  >
+                    <option value="all">All</option>
+                    <option value="men">Men</option>
+                    <option value="women">Women</option>
+                    <option value="unisex">Unisex</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-sm text-gray-500">Color</label>
+                <input
+                  type="text"
+                  value={colorInput}
+                  onChange={(e) => setColorInput(e.target.value)}
+                  placeholder="Black, White, Navy..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm text-gray-500">Sort</label>
+                <select
+                  value={sortBy}
+                  onChange={(e) =>
+                    setSortBy(e.target.value as "featured" | "price-low" | "price-high")
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value="featured">Featured</option>
+                  <option value="price-low">Price: Low to High</option>
+                  <option value="price-high">Price: High to Low</option>
+                </select>
+              </div>
+
+              <div className="pt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2.5 text-sm hover:bg-gray-50 transition-colors"
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsFilterPanelOpen(false)}
+                  className="flex-1 rounded-lg bg-black text-white px-3 py-2.5 text-sm hover:bg-gray-800 transition-colors"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          </aside>
+        </div>
+
         <div className="flex justify-center gap-4 md:gap-6 mb-8 flex-wrap border-b border-gray-200 pb-2">
-          {categories.map((category) => (
+          {categoryOptions.map((category) => (
             <button
               key={category}
               onClick={() => setSelectedCategory(category)}
@@ -300,7 +576,29 @@ export function Shop() {
           ))}
         </div>
 
-        {/* Products Grid */}
+        {shouldShowTypeFilter && (
+          <div className="flex justify-center gap-3 md:gap-5 mb-8 flex-wrap border-b border-gray-200 pb-2">
+            {typeOptions.map((entry) => {
+              const isAll = entry === "all";
+              const isSelected = selectedType === entry;
+              const label = isAll ? "All" : entry;
+              return (
+                <button
+                  key={`type-tab-${entry}`}
+                  onClick={() => setSelectedType(entry)}
+                  className={`text-xs md:text-sm tracking-[0.12em] uppercase transition-colors pb-2 ${
+                    isSelected
+                      ? "text-black border-b-2 border-black font-medium"
+                      : "text-gray-400 hover:text-gray-600"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 md:gap-6">
             {[...Array(8)].map((_, i) => (
@@ -334,28 +632,36 @@ export function Shop() {
                 to={`/product/${product.id}`}
                 className="group"
               >
-                <div className="aspect-[3/4] bg-gray-100 mb-3 overflow-hidden rounded-lg p-2">
+                <div className="aspect-[3/4] mb-3 overflow-hidden rounded-lg bg-white">
                   <img
                     src={product.image_url}
                     alt={product.name}
-                    className="w-full h-full object-contain group-hover:scale-[1.02] transition-transform duration-500"
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
                   />
                 </div>
                 <div className="space-y-1.5">
                   <p className="text-xs tracking-wider text-gray-500 uppercase">
-                    {product.category}
-                    {product.subcategory
-                      ? ` • ${product.subcategory}`
-                      : product.product_type
-                      ? ` • ${product.product_type}`
-                      : ""}{" "}
-                    •{" "}
-                    {
-                      audienceLabelMap[
-                        normalizeProductAudience(product.audience, product.category)
-                      ]
-                    }{" "}
-                    • {toProductAuthenticityLabel(product.authenticity)}
+                    {Array.from(
+                      new Set(
+                        [
+                      getDisplayCategoryName(product.category),
+                      resolveProductChildType(product),
+                      !isSupplementLikeProduct(product)
+                        ? audienceLabelMap[
+                            normalizeProductAudience(product.audience, product.category)
+                          ]
+                        : "",
+                      toProductAuthenticityLabel(product.authenticity),
+                        ]
+                          .map((entry) => String(entry || "").trim())
+                          .filter(Boolean)
+                      )
+                    )
+                      .map((entry) => String(entry || "").trim())
+                      .filter(Boolean)
+                      .join(" • ")}
                   </p>
                   <h3 className="font-light text-lg">{product.name}</h3>
                   {(product.brand || product.flavor || product.net_weight) && (
