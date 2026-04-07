@@ -4,9 +4,9 @@ const DEFAULT_HEADERS = {
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 };
 
-const MAX_PRODUCTS = 250;
-const MAX_DETAIL_PAGES = 120;
-const MAX_LISTING_PAGES = 8;
+const MAX_PRODUCTS = 1000;
+const MAX_DETAIL_PAGES = 300;
+const MAX_LISTING_PAGES = 40;
 const SHOPIFY_PAGE_SIZE = 250;
 
 const normalizeWhitespace = (value) =>
@@ -299,6 +299,52 @@ const dedupeProducts = (products) => {
     seen.add(key);
     return true;
   });
+};
+
+const weakNameRegex = /^(\d{1,3}([.,]\d{1,2})?|x{0,3}s|s|m|l|xl|xxl|xxxl)$/i;
+
+const scoreProductNameQuality = (product) => {
+  const name = normalizeWhitespace(product?.name || "");
+  if (!name) return 0;
+  let score = 0;
+  if (/[a-z]/i.test(name)) score += 20;
+  if (name.split(" ").length > 1) score += 10;
+  if (!weakNameRegex.test(name)) score += 20;
+  if (String(product?.brand || "").trim()) score += 5;
+  if (String(product?.description || "").trim().length > 20) score += 5;
+  return score;
+};
+
+const collapseWeakDuplicateSkuRows = (products) => {
+  const groups = new Map();
+  const withoutSku = [];
+
+  products.forEach((product) => {
+    const sku = normalizeWhitespace(product?.sku || "").toLowerCase();
+    if (!sku) {
+      withoutSku.push(product);
+      return;
+    }
+    if (!groups.has(sku)) groups.set(sku, []);
+    groups.get(sku).push(product);
+  });
+
+  const collapsed = [];
+  groups.forEach((entries) => {
+    if (!Array.isArray(entries) || entries.length === 0) return;
+    if (entries.length === 1) {
+      collapsed.push(entries[0]);
+      return;
+    }
+    const best = entries
+      .slice()
+      .sort(
+        (a, b) => scoreProductNameQuality(b) - scoreProductNameQuality(a)
+      )[0];
+    collapsed.push(best);
+  });
+
+  return [...withoutSku, ...collapsed];
 };
 
 const extractCandidateLinks = (html, baseUrl) => {
@@ -674,7 +720,12 @@ const fetchShopifyProducts = async (sourceUrl) => {
           .map((item) => sanitizeUrl(item?.src || item, base))
           .filter(Boolean)
       : [];
-    const firstVariant = Array.isArray(entry.variants) ? entry.variants[0] : {};
+    const variants = Array.isArray(entry.variants) ? entry.variants : [];
+    const firstVariant = variants[0] || {};
+    const inventoryQuantity = variants.reduce((total, variant) => {
+      const quantity = parseNumber(variant?.inventory_quantity);
+      return total + (quantity || 0);
+    }, 0);
     return {
       name: normalizeWhitespace(entry.title),
       description: stripHtml(entry.body_html),
@@ -699,6 +750,7 @@ const fetchShopifyProducts = async (sourceUrl) => {
         parseNumber(firstVariant?.compare_at_price) ||
         parseNumber(firstVariant?.price) ||
         0,
+      stock: Math.max(0, Math.round(inventoryQuantity)),
       currency: "",
       colors: [],
       source_url: sanitizeUrl(`/products/${entry.handle}`, base) || sourceUrl,
@@ -722,19 +774,26 @@ const fetchShopifyProducts = async (sourceUrl) => {
       currentPage += 1;
     }
   } else {
-    const endpoint = `${base}/products.json?limit=${SHOPIFY_PAGE_SIZE}`;
-    const response = await fetch(endpoint, {
-      headers: DEFAULT_HEADERS,
-      redirect: "follow",
-    });
-    if (response.ok) {
+    let sinceId = 0;
+    for (let i = 0; i < MAX_LISTING_PAGES; i += 1) {
+      const endpoint = `${base}/products.json?limit=${SHOPIFY_PAGE_SIZE}${sinceId ? `&since_id=${sinceId}` : ""}`;
+      const response = await fetch(endpoint, {
+        headers: DEFAULT_HEADERS,
+        redirect: "follow",
+      });
+      if (!response.ok) break;
       const payload = await response.json().catch(() => ({}));
       const products = Array.isArray(payload?.products) ? payload.products : [];
+      if (products.length === 0) break;
       all.push(...products.map(mapShopifyProduct));
+      if (products.length < SHOPIFY_PAGE_SIZE || all.length >= MAX_PRODUCTS) break;
+      const lastId = Number(products[products.length - 1]?.id || 0);
+      if (!Number.isFinite(lastId) || lastId <= sinceId) break;
+      sinceId = lastId;
     }
   }
 
-  return dedupeProducts(all).slice(0, MAX_PRODUCTS);
+  return dedupeProducts(collapseWeakDuplicateSkuRows(all)).slice(0, MAX_PRODUCTS);
 };
 
 const parseProductsFromHtml = (html, pageUrl) => {
@@ -832,18 +891,27 @@ const enrichImportedProduct = (entry, sourceUrl) => {
   const originalPrice = Number.isFinite(parsedOriginalPrice)
     ? Math.max(parsedOriginalPrice, price)
     : price;
+  const existingSku = normalizeWhitespace(entry.sku);
+  const fallbackSku = normalizeWhitespace(
+    `${entry.brand || "SKU"}-${entry.name || entry.source_url || sourceUrl}`
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48)
+  );
 
   return {
     name: normalizeWhitespace(entry.name),
     description: normalizeWhitespace(entry.description),
     brand: normalizeWhitespace(entry.brand),
-    sku: normalizeWhitespace(entry.sku),
+    sku: existingSku || fallbackSku,
     category: taxonomy.category,
     product_type: taxonomy.product_type,
     image_url: imageUrl,
     images: imageUrl && images.length === 0 ? [imageUrl] : images,
     price,
     original_price: originalPrice,
+    stock: Math.max(0, Math.round(Number(entry.stock || 0))),
     currency: normalizeWhitespace(entry.currency),
     colors: uniqueNonEmpty(entry.colors),
     source_url: sanitizeUrl(entry.source_url, sourceUrl) || sourceUrl,
@@ -864,59 +932,60 @@ export default async function handler(req, res) {
     ensureSafePublicUrl(sourceUrl);
 
     let parsedProducts = await fetchShopifyProducts(sourceUrl);
-    if (parsedProducts.length >= 1) {
-      parsedProducts = parsedProducts.slice(0, MAX_PRODUCTS);
-    }
+    const hasShopifyApiData = parsedProducts.length > 0;
+    if (hasShopifyApiData) parsedProducts = parsedProducts.slice(0, MAX_PRODUCTS);
 
-    const listingUrls = buildPaginatedUrls(sourceUrl);
     const discovered = [];
     const detailCandidates = [];
 
-    for (const listingUrl of listingUrls) {
-      try {
-        const listingHtml = await fetchHtml(listingUrl);
-        const fromListing = parseProductsFromHtml(listingHtml, listingUrl);
-        if (fromListing.length > 0) discovered.push(...fromListing);
-
-        const candidateLinks = extractCandidateLinks(listingHtml, listingUrl).filter(
-          looksLikeProductUrl
-        );
-        detailCandidates.push(...candidateLinks);
-      } catch {
-        // Skip failed listing pages.
-      }
-      if (dedupeProducts(discovered).length >= MAX_PRODUCTS) break;
-    }
-
-    if (discovered.length > 0) {
-      parsedProducts = dedupeProducts([...parsedProducts, ...discovered]).slice(
-        0,
-        MAX_PRODUCTS
-      );
-    }
-
-    if (parsedProducts.length < 20 && detailCandidates.length > 0) {
-      const uniqueDetailLinks = Array.from(new Set(detailCandidates)).slice(
-        0,
-        MAX_DETAIL_PAGES
-      );
-      for (const detailUrl of uniqueDetailLinks) {
+    if (!hasShopifyApiData) {
+      const listingUrls = buildPaginatedUrls(sourceUrl);
+      for (const listingUrl of listingUrls) {
         try {
-          const detailHtml = await fetchHtml(detailUrl);
-          const detailProducts = parseProductsFromHtml(detailHtml, detailUrl);
-          if (detailProducts.length > 0) discovered.push(...detailProducts);
-          if (dedupeProducts(discovered).length >= MAX_PRODUCTS) break;
+          const listingHtml = await fetchHtml(listingUrl);
+          const fromListing = parseProductsFromHtml(listingHtml, listingUrl);
+          if (fromListing.length > 0) discovered.push(...fromListing);
+
+          const candidateLinks = extractCandidateLinks(listingHtml, listingUrl).filter(
+            looksLikeProductUrl
+          );
+          detailCandidates.push(...candidateLinks);
         } catch {
-          // Skip individual detail pages that fail.
+          // Skip failed listing pages.
         }
+        if (dedupeProducts(discovered).length >= MAX_PRODUCTS) break;
       }
-      parsedProducts = dedupeProducts([...parsedProducts, ...discovered]).slice(
-        0,
-        MAX_PRODUCTS
-      );
+
+      if (discovered.length > 0) {
+        parsedProducts = dedupeProducts([...parsedProducts, ...discovered]).slice(
+          0,
+          MAX_PRODUCTS
+        );
+      }
+
+      if (parsedProducts.length < 20 && detailCandidates.length > 0) {
+        const uniqueDetailLinks = Array.from(new Set(detailCandidates)).slice(
+          0,
+          MAX_DETAIL_PAGES
+        );
+        for (const detailUrl of uniqueDetailLinks) {
+          try {
+            const detailHtml = await fetchHtml(detailUrl);
+            const detailProducts = parseProductsFromHtml(detailHtml, detailUrl);
+            if (detailProducts.length > 0) discovered.push(...detailProducts);
+            if (dedupeProducts(discovered).length >= MAX_PRODUCTS) break;
+          } catch {
+            // Skip individual detail pages that fail.
+          }
+        }
+        parsedProducts = dedupeProducts([...parsedProducts, ...discovered]).slice(
+          0,
+          MAX_PRODUCTS
+        );
+      }
     }
 
-    const limitedProducts = parsedProducts
+    const limitedProducts = collapseWeakDuplicateSkuRows(parsedProducts)
       .slice(0, MAX_PRODUCTS)
       .map((entry) => enrichImportedProduct(entry, sourceUrl))
       .filter((entry) => Boolean(entry.name));

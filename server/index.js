@@ -100,7 +100,14 @@ const buildOrderDiscordPayload = (order) => {
           { name: "Email", value: truncate(email, 256), inline: true },
           { name: "Phone", value: truncate(phone || "Not provided", 256), inline: true },
           { name: "Subtotal", value: `$${Number(subtotal || 0).toFixed(2)}`, inline: true },
-          { name: "Delivery Charge", value: `$${Number(shipping || 0).toFixed(2)}`, inline: true },
+          {
+            name: "Delivery",
+            value:
+              Number(shipping || 0) > 0
+                ? `$${Number(shipping || 0).toFixed(2)}`
+                : "Free",
+            inline: true,
+          },
           { name: "Total", value: `$${Number(total).toFixed(2)}`, inline: true },
         ],
         description: truncate(
@@ -404,7 +411,14 @@ const buildStatusPayload = ({
           { name: "User Email", value: truncate(userEmail || "Unknown", 256), inline: true },
           { name: "Phone", value: truncate(phone || "Not provided", 256), inline: true },
           { name: "Subtotal", value: `$${Number(subtotal || 0).toFixed(2)}`, inline: true },
-          { name: "Delivery Charge", value: `$${Number(shipping || 0).toFixed(2)}`, inline: true },
+          {
+            name: "Delivery",
+            value:
+              Number(shipping || 0) > 0
+                ? `$${Number(shipping || 0).toFixed(2)}`
+                : "Free",
+            inline: true,
+          },
           { name: "Total", value: `$${Number(total || 0).toFixed(2)}`, inline: true },
           { name: "Items", value: String(Number(itemCount || 0)), inline: true },
           { name: "Order Created", value: createdText, inline: true },
@@ -832,10 +846,10 @@ const sendOrderConfirmationEmail = async (req, res) => {
                   )}</td>
                 </tr>
                 <tr>
-                  <td style="font-size:14px;color:#4B5563;padding:4px 0;">Delivery Charge</td>
-                  <td style="font-size:14px;color:#111827;text-align:right;padding:4px 0;">$${safeShipping.toFixed(
-                    2
-                  )}</td>
+                  <td style="font-size:14px;color:#4B5563;padding:4px 0;">Delivery</td>
+                  <td style="font-size:14px;color:#111827;text-align:right;padding:4px 0;">${
+                    safeShipping > 0 ? `$${safeShipping.toFixed(2)}` : "Free"
+                  }</td>
                 </tr>
                 <tr>
                   <td style="font-size:16px;font-weight:700;color:#111827;padding:8px 0 0;">Order Total</td>
@@ -892,7 +906,7 @@ Order Details:
 ${plainItems}
 
 Subtotal: $${safeSubtotal.toFixed(2)}
-Delivery Charge: $${safeShipping.toFixed(2)}
+Delivery: ${safeShipping > 0 ? `$${safeShipping.toFixed(2)}` : "Free"}
 Order Total: $${safeTotal.toFixed(2)}
 
 Need help? Contact ${supportEmail}

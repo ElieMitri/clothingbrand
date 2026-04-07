@@ -62,7 +62,7 @@ interface SavedAddress {
 }
 
 const GUEST_CART_STORAGE_KEY = "guest_cart_items_v1";
-const DELIVERY_CHARGE = 2;
+const DELIVERY_CHARGE = 0;
 
 interface GuestCartEntry {
   product_id: string;
@@ -878,11 +878,6 @@ export function Cart() {
                   <div className="flex justify-between text-gray-600">
                     <span>Subtotal ({cartItems.length} items)</span>
                     <span className="font-medium">${subtotal.toFixed(2)}</span>
-                  </div>
-
-                  <div className="flex justify-between text-gray-600">
-                    <span>Delivery Charge</span>
-                    <span className="font-medium">${shipping.toFixed(2)}</span>
                   </div>
 
                 </div>

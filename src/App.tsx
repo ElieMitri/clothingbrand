@@ -20,6 +20,7 @@ import { Settings } from "./pages/Settings";
 import { Sale } from "./pages/Sale";
 import { MainLayout } from "./layouts/MainLayout";
 import { AdminDashboard } from "./pages/AdminDashboard";
+import { AdminShopify } from "./pages/AdminShopify";
 import { AdminRoute } from "./components/AdminRoute";
 import { CategoryPage } from "./pages/CategoryPage";
 
@@ -76,6 +77,14 @@ function App() {
             element={
               <AdminRoute>
                 <AdminDashboard />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path="/admin/shopify"
+            element={
+              <AdminRoute>
+                <AdminShopify />
               </AdminRoute>
             }
           />

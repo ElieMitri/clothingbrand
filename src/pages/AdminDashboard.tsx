@@ -1,4 +1,11 @@
-import { Fragment, useDeferredValue, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Plus,
@@ -24,7 +31,7 @@ import {
   Download,
   RefreshCw,
 } from "lucide-react";
-import { db } from "../lib/firebase";
+import { db, storage } from "../lib/firebase";
 import {
   collection,
   addDoc,
@@ -42,6 +49,7 @@ import {
   writeBatch,
   where,
 } from "firebase/firestore";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { useAuth } from "../contexts/AuthContext";
 import {
   OrderStatus,
@@ -281,6 +289,10 @@ interface QuickAddProductPreset {
   subcategory?: string;
   product_type?: string;
 }
+type UploadImageItem = {
+  file: File;
+  id: string;
+};
 
 const slugifyPathToken = (value: string) =>
   String(value || "")
@@ -565,6 +577,17 @@ export function AdminDashboard() {
   const [colorGalleryRows, setColorGalleryRows] = useState<ColorGalleryRow[]>(
     []
   );
+  const [mainImageUpload, setMainImageUpload] = useState<UploadImageItem | null>(
+    null
+  );
+  const [additionalImageUploads, setAdditionalImageUploads] = useState<
+    UploadImageItem[]
+  >([]);
+  const [mainImagePreviewUrl, setMainImagePreviewUrl] = useState("");
+  const [additionalImagePreviewUrls, setAdditionalImagePreviewUrls] = useState<
+    string[]
+  >([]);
+  const [savingProductImages, setSavingProductImages] = useState(false);
 
   // Edit Order Modal
   const [showOrderModal, setShowOrderModal] = useState(false);
@@ -1049,6 +1072,137 @@ export function AdminDashboard() {
       .split(/[,\n]/)
       .map((entry) => entry.trim())
       .filter(Boolean);
+  const sanitizeStoragePathSegment = (value: string) =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  const blobToImage = (blob: Blob): Promise<HTMLImageElement> =>
+    new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        resolve(img);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Could not load image for compression."));
+      };
+      img.src = objectUrl;
+    });
+  const canvasToBlob = (
+    canvas: HTMLCanvasElement,
+    type: string,
+    quality?: number
+  ): Promise<Blob> =>
+    new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve(blob);
+            return;
+          }
+          reject(new Error("Could not create compressed image."));
+        },
+        type,
+        quality
+      );
+    });
+  const compressImageFile = async (file: File): Promise<Blob> => {
+    if (!file.type.startsWith("image/")) return file;
+    if (file.type.includes("svg") || file.type.includes("gif")) return file;
+
+    const sourceImage = await blobToImage(file);
+    const maxDimension = 1800;
+    const scale = Math.min(
+      1,
+      maxDimension / Math.max(sourceImage.width, sourceImage.height)
+    );
+    const width = Math.max(1, Math.round(sourceImage.width * scale));
+    const height = Math.max(1, Math.round(sourceImage.height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Could not initialize image compressor.");
+    ctx.drawImage(sourceImage, 0, 0, width, height);
+
+    const targetType =
+      file.type === "image/png" || file.type === "image/webp"
+        ? file.type
+        : "image/jpeg";
+    const compressed = await canvasToBlob(
+      canvas,
+      targetType,
+      targetType === "image/jpeg" ? 0.82 : undefined
+    );
+    return compressed.size < file.size ? compressed : file;
+  };
+  const inferExtension = (mimeType: string, fallbackName: string) => {
+    if (mimeType === "image/jpeg") return "jpg";
+    if (mimeType === "image/png") return "png";
+    if (mimeType === "image/webp") return "webp";
+    if (mimeType === "image/gif") return "gif";
+    if (mimeType === "image/svg+xml") return "svg";
+    const fromName = String(fallbackName || "").split(".").pop();
+    return fromName && fromName.length <= 5 ? fromName.toLowerCase() : "jpg";
+  };
+  const uploadCompressedImageToStorage = async (
+    file: File,
+    folder: string,
+    fileLabel: string
+  ) => {
+    const compressedBlob = await compressImageFile(file);
+    const mimeType = compressedBlob.type || file.type || "image/jpeg";
+    const extension = inferExtension(mimeType, file.name);
+    const fileSlug = sanitizeStoragePathSegment(fileLabel) || "image";
+    const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const objectPath = `${folder}/${fileSlug}-${uniqueSuffix}.${extension}`;
+    const storageRef = ref(storage, objectPath);
+
+    await uploadBytes(storageRef, compressedBlob, {
+      contentType: mimeType,
+      cacheControl: "public,max-age=31536000",
+    });
+    return getDownloadURL(storageRef);
+  };
+  const uploadRemoteImageToStorageWithFallback = async (
+    sourceUrl: string,
+    folder: string,
+    fileLabel: string
+  ) => {
+    const normalizedUrl = String(sourceUrl || "").trim();
+    if (!normalizedUrl) return "";
+
+    try {
+      const response = await fetch(normalizedUrl);
+      if (!response.ok) {
+        throw new Error(`Could not fetch image (${response.status}).`);
+      }
+
+      const blob = await response.blob();
+      if (!blob.type.startsWith("image/")) {
+        throw new Error("Remote file is not an image.");
+      }
+
+      const remoteFile = new File([blob], `${fileLabel}.tmp`, { type: blob.type });
+      return await uploadCompressedImageToStorage(remoteFile, folder, fileLabel);
+    } catch (error) {
+      console.warn("Using original image URL because upload failed:", error);
+      return normalizedUrl;
+    }
+  };
+  const isFirebaseStorageUrl = (value: string) => {
+    const normalized = String(value || "").toLowerCase();
+    return (
+      normalized.includes("firebasestorage.googleapis.com") ||
+      normalized.includes(".appspot.com") ||
+      normalized.startsWith("gs://")
+    );
+  };
 
   const parseColorImageLinks = (raw: string): Record<string, string> => {
     return raw
@@ -1158,6 +1312,30 @@ export function AdminDashboard() {
       .map((entry) => String(entry || "").trim())
       .filter(Boolean)
       .join(" ");
+  useEffect(() => {
+    if (!mainImageUpload) {
+      setMainImagePreviewUrl("");
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(mainImageUpload.file);
+    setMainImagePreviewUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [mainImageUpload]);
+  useEffect(() => {
+    if (additionalImageUploads.length === 0) {
+      setAdditionalImagePreviewUrls([]);
+      return;
+    }
+
+    const urls = additionalImageUploads.map((item) =>
+      URL.createObjectURL(item.file)
+    );
+    setAdditionalImagePreviewUrls(urls);
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [additionalImageUploads]);
   const normalizeSizesForContext = (context: string, sizes: string[]) => {
     const defaultSizes = getDefaultSizesByCategory(context);
     const isGloveContext =
@@ -1426,6 +1604,34 @@ export function AdminDashboard() {
     imageUrls.splice(index, 1);
     setProductForm({ ...productForm, images: imageUrls.join(", ") });
   };
+  const removeQueuedAdditionalImage = (index: number) => {
+    setAdditionalImageUploads((prev) =>
+      prev.filter((_, itemIndex) => itemIndex !== index)
+    );
+  };
+  const onMainImageFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = event.target.files?.[0] || null;
+    if (!selectedFile) return;
+    setMainImageUpload({
+      file: selectedFile,
+      id: `${selectedFile.name}-${selectedFile.lastModified}-${selectedFile.size}`,
+    });
+  };
+  const onAdditionalImagesChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    if (selectedFiles.length === 0) return;
+
+    setAdditionalImageUploads((prev) => {
+      const knownIds = new Set(prev.map((item) => item.id));
+      const nextItems = selectedFiles
+        .map((file) => ({
+          file,
+          id: `${file.name}-${file.lastModified}-${file.size}`,
+        }))
+        .filter((item) => !knownIds.has(item.id));
+      return [...prev, ...nextItems];
+    });
+  };
 
   const calculateMonthlyRevenue = (ords: Order[], prods: Product[]) => {
     const revenueOrders = ords.filter(
@@ -1554,6 +1760,9 @@ export function AdminDashboard() {
     setImportError("");
     setImportingFromLink(false);
     setAddingImportedProducts(false);
+    setSavingProductImages(false);
+    setMainImageUpload(null);
+    setAdditionalImageUploads([]);
 
     if (product) {
       setEditingProduct(product);
@@ -1758,7 +1967,10 @@ export function AdminDashboard() {
   };
 
   const saveProduct = async () => {
+    if (savingProductImages) return;
+
     try {
+      setSavingProductImages(true);
       const resolvedName =
         String(productForm.name || "").trim() ||
         (editingProduct ? String(editingProduct.name || "").trim() : "");
@@ -1777,7 +1989,54 @@ export function AdminDashboard() {
         return;
       }
 
-      const additionalImages = parseCommaSeparatedValues(productForm.images);
+      const existingAdditionalImages = parseCommaSeparatedValues(productForm.images);
+      const migratedExistingAdditionalImages =
+        existingAdditionalImages.length > 0
+          ? await Promise.all(
+              existingAdditionalImages.map((sourceUrl, index) =>
+                isFirebaseStorageUrl(sourceUrl)
+                  ? sourceUrl
+                  : uploadRemoteImageToStorageWithFallback(
+                      sourceUrl,
+                      "products/additional",
+                      `${resolvedName || "product"}-legacy-gallery-${index + 1}`
+                    )
+              )
+            )
+          : [];
+      const uploadedAdditionalImages =
+        additionalImageUploads.length > 0
+          ? await Promise.all(
+              additionalImageUploads.map((imageItem, index) =>
+                uploadCompressedImageToStorage(
+                  imageItem.file,
+                  "products/additional",
+                  `${resolvedName || "product"}-gallery-${index + 1}`
+                )
+              )
+            )
+          : [];
+      const additionalImages = [
+        ...uploadedAdditionalImages,
+        ...migratedExistingAdditionalImages,
+      ].filter(Boolean);
+      const uploadedMainImageUrl = mainImageUpload
+        ? await uploadCompressedImageToStorage(
+            mainImageUpload.file,
+            "products/main",
+            `${resolvedName || "product"}-main`
+          )
+        : "";
+      const migratedExistingMainImageUrl =
+        !uploadedMainImageUrl && productForm.image_url.trim()
+          ? isFirebaseStorageUrl(productForm.image_url.trim())
+            ? productForm.image_url.trim()
+            : await uploadRemoteImageToStorageWithFallback(
+                productForm.image_url.trim(),
+                "products/main",
+                `${resolvedName || "product"}-legacy-main`
+              )
+          : "";
       const colorImagesFromRows = colorImageRowsToMap(colorImageRows);
       const colorGalleriesFromRows = colorGalleryRowsToMap(colorGalleryRows);
       const colorImages =
@@ -1802,7 +2061,8 @@ export function AdminDashboard() {
       });
 
       const resolvedImageUrl =
-        productForm.image_url.trim() ||
+        uploadedMainImageUrl ||
+        migratedExistingMainImageUrl ||
         additionalImages[0] ||
         "/logo-transparent.png";
       const normalizedTaxonomy = normalizeAdminProductTaxonomy(
@@ -1885,6 +2145,8 @@ export function AdminDashboard() {
     } catch (error) {
       console.error("Error saving product:", error);
       alert("Failed to save product");
+    } finally {
+      setSavingProductImages(false);
     }
   };
 
@@ -1989,9 +2251,9 @@ export function AdminDashboard() {
 
       const batch = writeBatch(db);
       let validCount = 0;
-      importedProducts.forEach((item) => {
+      for (const item of importedProducts) {
         const name = String(item.name || "").trim();
-        if (!name) return;
+        if (!name) continue;
 
         const category = String(item.category || "").trim() || "General";
         const productType = String(item.product_type || "").trim();
@@ -2001,13 +2263,27 @@ export function AdminDashboard() {
               Array.isArray(item.colors) ? item.colors.join(" ") : ""
             }`
           );
-        const imageUrl = String(item.image_url || item.images?.[0] || "").trim();
-        const images =
+        const imageUrlCandidates =
           Array.isArray(item.images) && item.images.length > 0
-            ? item.images.filter(Boolean)
-            : imageUrl
-            ? [imageUrl]
+            ? item.images
+                .map((entry) => String(entry || "").trim())
+                .filter(Boolean)
+            : String(item.image_url || "").trim()
+            ? [String(item.image_url).trim()]
             : [];
+        const images =
+          imageUrlCandidates.length > 0
+            ? await Promise.all(
+                imageUrlCandidates.map((sourceUrl, index) =>
+                  uploadRemoteImageToStorageWithFallback(
+                    sourceUrl,
+                    "products/imported",
+                    `${name}-import-${index + 1}`
+                  )
+                )
+              )
+            : [];
+        const imageUrl = images[0] || "";
         const sizes = getDefaultSizesByCategory(`${category} ${productType}`);
         const price = Math.max(0, Number(item.price || 0));
         const originalPrice = Math.max(
@@ -2058,7 +2334,7 @@ export function AdminDashboard() {
           source_url: String(item.source_url || "").trim() || null,
         });
         validCount += 1;
-      });
+      }
 
       if (validCount === 0) {
         throw new Error("No valid products found in import data.");
@@ -2417,7 +2693,7 @@ export function AdminDashboard() {
 
       const totals = buildOrderTotals(
         cleanedItems,
-        Number(orderForm.shipping || 0),
+        0,
         Number(orderForm.tax || 0)
       );
 
@@ -7051,27 +7327,25 @@ export function AdminDashboard() {
 
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Main Product Image URL *
+                  Main Product Image *
                 </label>
-                <div className="flex gap-4 items-start">
+                <div className="flex gap-4 items-start flex-col sm:flex-row">
                   <div className="flex-1">
                     <input
-                      type="url"
-                      value={productForm.image_url}
-                      onChange={(e) =>
-                        setProductForm((prev) => ({
-                          ...prev,
-                          image_url: e.target.value.trim(),
-                        }))
-                      }
-                      placeholder="https://example.com/main-image.jpg"
+                      type="file"
+                      accept="image/*"
+                      onChange={onMainImageFileChange}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Image is compressed, uploaded to Firebase Storage, then
+                      saved as a Firebase URL.
+                    </p>
                   </div>
-                  {productForm.image_url && (
+                  {(mainImagePreviewUrl || productForm.image_url) && (
                     <div className="w-24 h-24 rounded-lg overflow-hidden border border-gray-300">
                       <img
-                        src={productForm.image_url}
+                        src={mainImagePreviewUrl || productForm.image_url}
                         alt="Main preview"
                         className="w-full h-full object-cover"
                       />
@@ -7082,22 +7356,47 @@ export function AdminDashboard() {
 
               <div>
                 <label className="block text-sm font-medium mb-2">
-                  Additional Image URLs (optional)
+                  Additional Product Images (optional)
                 </label>
-                <textarea
-                  value={productForm.images}
-                  onChange={(e) =>
-                    setProductForm({ ...productForm, images: e.target.value })
-                  }
-                  rows={3}
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={onAdditionalImagesChange}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                  placeholder="https://example.com/image-1.jpg, https://example.com/image-2.jpg"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Separate links with commas.
+                  You can select multiple files. Each image will be compressed and
+                  uploaded to Firebase Storage.
                 </p>
-
+                {additionalImagePreviewUrls.length > 0 && (
+                  <div className="grid grid-cols-5 gap-2 mt-3">
+                    {additionalImagePreviewUrls.map((preview, index) => (
+                      <div
+                        key={`${preview}-${index}`}
+                        className="relative aspect-square rounded-lg overflow-hidden border border-gray-300 group"
+                      >
+                        <img
+                          src={preview}
+                          alt={`Selected image ${index + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeQueuedAdditionalImage(index)}
+                          className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {parseCommaSeparatedValues(productForm.images).length > 0 && (
+                  <>
+                    <p className="text-xs text-gray-500 mt-3">
+                      Existing saved images
+                    </p>
                   <div className="grid grid-cols-5 gap-2 mt-3">
                     {parseCommaSeparatedValues(productForm.images).map(
                       (preview, index) => (
@@ -7107,10 +7406,11 @@ export function AdminDashboard() {
                         >
                           <img
                             src={preview}
-                            alt={`Preview ${index + 1}`}
+                            alt={`Saved preview ${index + 1}`}
                             className="w-full h-full object-cover"
                           />
                           <button
+                            type="button"
                             onClick={() => removeAdditionalImage(index)}
                             className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                           >
@@ -7120,6 +7420,7 @@ export function AdminDashboard() {
                       )
                     )}
                   </div>
+                  </>
                 )}
               </div>
 
@@ -7520,16 +7821,25 @@ export function AdminDashboard() {
                     </button>
                   </div>
                   <div className="mt-2">
-                    <button
-                      type="button"
-                      onClick={deleteImportedProductsForSource}
-                      disabled={deletingImportedProducts || importingFromLink}
-                      className="text-sm px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {deletingImportedProducts
-                        ? "Deleting Imported Products..."
-                        : "Delete Imported Products For This Source"}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => navigate("/admin/shopify")}
+                        className="text-sm px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                      >
+                        Open Shopify CSV Converter
+                      </button>
+                      <button
+                        type="button"
+                        onClick={deleteImportedProductsForSource}
+                        disabled={deletingImportedProducts || importingFromLink}
+                        className="text-sm px-3 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {deletingImportedProducts
+                          ? "Deleting Imported Products..."
+                          : "Delete Imported Products For This Source"}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -7604,16 +7914,19 @@ export function AdminDashboard() {
                   isManualProductEntry ? saveProduct : addImportedProductsToStore
                 }
                 disabled={
-                  !isManualProductEntry &&
-                  (importedProducts.length === 0 ||
-                    importingFromLink ||
-                    addingImportedProducts)
+                  isManualProductEntry
+                    ? savingProductImages
+                    : importedProducts.length === 0 ||
+                      importingFromLink ||
+                      addingImportedProducts
                 }
                 className="flex-1 px-6 py-3 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
               >
                 <Save size={20} />
                 {isManualProductEntry
-                  ? editingProduct
+                  ? savingProductImages
+                    ? "Uploading Images..."
+                    : editingProduct
                     ? "Update Product"
                     : "Add Product"
                   : addingImportedProducts
@@ -7700,21 +8013,16 @@ export function AdminDashboard() {
 
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    Shipping ($)
+                    Delivery ($)
                   </label>
                   <input
                     type="number"
                     step="0.01"
-                    value={orderForm.shipping}
-                    onChange={(e) =>
-                      applyOrderItemsAndTotals(
-                        orderForm.items,
-                        Number(e.target.value),
-                        Number(orderForm.tax || 0)
-                      )
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                    value={0}
+                    readOnly
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
                   />
+                  <p className="text-xs text-gray-500 mt-1">Free delivery applied.</p>
                 </div>
               </div>
 
@@ -7730,7 +8038,7 @@ export function AdminDashboard() {
                     onChange={(e) =>
                       applyOrderItemsAndTotals(
                         orderForm.items,
-                        Number(orderForm.shipping || 0),
+                        0,
                         Number(e.target.value)
                       )
                     }

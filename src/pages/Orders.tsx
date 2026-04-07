@@ -48,7 +48,7 @@ interface Order {
   user_id?: string;
 }
 
-const DELIVERY_CHARGE = 2;
+const DELIVERY_CHARGE = 0;
 
 export function Orders() {
   const { user } = useAuth();
@@ -606,10 +606,6 @@ export function Orders() {
                               )
                               .toFixed(2)}
                           </span>
-                        </div>
-                        <div className="flex justify-between text-gray-600">
-                          <span>Delivery Charge</span>
-                          <span className="font-medium">$2.00</span>
                         </div>
                         <div className="border-t border-gray-200 pt-3">
                           <div className="flex justify-between items-center">
