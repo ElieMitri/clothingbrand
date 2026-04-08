@@ -2,6 +2,9 @@ import { useMemo, useState } from "react";
 import { Download, Link as LinkIcon, Loader2 } from "lucide-react";
 
 type CsvCell = string | number | boolean | null | undefined;
+interface ExportOptions {
+  disableInventoryTracking: boolean;
+}
 
 interface ImportedProduct {
   name: string;
@@ -159,7 +162,7 @@ const csvEscape = (value: CsvCell) => {
   return raw;
 };
 
-const toShopifyRow = (product: ImportedProduct) => {
+const toShopifyRow = (product: ImportedProduct, options: ExportOptions) => {
   const title = String(product.name || "").trim();
   const handle = slugify(title);
   const colors = Array.isArray(product.colors)
@@ -204,8 +207,13 @@ const toShopifyRow = (product: ImportedProduct) => {
       ? formatPrice(product.original_price)
       : "";
   row["Charge tax"] = "TRUE";
-  row["Inventory tracker"] = hasStock ? "shopify" : "";
-  row["Inventory quantity"] = inventoryQuantity;
+  if (options.disableInventoryTracking) {
+    row["Inventory tracker"] = "FALSE";
+    row["Inventory quantity"] = "";
+  } else {
+    row["Inventory tracker"] = hasStock ? "shopify" : "";
+    row["Inventory quantity"] = inventoryQuantity;
+  }
   row["Continue selling when out of stock"] = "DENY";
   row["Weight unit for display"] = "g";
   row["Requires shipping"] = "TRUE";
@@ -227,8 +235,8 @@ const toShopifyRow = (product: ImportedProduct) => {
   return row;
 };
 
-const buildCsv = (products: ImportedProduct[]) => {
-  const rows = products.map((product) => toShopifyRow(product));
+const buildCsv = (products: ImportedProduct[], options: ExportOptions) => {
+  const rows = products.map((product) => toShopifyRow(product, options));
   const headerLine = SHOPIFY_HEADERS.map(csvEscape).join(",");
   const bodyLines = rows.map((row) =>
     SHOPIFY_HEADERS.map((header) => csvEscape(row[header])).join(",")
@@ -244,6 +252,7 @@ export function AdminShopify() {
   const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(
     new Set()
   );
+  const [disableInventoryTracking, setDisableInventoryTracking] = useState(true);
 
   const selectedProducts = useMemo(
     () => products.filter((_, index) => selectedIndexes.has(index)),
@@ -295,7 +304,9 @@ export function AdminShopify() {
 
   const handleDownload = () => {
     if (selectedProducts.length === 0) return;
-    const csv = buildCsv(selectedProducts);
+    const csv = buildCsv(selectedProducts, {
+      disableInventoryTracking,
+    });
     const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -369,6 +380,17 @@ export function AdminShopify() {
               Download Selected CSV
             </button>
           </div>
+          <label className="mt-3 inline-flex items-center gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              checked={disableInventoryTracking}
+              onChange={(event) =>
+                setDisableInventoryTracking(event.target.checked)
+              }
+            />
+            Set <span className="font-medium">Inventory tracker</span> to
+            <span className="font-medium"> FALSE</span> for all selected items
+          </label>
 
           {error ? (
             <p className="mt-4 text-sm text-red-600">{error}</p>
