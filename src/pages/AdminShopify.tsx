@@ -210,14 +210,15 @@ const toShopifyRow = (product: ImportedProduct, options: ExportOptions) => {
   if (options.disableInventoryTracking) {
     row["Inventory tracker"] = "FALSE";
     row["Inventory quantity"] = "";
+    row["Fulfillment service"] = "FALSE";
   } else {
     row["Inventory tracker"] = hasStock ? "shopify" : "";
     row["Inventory quantity"] = inventoryQuantity;
+    row["Fulfillment service"] = "manual";
   }
   row["Continue selling when out of stock"] = "DENY";
   row["Weight unit for display"] = "g";
   row["Requires shipping"] = "TRUE";
-  row["Fulfillment service"] = "manual";
   row["Product image URL"] = String(product.image_url || "").trim();
   row["Image position"] = 1;
   row["Image alt text"] = title ? `${title} image` : "";
