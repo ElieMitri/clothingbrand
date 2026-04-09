@@ -208,9 +208,9 @@ const toShopifyRow = (product: ImportedProduct, options: ExportOptions) => {
       : "";
   row["Charge tax"] = "TRUE";
   if (options.disableInventoryTracking) {
-    row["Inventory tracker"] = "FALSE";
+    row["Inventory tracker"] = "";
     row["Inventory quantity"] = "";
-    row["Fulfillment service"] = "FALSE";
+    row["Fulfillment service"] = "manual";
   } else {
     row["Inventory tracker"] = hasStock ? "shopify" : "";
     row["Inventory quantity"] = inventoryQuantity;
@@ -389,8 +389,8 @@ export function AdminShopify() {
                 setDisableInventoryTracking(event.target.checked)
               }
             />
-            Set <span className="font-medium">Inventory tracker</span> to
-            <span className="font-medium"> FALSE</span> for all selected items
+            Disable inventory tracking for all selected items
+            (leave <span className="font-medium">Inventory tracker</span> empty)
           </label>
 
           {error ? (
