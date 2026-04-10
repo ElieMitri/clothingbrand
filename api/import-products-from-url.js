@@ -42,6 +42,94 @@ const uniqueNonEmpty = (values) =>
     )
   );
 
+const isSizeOptionName = (value) => /\b(size|taille|us size|eu size)\b/i.test(value || "");
+const isColorOptionName = (value) => /\b(color|colour)\b/i.test(value || "");
+
+const pickOptionNameByPosition = (optionsByPosition, position, fallback) =>
+  normalizeWhitespace(optionsByPosition[position]) || fallback;
+
+const mapShopifyVariants = (entry, baseUrl) => {
+  const options = Array.isArray(entry.options) ? entry.options : [];
+  const optionsByPosition = {};
+  options.forEach((option, index) => {
+    const position = Number(option?.position) || index + 1;
+    optionsByPosition[position] = normalizeWhitespace(option?.name || "");
+  });
+
+  const images = Array.isArray(entry.images) ? entry.images : [];
+  const imageById = new Map(
+    images
+      .map((image) => [Number(image?.id), sanitizeUrl(image?.src || image, baseUrl)])
+      .filter((entry) => Number.isFinite(entry[0]) && entry[1])
+  );
+
+  const variants = Array.isArray(entry.variants) ? entry.variants : [];
+  return variants.map((variant) => {
+    const stockValue = parseNumber(variant?.inventory_quantity);
+    const parsedPrice = parseNumber(variant?.price);
+    const parsedCompareAt = parseNumber(variant?.compare_at_price);
+    return {
+      sku: normalizeWhitespace(variant?.sku),
+      barcode: normalizeWhitespace(variant?.barcode),
+      price: Number.isFinite(parsedPrice) ? Math.max(parsedPrice, 0) : null,
+      original_price:
+        Number.isFinite(parsedCompareAt) && parsedCompareAt >= (parsedPrice || 0)
+          ? parsedCompareAt
+          : Number.isFinite(parsedPrice)
+            ? parsedPrice
+            : null,
+      stock:
+        Number.isFinite(stockValue) && stockValue >= 0
+          ? Math.round(stockValue)
+          : null,
+      image_url:
+        sanitizeUrl(variant?.featured_image?.src, baseUrl) ||
+        imageById.get(Number(variant?.image_id)) ||
+        "",
+      weight_grams: parseNumber(variant?.grams),
+      requires_shipping:
+        typeof variant?.requires_shipping === "boolean"
+          ? variant.requires_shipping
+          : null,
+      charge_tax: typeof variant?.taxable === "boolean" ? variant.taxable : null,
+      option1_name: pickOptionNameByPosition(optionsByPosition, 1, "Option1"),
+      option1_value: normalizeWhitespace(variant?.option1),
+      option2_name: pickOptionNameByPosition(optionsByPosition, 2, "Option2"),
+      option2_value: normalizeWhitespace(variant?.option2),
+      option3_name: pickOptionNameByPosition(optionsByPosition, 3, "Option3"),
+      option3_value: normalizeWhitespace(variant?.option3),
+    };
+  });
+};
+
+const inferSizesFromVariants = (variants) => {
+  const fromNamedSizeOption = variants.flatMap((variant) => {
+    const pairs = [
+      [variant.option1_name, variant.option1_value],
+      [variant.option2_name, variant.option2_value],
+      [variant.option3_name, variant.option3_value],
+    ];
+    return pairs
+      .filter(([name, value]) => isSizeOptionName(name) && normalizeWhitespace(value))
+      .map(([, value]) => normalizeWhitespace(value));
+  });
+  return uniqueNonEmpty(fromNamedSizeOption);
+};
+
+const inferColorsFromVariants = (variants) => {
+  const fromNamedColorOption = variants.flatMap((variant) => {
+    const pairs = [
+      [variant.option1_name, variant.option1_value],
+      [variant.option2_name, variant.option2_value],
+      [variant.option3_name, variant.option3_value],
+    ];
+    return pairs
+      .filter(([name, value]) => isColorOptionName(name) && normalizeWhitespace(value))
+      .map(([, value]) => normalizeWhitespace(value));
+  });
+  return uniqueNonEmpty(fromNamedColorOption);
+};
+
 const collectTextSnippets = (value, bucket = []) => {
   if (!value) return bucket;
   if (Array.isArray(value)) {
@@ -639,6 +727,7 @@ const parseProductsFromGenericScriptJson = (html, pageUrl) => {
               entry.currency || entry.priceCurrency || ""
             ),
             colors: uniqueNonEmpty(entry.color || entry.colors || []),
+            variants: mapShopifyVariants(entry, pageUrl),
             source_url: sanitizeUrl(entry.url, pageUrl) || sourceFromHandle || pageUrl,
           });
         });
@@ -720,12 +809,14 @@ const fetchShopifyProducts = async (sourceUrl) => {
           .map((item) => sanitizeUrl(item?.src || item, base))
           .filter(Boolean)
       : [];
-    const variants = Array.isArray(entry.variants) ? entry.variants : [];
-    const firstVariant = variants[0] || {};
-    const inventoryQuantity = variants.reduce((total, variant) => {
-      const quantity = parseNumber(variant?.inventory_quantity);
+    const mappedVariants = mapShopifyVariants(entry, base);
+    const firstVariant = mappedVariants[0] || {};
+    const inventoryQuantity = mappedVariants.reduce((total, variant) => {
+      const quantity = parseNumber(variant?.stock);
       return total + (quantity || 0);
     }, 0);
+    const inferredColors = inferColorsFromVariants(mappedVariants);
+    const inferredSizes = inferSizesFromVariants(mappedVariants);
     return {
       name: normalizeWhitespace(entry.title),
       description: stripHtml(entry.body_html),
@@ -752,7 +843,9 @@ const fetchShopifyProducts = async (sourceUrl) => {
         0,
       stock: Math.max(0, Math.round(inventoryQuantity)),
       currency: "",
-      colors: [],
+      colors: inferredColors,
+      sizes: inferredSizes,
+      variants: mappedVariants,
       source_url: sanitizeUrl(`/products/${entry.handle}`, base) || sourceUrl,
     };
   };
@@ -914,6 +1007,51 @@ const enrichImportedProduct = (entry, sourceUrl) => {
     stock: Math.max(0, Math.round(Number(entry.stock || 0))),
     currency: normalizeWhitespace(entry.currency),
     colors: uniqueNonEmpty(entry.colors),
+    sizes: uniqueNonEmpty(entry.sizes),
+    variants: Array.isArray(entry.variants)
+      ? entry.variants
+          .map((variant) => ({
+            sku: normalizeWhitespace(variant?.sku),
+            barcode: normalizeWhitespace(variant?.barcode),
+            price:
+              parseNumber(variant?.price) !== null
+                ? Math.max(parseNumber(variant?.price), 0)
+                : null,
+            original_price:
+              parseNumber(variant?.original_price) !== null
+                ? Math.max(parseNumber(variant?.original_price), 0)
+                : null,
+            stock:
+              parseNumber(variant?.stock) !== null
+                ? Math.max(0, Math.round(parseNumber(variant?.stock)))
+                : null,
+            image_url: sanitizeUrl(variant?.image_url, sourceUrl),
+            weight_grams:
+              parseNumber(variant?.weight_grams) !== null
+                ? Math.max(0, parseNumber(variant?.weight_grams))
+                : null,
+            requires_shipping:
+              typeof variant?.requires_shipping === "boolean"
+                ? variant.requires_shipping
+                : null,
+            charge_tax:
+              typeof variant?.charge_tax === "boolean" ? variant.charge_tax : null,
+            option1_name: normalizeWhitespace(variant?.option1_name),
+            option1_value: normalizeWhitespace(variant?.option1_value),
+            option2_name: normalizeWhitespace(variant?.option2_name),
+            option2_value: normalizeWhitespace(variant?.option2_value),
+            option3_name: normalizeWhitespace(variant?.option3_name),
+            option3_value: normalizeWhitespace(variant?.option3_value),
+          }))
+          .filter((variant) => {
+            return (
+              variant.sku ||
+              variant.option1_value ||
+              variant.option2_value ||
+              variant.option3_value
+            );
+          })
+      : [],
     source_url: sanitizeUrl(entry.source_url, sourceUrl) || sourceUrl,
   };
 };
