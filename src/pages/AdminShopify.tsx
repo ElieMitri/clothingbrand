@@ -51,7 +51,6 @@ const SHOPIFY_HEADERS = [
   "Title",
   "URL handle",
   "Description",
-  "Vendor",
   "Product category",
   "Type",
   "Tags",
@@ -303,7 +302,24 @@ const inferSportSmartSkuBase = (product: ImportedProduct) => {
     .join(" ");
 
   const matched = SPORT_TAG_RULES.find((rule) => rule.pattern.test(blob));
-  return matched?.smartCollectionTag || "";
+  if (matched?.smartCollectionTag) return matched.smartCollectionTag;
+
+  const isBasketballLike = /\b(basketball|nba)\b/.test(blob);
+  const isRugbyLike = /\b(rugby|nrl|super league)\b/.test(blob);
+  const isFootballLike =
+    /\b(football|soccer|futbol|futsal|world cup|fifa|uefa|soccer jersey|football jersey|home kit|away kit)\b/.test(
+      blob
+    );
+  const isJerseyLike =
+    /\b(jersey|kit|home jersey|away jersey|long sleeve jersey|player version|goalkeeper)\b/.test(
+      blob
+    );
+
+  if (isRugbyLike) return "";
+  if (isBasketballLike) return "basketball-kit";
+  if (isFootballLike) return "football-kit";
+  if (isJerseyLike) return "football-kit";
+  return "";
 };
 
 const inferSmartCollectionTags = (product: ImportedProduct) => {
@@ -338,6 +354,22 @@ const inferSmartCollectionTags = (product: ImportedProduct) => {
     tags.add("product-kit");
   }
 
+  if (/\b(basketball|nba)\b/.test(blob)) {
+    tags.add("basketball-kit");
+  } else if (
+    /\b(football|soccer|futbol|futsal|world cup|fifa|uefa|soccer jersey|football jersey|home kit|away kit)\b/.test(
+      blob
+    )
+  ) {
+    tags.add("football-kit");
+  } else if (
+    /\b(jersey|kit|home jersey|away jersey|long sleeve jersey|player version|goalkeeper)\b/.test(
+      blob
+    )
+  ) {
+    tags.add("football-kit");
+  }
+
   return Array.from(tags);
 };
 
@@ -347,6 +379,22 @@ const csvEscape = (value: CsvCell) => {
     return `"${raw.replace(/"/g, '""')}"`;
   }
   return raw;
+};
+
+const computeExportSku = (product: ImportedProduct, variant: ImportedVariant) => {
+  const handle = slugify(String(product.name || "").trim());
+  const smartSkuBase = inferSportSmartSkuBase(product);
+  const sizeForSku = String(optionValueByPosition(variant, 1) || "").trim();
+  if (smartSkuBase) {
+    return `${smartSkuBase}-${handle}${sizeForSku ? `-${slugify(sizeForSku)}` : ""}`;
+  }
+  return String(variant.sku || product.sku || handle).trim();
+};
+
+const getPreviewSku = (product: ImportedProduct) => {
+  const variants = getProductVariants(product);
+  const firstVariant = variants[0] || {};
+  return computeExportSku(product, firstVariant);
 };
 
 const toShopifyRows = (product: ImportedProduct, options: ExportOptions) => {
@@ -359,7 +407,7 @@ const toShopifyRows = (product: ImportedProduct, options: ExportOptions) => {
   const hasStock = Number.isFinite(parsedStock) && parsedStock >= 0;
   const tags = Array.from(
     new Set([
-      ...[product.brand, product.category, product.product_type, ...colors]
+      ...[product.category, product.product_type, ...colors]
         .map((entry) => String(entry || "").trim())
         .filter(Boolean),
       ...inferSmartCollectionTags(product),
@@ -368,7 +416,6 @@ const toShopifyRows = (product: ImportedProduct, options: ExportOptions) => {
 
   const shopifyProductCategory = inferShopifyProductCategory(product);
   const variants = getProductVariants(product);
-  const smartSkuBase = inferSportSmartSkuBase(product);
 
   return variants.map((variant, index) => {
     const row: Record<string, CsvCell> = {};
@@ -401,17 +448,13 @@ const toShopifyRows = (product: ImportedProduct, options: ExportOptions) => {
     row["Title"] = index === 0 ? title : "";
     row["URL handle"] = handle;
     row["Description"] = index === 0 ? String(product.description || "").trim() : "";
-    row["Vendor"] = index === 0 ? String(product.brand || "").trim() : "";
     row["Product category"] = index === 0 ? shopifyProductCategory : "";
     row["Type"] = index === 0 ? String(product.product_type || "").trim() : "";
     // Keep tags on every variant row so Shopify doesn't drop them on import updates.
     row["Tags"] = tags;
     row["Published on online store"] = "TRUE";
     row["Status"] = "active";
-    const sizeForSku = String(variantOptionValues[0] || "").trim();
-    const computedSku = smartSkuBase
-      ? `${smartSkuBase}${sizeForSku ? `-${slugify(sizeForSku)}` : ""}`
-      : String(variant.sku || product.sku || handle).trim();
+    const computedSku = computeExportSku(product, variant);
     row["SKU"] = computedSku;
     row["Barcode"] = String(variant.barcode || "").trim();
     row["Option1 name"] = optionNames[0] || "";
@@ -710,7 +753,6 @@ export function AdminShopify() {
                       />
                     </th>
                     <th className="py-2 pr-4 font-medium text-gray-700">Title</th>
-                    <th className="py-2 pr-4 font-medium text-gray-700">Vendor</th>
                     <th className="py-2 pr-4 font-medium text-gray-700">Price</th>
                     <th className="py-2 pr-4 font-medium text-gray-700">SKU</th>
                     <th className="py-2 pr-4 font-medium text-gray-700">Stock</th>
@@ -728,11 +770,12 @@ export function AdminShopify() {
                         />
                       </td>
                       <td className="py-2 pr-4 text-gray-900">{product.name}</td>
-                      <td className="py-2 pr-4 text-gray-700">{product.brand || "-"}</td>
                       <td className="py-2 pr-4 text-gray-700">
                         {formatPrice(product.price) || "-"}
                       </td>
-                      <td className="py-2 pr-4 text-gray-700">{product.sku || "-"}</td>
+                      <td className="py-2 pr-4 text-gray-700">
+                        {getPreviewSku(product) || "-"}
+                      </td>
                       <td className="py-2 pr-4 text-gray-700">
                         {Number.isFinite(Number(product.stock))
                           ? Math.max(0, Math.round(Number(product.stock)))
