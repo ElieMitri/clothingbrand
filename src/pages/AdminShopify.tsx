@@ -151,7 +151,14 @@ const inferDefaultSizesForProduct = (product: ImportedProduct) => {
     /\b(jersey|kit|shirt|t-?shirt|top|hoodie|sweatshirt|tracksuit|shorts?|uniform)\b/.test(
       blob
     );
+  const isShoeLike =
+    /\b(shoe|shoes|boot|boots|cleat|cleats|sneaker|sneakers|trainer|trainers|studs)\b/.test(
+      blob
+    );
 
+  if (isShoeLike) {
+    return ["36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46"];
+  }
   if (!isApparelLike) return [];
   return ["XS", "S", "M", "L", "XL"];
 };
