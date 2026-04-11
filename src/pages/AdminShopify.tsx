@@ -11,6 +11,7 @@ interface ImportedProduct {
   description?: string;
   brand?: string;
   sku?: string;
+  source_url?: string;
   category?: string;
   product_type?: string;
   image_url?: string;
@@ -131,6 +132,13 @@ const optionValueByPosition = (variant: ImportedVariant, position: 1 | 2 | 3) =>
   return String(variant.option3_value || "").trim();
 };
 
+const normalizeOptionValue = (value: string) => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (/^(default title|default)$/i.test(trimmed)) return "";
+  return trimmed;
+};
+
 const isColorOptionName = (name: string) => /\b(colou?r)\b/i.test(name);
 
 const unique = (values: string[]) =>
@@ -200,9 +208,9 @@ const getProductVariants = (product: ImportedProduct) => {
   const imported = Array.isArray(product.variants)
     ? product.variants.filter((variant) => {
         return (
-          String(variant.option1_value || "").trim() ||
-          String(variant.option2_value || "").trim() ||
-          String(variant.option3_value || "").trim() ||
+          normalizeOptionValue(optionValueByPosition(variant, 1)) ||
+          normalizeOptionValue(optionValueByPosition(variant, 2)) ||
+          normalizeOptionValue(optionValueByPosition(variant, 3)) ||
           String(variant.sku || "").trim()
         );
       })
@@ -210,14 +218,11 @@ const getProductVariants = (product: ImportedProduct) => {
 
   const importedHasRealOptions = imported.some((variant) => {
     const optionValues = [
-      String(variant.option1_value || "").trim(),
-      String(variant.option2_value || "").trim(),
-      String(variant.option3_value || "").trim(),
+      normalizeOptionValue(optionValueByPosition(variant, 1)),
+      normalizeOptionValue(optionValueByPosition(variant, 2)),
+      normalizeOptionValue(optionValueByPosition(variant, 3)),
     ].filter(Boolean);
-    if (optionValues.length === 0) return false;
-    return optionValues.some(
-      (value) => !/^(default title|default)$/i.test(String(value || "").trim())
-    );
+    return optionValues.length > 0;
   });
 
   if (imported.length > 0 && importedHasRealOptions) return imported;
@@ -423,34 +428,50 @@ const toShopifyRows = (product: ImportedProduct, options: ExportOptions) => {
 
   const shopifyProductCategory = inferShopifyProductCategory(product);
   const variants = getProductVariants(product);
+  const sizeValues = unique(Array.isArray(product.sizes) ? product.sizes : []);
+
+  const rawOptionNamesByVariant = variants.map((variant) => [
+    optionNameByPosition(variant, 1),
+    optionNameByPosition(variant, 2),
+    optionNameByPosition(variant, 3),
+  ]);
+  const rawOptionValuesByVariant = variants.map((variant) => [
+    normalizeOptionValue(optionValueByPosition(variant, 1)),
+    normalizeOptionValue(optionValueByPosition(variant, 2)),
+    normalizeOptionValue(optionValueByPosition(variant, 3)),
+  ]);
+
+  const activeRawOptionIndexes = [0, 1, 2].filter((rawIndex) =>
+    rawOptionValuesByVariant.some((values) => Boolean(values[rawIndex]))
+  );
+
+  const compactOptionNames = activeRawOptionIndexes.map((rawIndex, compactIndex) => {
+    const explicitName =
+      rawOptionNamesByVariant
+        .map((names) => names[rawIndex])
+        .find((name) => Boolean(name)) || "";
+    if (explicitName) return explicitName;
+
+    if (compactIndex === 0) {
+      const firstOptionValues = rawOptionValuesByVariant
+        .map((values) => values[rawIndex])
+        .filter(Boolean);
+      const allAreKnownSizes =
+        firstOptionValues.length > 0 &&
+        firstOptionValues.every((value) => sizeValues.includes(value));
+      if (allAreKnownSizes) return "Size";
+    }
+    return `Option ${compactIndex + 1}`;
+  });
 
   return variants.map((variant, index) => {
     const row: Record<string, CsvCell> = {};
     SHOPIFY_HEADERS.forEach((header) => {
       row[header] = "";
     });
-
-    const variantOptionNames = [
-      optionNameByPosition(variant, 1),
-      optionNameByPosition(variant, 2),
-      optionNameByPosition(variant, 3),
-    ];
-    const variantOptionValues = [
-      optionValueByPosition(variant, 1),
-      optionValueByPosition(variant, 2),
-      optionValueByPosition(variant, 3),
-    ];
-
-    const optionNames = variantOptionNames.map((name, optionIndex) => {
-      if (name) return name;
-      const value = variantOptionValues[optionIndex];
-      if (!value) return "";
-      if (optionIndex === 0) {
-        const sizeValues = unique(Array.isArray(product.sizes) ? product.sizes : []);
-        if (sizeValues.includes(value)) return "Size";
-      }
-      return `Option ${optionIndex + 1}`;
-    });
+    const compactOptionValues = activeRawOptionIndexes.map((rawIndex) =>
+      normalizeOptionValue(optionValueByPosition(variant, (rawIndex + 1) as 1 | 2 | 3))
+    );
 
     row["Title"] = index === 0 ? title : "";
     row["URL handle"] = handle;
@@ -464,19 +485,19 @@ const toShopifyRows = (product: ImportedProduct, options: ExportOptions) => {
     const computedSku = computeExportSku(product, variant);
     row["SKU"] = computedSku;
     row["Barcode"] = String(variant.barcode || "").trim();
-    row["Option1 name"] = optionNames[0] || "";
-    row["Option1 value"] = variantOptionValues[0] || "";
-    row["Option2 name"] = optionNames[1] || "";
-    row["Option2 value"] = variantOptionValues[1] || "";
-    row["Option3 name"] = optionNames[2] || "";
-    row["Option3 value"] = variantOptionValues[2] || "";
-    row["Option1 Linked To"] = isColorOptionName(optionNames[0])
+    row["Option1 name"] = compactOptionNames[0] || "";
+    row["Option1 value"] = compactOptionValues[0] || "";
+    row["Option2 name"] = compactOptionNames[1] || "";
+    row["Option2 value"] = compactOptionValues[1] || "";
+    row["Option3 name"] = compactOptionNames[2] || "";
+    row["Option3 value"] = compactOptionValues[2] || "";
+    row["Option1 Linked To"] = isColorOptionName(compactOptionNames[0])
       ? "product.metafields.shopify.color-pattern"
       : "";
-    row["Option2 Linked To"] = isColorOptionName(optionNames[1])
+    row["Option2 Linked To"] = isColorOptionName(compactOptionNames[1])
       ? "product.metafields.shopify.color-pattern"
       : "";
-    row["Option3 Linked To"] = isColorOptionName(optionNames[2])
+    row["Option3 Linked To"] = isColorOptionName(compactOptionNames[2])
       ? "product.metafields.shopify.color-pattern"
       : "";
 
