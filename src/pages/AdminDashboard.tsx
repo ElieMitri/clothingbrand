@@ -456,7 +456,6 @@ export function AdminDashboard() {
   >("overview");
   const [isSideNavOpen, setIsSideNavOpen] = useState(false);
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(false);
-  const [isNormalizingMartialArts, setIsNormalizingMartialArts] = useState(false);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -500,6 +499,7 @@ export function AdminDashboard() {
   const [sourceCommissionPercentage, setSourceCommissionPercentage] =
     useState(0);
   const [applyingSourceCommission, setApplyingSourceCommission] = useState(false);
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [visibleProductCount, setVisibleProductCount] = useState(24);
   const [openCategoryTreeNodes, setOpenCategoryTreeNodes] = useState<string[]>(
     []
@@ -2357,125 +2357,6 @@ export function AdminDashboard() {
     }
   };
 
-  const normalizeMartialArtsProducts = async () => {
-    if (isNormalizingMartialArts) return;
-
-    const isCombatCategory = (value: string) => {
-      const slug = slugifyPathToken(value || "");
-      return (
-        slug === "sports" ||
-        slug === "martial-arts" ||
-        slug.includes("muay-thai") ||
-        slug === "muaythai" ||
-        slug.includes("boxing") ||
-        slug === "mma" ||
-        slug.includes("combat")
-      );
-    };
-    const isGeneric = (value: string) => {
-      const slug = slugifyPathToken(value || "");
-      return !slug || slug === "sports" || slug === "martial-arts" || slug === "general";
-    };
-    const inferMartialChildType = (product: Product) => {
-      const text = [
-        product.name,
-        product.subcategory,
-        product.product_type,
-        Array.isArray(product.tags) ? product.tags.join(" ") : "",
-      ]
-        .map((entry) => String(entry || "").toLowerCase())
-        .join(" ");
-
-      if (/\bshin\s*guards?\b/.test(text)) return "Shin Guards";
-      if (/\bmouth\s*guard(s)?\b/.test(text)) return "Mouthguards";
-      if (/\bhand\s*wraps?\b|\bwraps?\b/.test(text)) return "Hand Wraps";
-      if (/\bboxing\b.*\bgloves?\b|\bgloves?\b.*\bboxing\b/.test(text)) return "Boxing Gloves";
-      if (/\bmma\b.*\bgloves?\b|\bgloves?\b.*\bmma\b/.test(text)) return "MMA Gloves";
-      if (/\bgloves?\b/.test(text)) return "Gloves";
-      if (/\brash\s*guard(s)?\b|\brashguard(s)?\b/.test(text)) return "Rashguards";
-      if (/\bshorts?\b|\btrunks?\b/.test(text)) return "Shorts";
-      if (/\bhead\s*gear\b|\bheadgear\b/.test(text)) return "Headgear";
-      if (/\bgroin\s*guard(s)?\b/.test(text)) return "Groin Guards";
-      if (/\bgi\b|\bkimono\b/.test(text)) return "Gi";
-      if (/\bfocus\s*mitt(s)?\b|\bthai\s*pad(s)?\b|\bkick\s*pad(s)?\b|\bpunching\s*bag(s)?\b/.test(text)) {
-        return "Pads & Bags";
-      }
-
-      const existingType = String(product.product_type || "").trim();
-      const existingSubcategory = String(product.subcategory || "").trim();
-      if (!isGeneric(existingType)) return existingType;
-      if (!isGeneric(existingSubcategory)) return existingSubcategory;
-      return "Equipment";
-    };
-
-    const targets = products.filter((product) =>
-      isCombatCategory(String(product.category || ""))
-    );
-    if (targets.length === 0) {
-      alert("No Sports/Martial Arts products found to normalize.");
-      return;
-    }
-
-    const shouldProceed = window.confirm(
-      `Normalize ${targets.length} combat products to Martial Arts taxonomy now?`
-    );
-    if (!shouldProceed) return;
-
-    try {
-      setIsNormalizingMartialArts(true);
-      let updatedCount = 0;
-      let batch = writeBatch(db);
-      let operations = 0;
-
-      for (const product of targets) {
-        const childType = inferMartialChildType(product);
-        const nextCategory = "Martial Arts";
-        const nextSubcategory = childType;
-        const nextProductType = childType;
-
-        const currentCategory = String(product.category || "").trim();
-        const currentSubcategory = String(product.subcategory || "").trim();
-        const currentProductType = String(product.product_type || "").trim();
-
-        const needsUpdate =
-          currentCategory !== nextCategory ||
-          currentSubcategory !== nextSubcategory ||
-          currentProductType !== nextProductType;
-
-        if (!needsUpdate) continue;
-
-        batch.update(doc(db, "products", product.id), {
-          category: nextCategory,
-          subcategory: nextSubcategory,
-          product_type: nextProductType,
-        });
-        operations += 1;
-        updatedCount += 1;
-
-        if (operations >= 400) {
-          await batch.commit();
-          batch = writeBatch(db);
-          operations = 0;
-        }
-      }
-
-      if (operations > 0) {
-        await batch.commit();
-      }
-
-      alert(
-        updatedCount > 0
-          ? `Normalized ${updatedCount} product${updatedCount === 1 ? "" : "s"} to Martial Arts taxonomy.`
-          : "All combat products were already normalized."
-      );
-    } catch (error) {
-      console.error("Failed to normalize martial arts products:", error);
-      alert("Failed to normalize Martial Arts products.");
-    } finally {
-      setIsNormalizingMartialArts(false);
-    }
-  };
-
   const deleteImportedProductsForSource = async () => {
     const normalized = importUrl.trim();
     if (!normalized) {
@@ -3002,10 +2883,66 @@ export function AdminDashboard() {
       onConfirm: async () => {
         try {
           await deleteDoc(doc(db, "products", productId));
+          setSelectedProductIds((prev) => prev.filter((id) => id !== productId));
           alert("Product deleted successfully!");
         } catch (error) {
           console.error("Error deleting product:", error);
           alert("Failed to delete product");
+        }
+      },
+    });
+    setShowConfirmModal(true);
+  };
+
+  const toggleProductSelection = (productId: string) => {
+    setSelectedProductIds((prev) =>
+      prev.includes(productId)
+        ? prev.filter((id) => id !== productId)
+        : [...prev, productId]
+    );
+  };
+
+  const clearSelectedProducts = () => {
+    setSelectedProductIds([]);
+  };
+
+  const deleteSelectedProducts = async () => {
+    if (selectedProductIds.length === 0) return;
+
+    setConfirmAction({
+      title: "Delete Selected Products",
+      message: `Delete ${selectedProductIds.length} selected product${
+        selectedProductIds.length === 1 ? "" : "s"
+      }? This cannot be undone.`,
+      danger: true,
+      onConfirm: async () => {
+        try {
+          let batch = writeBatch(db);
+          let operations = 0;
+
+          for (const productId of selectedProductIds) {
+            batch.delete(doc(db, "products", productId));
+            operations += 1;
+
+            if (operations >= 400) {
+              await batch.commit();
+              batch = writeBatch(db);
+              operations = 0;
+            }
+          }
+
+          if (operations > 0) {
+            await batch.commit();
+          }
+
+          const deletedCount = selectedProductIds.length;
+          setSelectedProductIds([]);
+          alert(
+            `Deleted ${deletedCount} product${deletedCount === 1 ? "" : "s"} successfully.`
+          );
+        } catch (error) {
+          console.error("Error deleting selected products:", error);
+          alert("Failed to delete selected products.");
         }
       },
     });
@@ -4076,10 +4013,36 @@ export function AdminDashboard() {
     () => filteredProducts.slice(0, visibleProductCount),
     [filteredProducts, visibleProductCount]
   );
+  const visibleProductIds = useMemo(
+    () => visibleProducts.map((product) => product.id),
+    [visibleProducts]
+  );
+  const selectedVisibleCount = useMemo(
+    () => visibleProductIds.filter((id) => selectedProductIds.includes(id)).length,
+    [visibleProductIds, selectedProductIds]
+  );
+  const allVisibleSelected =
+    visibleProductIds.length > 0 && selectedVisibleCount === visibleProductIds.length;
   const hasMoreProducts = visibleProductCount < filteredProducts.length;
   useEffect(() => {
     setVisibleProductCount(24);
   }, [deferredProductSearch, selectedCategory]);
+  useEffect(() => {
+    const validIds = new Set(products.map((product) => product.id));
+    setSelectedProductIds((prev) => prev.filter((id) => validIds.has(id)));
+  }, [products]);
+  const toggleSelectVisibleProducts = () => {
+    if (visibleProductIds.length === 0) return;
+
+    setSelectedProductIds((prev) => {
+      if (allVisibleSelected) {
+        return prev.filter((id) => !visibleProductIds.includes(id));
+      }
+      const next = new Set(prev);
+      visibleProductIds.forEach((id) => next.add(id));
+      return Array.from(next);
+    });
+  };
   useEffect(() => {
     if (!showProductModal) return;
 
@@ -4765,17 +4728,26 @@ export function AdminDashboard() {
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
                   <button
-                    onClick={normalizeMartialArtsProducts}
-                    disabled={isNormalizingMartialArts}
-                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-60"
+                    onClick={toggleSelectVisibleProducts}
+                    disabled={visibleProductIds.length === 0}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gray-100 text-gray-900 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-60"
                   >
-                    <RefreshCw
-                      size={18}
-                      className={isNormalizingMartialArts ? "animate-spin" : ""}
-                    />
-                    {isNormalizingMartialArts
-                      ? "Fixing Martial Arts..."
-                      : "Fix Martial Arts Tabs"}
+                    {allVisibleSelected ? "Unselect Visible" : "Select Visible"}
+                  </button>
+                  <button
+                    onClick={clearSelectedProducts}
+                    disabled={selectedProductIds.length === 0}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gray-100 text-gray-900 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-60"
+                  >
+                    Clear Selected ({selectedProductIds.length})
+                  </button>
+                  <button
+                    onClick={deleteSelectedProducts}
+                    disabled={selectedProductIds.length === 0}
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-60"
+                  >
+                    <Trash2 size={18} />
+                    Delete Selected ({selectedProductIds.length})
                   </button>
                   <button
                     onClick={() => exportData(filteredProducts, "products.csv")}
@@ -4817,12 +4789,16 @@ export function AdminDashboard() {
                   onClick={() => {
                     setSearchTerm("");
                     setSelectedCategory("all");
+                    setSelectedProductIds([]);
                   }}
                   className="w-full sm:w-auto px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   Clear
                 </button>
               </div>
+              <p className="text-xs text-gray-500">
+                Selected in visible list: {selectedVisibleCount}/{visibleProductIds.length}
+              </p>
             </div>
 
             <div className="bg-white border border-gray-200 p-4 rounded-xl shadow-sm">
@@ -4928,7 +4904,11 @@ export function AdminDashboard() {
                 return (
                   <div
                     key={product.id}
-                    className="bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-lg transition-shadow"
+                    className={`bg-white rounded-xl shadow-sm overflow-hidden transition-shadow ${
+                      selectedProductIds.includes(product.id)
+                        ? "ring-2 ring-black/20"
+                        : "hover:shadow-lg"
+                    }`}
                   >
                     <div className="aspect-[4/3] bg-gray-100 relative">
                       <img
@@ -4938,6 +4918,15 @@ export function AdminDashboard() {
                         decoding="async"
                         className="w-full h-full object-cover"
                       />
+                      <label className="absolute top-2 left-2 inline-flex items-center gap-2 rounded-md bg-white/90 px-2 py-1 text-xs font-medium text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={selectedProductIds.includes(product.id)}
+                          onChange={() => toggleProductSelection(product.id)}
+                          className="h-4 w-4"
+                        />
+                        Select
+                      </label>
                       <div className="absolute top-2 right-2 flex gap-2">
                         {isProductSoldOut(product) && (
                           <span className="bg-red-600 text-white px-2 py-1 rounded text-xs font-semibold">

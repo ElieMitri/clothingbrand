@@ -1,29 +1,21 @@
-import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
-import { createPortal } from "react-dom";
-import {
-  Trash2,
-  Plus,
-  Minus,
-  ShoppingBag,
-  ArrowRight,
-  ChevronLeft,
-} from "lucide-react";
-import { db } from "../lib/firebase";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { Minus, Plus, Trash2 } from "lucide-react";
 import {
   collection,
-  query,
-  where,
-  getDocs,
+  deleteDoc,
   doc,
   getDoc,
+  getDocs,
+  query,
   updateDoc,
-  deleteDoc,
-  setDoc,
-  serverTimestamp,
+  where,
 } from "firebase/firestore";
+import { db } from "../lib/firebase";
 import { useAuth } from "../contexts/AuthContext";
-import { placeOrderWithInventory } from "../lib/orderLogic";
+import { readGuestCart, writeGuestCart } from "../lib/cart";
+import { formatPrice } from "../lib/storefront";
+import { Button } from "../components/storefront/Button";
 
 interface CartItem {
   id: string;
@@ -38,122 +30,79 @@ interface CartItem {
   };
 }
 
-interface RawCartItem {
-  id: string;
-  product_id: string;
-  size: string;
-  quantity: number;
-  product: {
-    name: string;
-    price: number;
-    image_url: string;
-    category?: string;
-  };
-}
-
-interface SavedAddress {
-  id: string;
-  label: string;
-  address: string;
-  directions?: string;
-  city: string;
-  state?: string;
-  country?: string;
-}
-
-const GUEST_CART_STORAGE_KEY = "guest_cart_items_v1";
-const DELIVERY_CHARGE = 0;
-
-interface GuestCartEntry {
-  product_id: string;
-  size: string;
-  quantity: number;
-}
-
-const readGuestCart = (): GuestCartEntry[] => {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const raw = window.localStorage.getItem(GUEST_CART_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-
-    const grouped = new Map<string, GuestCartEntry>();
-    parsed.forEach((entry) => {
-      const productId = String(entry?.product_id || "").trim();
-      const size = String(entry?.size || "").trim();
-      const quantity = Number(entry?.quantity || 0);
-      if (!productId || !size || quantity <= 0) return;
-      const key = `${productId}__${size}`;
-      const existing = grouped.get(key);
-      if (existing) {
-        existing.quantity += quantity;
-      } else {
-        grouped.set(key, { product_id: productId, size, quantity });
-      }
-    });
-
-    return Array.from(grouped.values());
-  } catch {
-    return [];
-  }
-};
-
-const writeGuestCart = (items: GuestCartEntry[]) => {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(GUEST_CART_STORAGE_KEY, JSON.stringify(items));
-  window.dispatchEvent(new Event("guest-cart-updated"));
-};
-
 export function Cart() {
   const { user } = useAuth();
-  const navigate = useNavigate();
-  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [items, setItems] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [updating, setUpdating] = useState<string | null>(null);
-  const [showCheckoutForm, setShowCheckoutForm] = useState(false);
-  const [checkoutForm, setCheckoutForm] = useState({
-    email: "",
-    fullName: "",
-    phone: "",
-    address: "",
-    directions: "",
-    city: "",
-  });
-  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
-  const [selectedAddressId, setSelectedAddressId] = useState("");
-  const [showAddAddressModal, setShowAddAddressModal] = useState(false);
-  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
-  const [newAddressForm, setNewAddressForm] = useState({
-    label: "",
-    address: "",
-    directions: "",
-    city: "",
-  });
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!showCheckoutForm && !showAddAddressModal) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [showCheckoutForm, showAddAddressModal]);
+  const loadCart = async () => {
+    setLoading(true);
 
-  useEffect(() => {
-    if (!showCheckoutForm && !showAddAddressModal) return;
-    const onEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (showAddAddressModal) {
-        closeAddAddressModal();
+    try {
+      if (!user) {
+        const guestEntries = readGuestCart();
+        if (guestEntries.length === 0) {
+          setItems([]);
+          setLoading(false);
+          return;
+        }
+
+        const enriched = await Promise.all(
+          guestEntries.map(async (entry) => {
+            const productSnap = await getDoc(doc(db, "products", entry.product_id));
+            if (!productSnap.exists()) return null;
+
+            const productData = productSnap.data();
+            return {
+              id: `${entry.product_id}__${entry.size}`,
+              product_id: entry.product_id,
+              size: entry.size,
+              quantity: entry.quantity,
+              product: {
+                name: String(productData.name || "Product"),
+                price: Number(productData.price || 0),
+                image_url: String(productData.image_url || ""),
+                category: String(productData.category || ""),
+              },
+            } as CartItem;
+          })
+        );
+
+        setItems(enriched.filter((item): item is CartItem => item !== null));
+        setLoading(false);
         return;
       }
-      setShowCheckoutForm(false);
-    };
-    window.addEventListener("keydown", onEscape);
-    return () => window.removeEventListener("keydown", onEscape);
-  }, [showCheckoutForm, showAddAddressModal]);
+
+      const q = query(collection(db, "carts"), where("user_id", "==", user.uid));
+      const cartSnap = await getDocs(q);
+      const enriched = await Promise.all(
+        cartSnap.docs.map(async (entry) => {
+          const cartData = entry.data();
+          const productSnap = await getDoc(doc(db, "products", String(cartData.product_id || "")));
+          if (!productSnap.exists()) return null;
+
+          const productData = productSnap.data();
+          return {
+            id: entry.id,
+            product_id: String(cartData.product_id || ""),
+            size: String(cartData.size || "M"),
+            quantity: Number(cartData.quantity || 1),
+            product: {
+              name: String(productData.name || "Product"),
+              price: Number(productData.price || 0),
+              image_url: String(productData.image_url || ""),
+              category: String(productData.category || ""),
+            },
+          } as CartItem;
+        })
+      );
+
+      setItems(enriched.filter((item): item is CartItem => item !== null));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     loadCart();
@@ -161,1078 +110,175 @@ export function Cart() {
 
   useEffect(() => {
     if (user) return;
-    const handleGuestCartUpdated = () => {
-      loadCart();
-    };
-    window.addEventListener("guest-cart-updated", handleGuestCartUpdated);
-    window.addEventListener("storage", handleGuestCartUpdated);
-    return () => {
-      window.removeEventListener("guest-cart-updated", handleGuestCartUpdated);
-      window.removeEventListener("storage", handleGuestCartUpdated);
-    };
+    const refreshGuest = () => loadCart();
+    window.addEventListener("guest-cart-updated", refreshGuest);
+    return () => window.removeEventListener("guest-cart-updated", refreshGuest);
   }, [user]);
 
-  const normalizeAddressBook = (raw: unknown): SavedAddress[] => {
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map((entry, index) => {
-        if (!entry || typeof entry !== "object") return null;
-        const candidate = entry as Partial<SavedAddress>;
-        const label = String(candidate.label || "").trim();
-        const address = String(candidate.address || "").trim();
-        const city = String(candidate.city || "").trim();
-        const state = String(candidate.state || "").trim();
-        if (!label || !address || !city) return null;
-        return {
-          id: String(candidate.id || `address-${index + 1}`),
-          label,
-          address,
-          directions: String(candidate.directions || "").trim(),
-          city,
-          state,
-          country: String(candidate.country || "").trim() || "Lebanon",
-        } as SavedAddress;
-      })
-      .filter((entry: SavedAddress | null): entry is SavedAddress => entry !== null);
-  };
+  const updateQuantity = async (itemId: string, nextQuantity: number) => {
+    if (nextQuantity < 1) return;
 
-  const applySavedAddress = (address: SavedAddress) => {
-    setCheckoutForm((prev) => ({
-      ...prev,
-      address: address.address,
-      directions: address.directions || "",
-      city: address.city,
-    }));
-  };
-
-  const resetNewAddressForm = () => {
-    setNewAddressForm({
-      label: "",
-      address: "",
-      directions: "",
-      city: "",
-    });
-  };
-
-  const closeAddAddressModal = () => {
-    setShowAddAddressModal(false);
-    setEditingAddressId(null);
-    resetNewAddressForm();
-  };
-
-  const openAddAddressModal = () => {
-    setEditingAddressId(null);
-    resetNewAddressForm();
-    setShowAddAddressModal(true);
-  };
-
-  const openEditAddressModal = (address: SavedAddress) => {
-    setEditingAddressId(address.id);
-    setNewAddressForm({
-      label: address.label,
-      address: address.address,
-      directions: address.directions || "",
-      city: address.city,
-    });
-    setShowAddAddressModal(true);
-  };
-
-  const loadCart = async () => {
+    setUpdatingId(itemId);
     try {
-      setLoading(true);
-
-      if (!user) {
-        const guestEntries = readGuestCart();
-        if (guestEntries.length === 0) {
-          setCartItems([]);
-          return;
-        }
-
-        const items = await Promise.all(
-          guestEntries.map(async (entry) => {
-            const productRef = doc(db, "products", entry.product_id);
-            const productSnap = await getDoc(productRef);
-            if (!productSnap.exists()) return null;
-
-            const productData = productSnap.data();
-
-            const mappedItem: RawCartItem = {
-              id: `${entry.product_id}__${entry.size}`,
-              product_id: entry.product_id,
-              size: entry.size,
-              quantity: entry.quantity,
-              product: {
-                name: productData.name,
-                price: productData.price,
-                image_url: productData.image_url,
-                category: productData.category,
-              },
-            };
-            return mappedItem;
-          })
-        );
-
-        setCartItems(items.filter((item): item is RawCartItem => item !== null));
-        return;
-      }
-
-      const cartsRef = collection(db, "carts");
-      const q = query(cartsRef, where("user_id", "==", user.uid));
-      const querySnapshot = await getDocs(q);
-
-      const items = await Promise.all(
-        querySnapshot.docs.map(async (cartDoc) => {
-          const cartData = cartDoc.data();
-
-          // Fetch the product details
-          const productRef = doc(db, "products", cartData.product_id);
-          const productSnap = await getDoc(productRef);
-
-          if (productSnap.exists()) {
-            const productData = productSnap.data();
-            const mappedItem: RawCartItem = {
-              id: cartDoc.id,
-              product_id: cartData.product_id,
-              size: cartData.size,
-              quantity: cartData.quantity,
-              product: {
-                name: productData.name,
-                price: productData.price,
-                image_url: productData.image_url,
-                category: productData.category,
-              },
-            };
-            return mappedItem;
-          }
-          return null;
-        })
-      );
-
-      // Filter out any null values (in case a product doesn't exist)
-      setCartItems(items.filter((item): item is RawCartItem => item !== null));
-    } catch (error) {
-      console.error("Error loading cart:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const updateQuantity = async (itemId: string, newQuantity: number) => {
-    if (newQuantity < 1) return;
-
-    try {
-      const currentItem = cartItems.find((item) => item.id === itemId);
-
-      if (!currentItem) return;
-      setUpdating(itemId);
-
       if (user) {
-        const cartRef = doc(db, "carts", itemId);
-        await updateDoc(cartRef, { quantity: newQuantity });
+        await updateDoc(doc(db, "carts", itemId), { quantity: nextQuantity });
       } else {
-        const guestCart = readGuestCart();
-        const nextGuestCart = guestCart.map((entry) =>
+        const guestEntries = readGuestCart();
+        const updated = guestEntries.map((entry) =>
           `${entry.product_id}__${entry.size}` === itemId
-            ? { ...entry, quantity: newQuantity }
+            ? { ...entry, quantity: nextQuantity }
             : entry
         );
-        writeGuestCart(nextGuestCart);
+        writeGuestCart(updated);
       }
 
-      setCartItems(
-        cartItems.map((item) =>
-          item.id === itemId ? { ...item, quantity: newQuantity } : item
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === itemId ? { ...item, quantity: nextQuantity } : item
         )
       );
-    } catch (error) {
-      console.error("Error updating quantity:", error);
     } finally {
-      setUpdating(null);
+      setUpdatingId(null);
     }
   };
 
   const removeItem = async (itemId: string) => {
+    setUpdatingId(itemId);
     try {
-      setUpdating(itemId);
       if (user) {
-        const cartRef = doc(db, "carts", itemId);
-        await deleteDoc(cartRef);
+        await deleteDoc(doc(db, "carts", itemId));
       } else {
-        const guestCart = readGuestCart();
-        const nextGuestCart = guestCart.filter(
+        const guestEntries = readGuestCart();
+        const updated = guestEntries.filter(
           (entry) => `${entry.product_id}__${entry.size}` !== itemId
         );
-        writeGuestCart(nextGuestCart);
+        writeGuestCart(updated);
       }
-
-      setCartItems(cartItems.filter((item) => item.id !== itemId));
-    } catch (error) {
-      console.error("Error removing item:", error);
+      setItems((prev) => prev.filter((item) => item.id !== itemId));
     } finally {
-      setUpdating(null);
+      setUpdatingId(null);
     }
   };
 
-  const openCheckoutForm = async () => {
-    if (cartItems.length === 0) return;
-
-    if (!user) {
-      setSavedAddresses([]);
-      setSelectedAddressId("");
-      setCheckoutForm((prev) => ({
-        ...prev,
-        email: prev.email || "",
-      }));
-      setShowCheckoutForm(true);
-      return;
-    }
-
-    try {
-      const userSnap = await getDoc(doc(db, "users", user.uid));
-      const userData = userSnap.exists() ? userSnap.data() : {};
-      const fullName = String(
-        `${userData.firstName || ""} ${userData.lastName || ""}`.trim() ||
-          userData.displayName ||
-          user.displayName ||
-          ""
-      );
-      const phone = String(
-        `${userData.countryCode || ""} ${userData.phone || ""}`.trim()
-      );
-      const addressBook = normalizeAddressBook(userData.addressBook);
-      setSavedAddresses(addressBook);
-
-      setCheckoutForm((prev) => ({
-        ...prev,
-        email: prev.email || String(user.email || ""),
-        fullName: prev.fullName || fullName,
-        phone: prev.phone || phone,
-      }));
-
-      if (addressBook.length > 0) {
-        const pickedAddress =
-          addressBook.find((entry) => entry.id === selectedAddressId) ||
-          addressBook[0];
-        setSelectedAddressId(pickedAddress.id);
-        applySavedAddress(pickedAddress);
-      }
-      setShowCheckoutForm(true);
-    } catch (error) {
-      console.error("Error loading saved addresses:", error);
-      setShowCheckoutForm(true);
-    }
-  };
-
-  const checkout = async () => {
-    if (cartItems.length === 0) return;
-
-    const emailInput = checkoutForm.email.trim().toLowerCase();
-    const fullName = checkoutForm.fullName.trim();
-    const phone = checkoutForm.phone.trim();
-    const address = checkoutForm.address.trim();
-    const directions = checkoutForm.directions.trim() || "-";
-    const city = checkoutForm.city.trim();
-    const state = "-";
-    const zipCode = "-";
-    const country = "Lebanon";
-
-    if (!fullName || !phone || !address || !city || (!user && !emailInput)) {
-      alert("Please fill in all required checkout fields.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-
-      // Include product names and images for admin visibility
-      const orderItems = cartItems.map((item) => ({
-        product_id: item.product_id,
-        product_name: item.product.name,
-        product_image: item.product.image_url,
-        category: item.product.category || "Uncategorized",
-        size: item.size,
-        quantity: item.quantity,
-        price: item.product.price,
-      }));
-
-      const subtotal = cartItems.reduce(
-        (sum, item) => sum + item.product.price * item.quantity,
-        0
-      );
-
-      const shipping = DELIVERY_CHARGE;
-      const tax = 0;
-      const total = subtotal + shipping;
-
-      const cartDocIds = cartItems.map((item) => item.id);
-
-      const orderId = await placeOrderWithInventory({
-        userId: user?.uid || null,
-        userEmail: user?.email || emailInput || null,
-        items: orderItems,
-        subtotal,
-        shipping,
-        tax,
-        total,
-        cartDocIds: user ? cartDocIds : [],
-      });
-
-      const email = String(user?.email || emailInput || "Not provided");
-
-      try {
-        const confirmationPayload = {
-          orderId,
-          name: fullName,
-          email,
-          address,
-          phone,
-          directions,
-          city,
-          state,
-          zipCode,
-          country,
-          subtotal,
-          shipping,
-          tax,
-          total,
-          items: orderItems.map((item) => ({
-            name: item.product_name,
-            size: item.size,
-            quantity: item.quantity,
-            unitPrice: item.price,
-          })),
-        };
-
-        const response = await fetch("/api/send-order-confirmation-email", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(confirmationPayload),
-        });
-
-        if (!response.ok) {
-          const reason = await response.text().catch(() => "");
-          throw new Error(reason || `HTTP ${response.status}`);
-        }
-      } catch (confirmationError) {
-        console.error(
-          "Order placed, but confirmation email failed:",
-          confirmationError
-        );
-      }
-
-      try {
-        const notificationPayload = {
-          orderId,
-          orderedAt: new Date().toISOString(),
-          name: fullName,
-          email,
-          address,
-          phone,
-          directions,
-          city,
-          state,
-          zipCode,
-          country,
-          subtotal,
-          shipping,
-          tax,
-          total,
-          items: orderItems.map((item) => ({
-            name: item.product_name,
-            size: item.size,
-            quantity: item.quantity,
-            unitPrice: item.price,
-          })),
-        };
-
-        try {
-          const response = await fetch("/api/send-order-discord", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(notificationPayload),
-          });
-
-          if (!response.ok) {
-            const reason = await response.text();
-            throw new Error(reason || `HTTP ${response.status}`);
-          }
-        } catch (endpointError) {
-          const failureReason =
-            endpointError instanceof Error
-              ? endpointError.message
-              : "Request error";
-          console.error(
-            "Failed to send Discord order notification via API:",
-            failureReason
-          );
-        }
-      } catch (notificationError) {
-        console.error("Discord order notification request failed:", notificationError);
-      }
-
-      setShowCheckoutForm(false);
-      setCheckoutForm({
-        email: "",
-        fullName: "",
-        phone: "",
-        address: "",
-        directions: "",
-        city: "",
-      });
-      if (!user) {
-        writeGuestCart([]);
-        setCartItems([]);
-        setTimeout(() => navigate("/"), 1300);
-      } else {
-        setTimeout(() => navigate("/orders"), 1300);
-      }
-    } catch (error) {
-      console.error("Error placing order:", error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to place order. Please try again.";
-      alert(message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAddressSelect = (value: string) => {
-    if (value === "__add_new__") {
-      openAddAddressModal();
-      return;
-    }
-
-    setSelectedAddressId(value);
-    const selected = savedAddresses.find((entry) => entry.id === value);
-    if (selected) {
-      applySavedAddress(selected);
-    }
-  };
-
-  const handleSaveAddress = async () => {
-    if (!user) return;
-    const addressPayload: SavedAddress = {
-      id: editingAddressId || `addr-${Date.now()}`,
-      label: newAddressForm.label.trim(),
-      address: newAddressForm.address.trim(),
-      directions: newAddressForm.directions.trim(),
-      city: newAddressForm.city.trim(),
-      state: "-",
-      country: "Lebanon",
-    };
-
-    if (!addressPayload.label || !addressPayload.address || !addressPayload.city) {
-      alert("Please fill all required address fields.");
-      return;
-    }
-
-    const nextAddresses = editingAddressId
-      ? savedAddresses.map((entry) =>
-          entry.id === editingAddressId ? addressPayload : entry
-        )
-      : [...savedAddresses, addressPayload];
-
-    try {
-      await setDoc(
-        doc(db, "users", user.uid),
-        {
-          addressBook: nextAddresses,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      setSavedAddresses(nextAddresses);
-      setSelectedAddressId(addressPayload.id);
-      applySavedAddress(addressPayload);
-      closeAddAddressModal();
-    } catch (error) {
-      console.error("Error saving new address:", error);
-      alert("Failed to save address. Please try again.");
-    }
-  };
-
-  const handleDeleteAddress = async (addressId: string) => {
-    if (!user) return;
-    const target = savedAddresses.find((entry) => entry.id === addressId);
-    if (!target) return;
-
-    const confirmed = window.confirm(
-      `Delete "${target.label}" from saved addresses?`
-    );
-    if (!confirmed) return;
-
-    const nextAddresses = savedAddresses.filter((entry) => entry.id !== addressId);
-
-    try {
-      await setDoc(
-        doc(db, "users", user.uid),
-        {
-          addressBook: nextAddresses,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      setSavedAddresses(nextAddresses);
-
-      if (selectedAddressId !== addressId) return;
-
-      if (nextAddresses.length > 0) {
-        const fallback = nextAddresses[0];
-        setSelectedAddressId(fallback.id);
-        applySavedAddress(fallback);
-      } else {
-        setSelectedAddressId("");
-        setCheckoutForm((prev) => ({
-          ...prev,
-          address: "",
-          directions: "",
-          city: "",
-        }));
-      }
-    } catch (error) {
-      console.error("Error deleting address:", error);
-      alert("Failed to delete address. Please try again.");
-    }
-  };
-
-  const subtotal = cartItems.reduce(
-    (sum, item) => sum + item.product.price * item.quantity,
-    0
+  const subtotal = useMemo(
+    () => items.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
+    [items]
   );
-
-  const shipping = DELIVERY_CHARGE;
-  const tax = 0;
+  const shipping = subtotal > 120 || items.length === 0 ? 0 : 8;
   const total = subtotal + shipping;
 
   if (loading) {
     return (
-      <div className="min-h-screen pt-24 flex items-center justify-center bg-slate-950">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-300 mx-auto mb-4"></div>
-          <p className="text-slate-300">Loading your cart...</p>
+      <div className="store-container py-10">
+        <div className="space-y-4">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-28 animate-pulse rounded-[var(--sf-radius-lg)] bg-[var(--sf-bg-soft)]" />
+          ))}
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen pt-24 pb-16 px-3 sm:px-4 bg-gray-50">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <Link
-            to="/shop"
-            className="inline-flex items-center gap-2 text-gray-600 hover:text-black transition-colors mb-4"
-          >
-            <ChevronLeft size={20} />
-            Continue Shopping
-          </Link>
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-light tracking-wide">
-            Shopping Cart
-          </h1>
-          <p className="text-gray-600 mt-2">
-            {cartItems.length} {cartItems.length === 1 ? "item" : "items"} in
-            your cart
-          </p>
-        </div>
-
-        {cartItems.length === 0 ? (
-          <div className="bg-white rounded-2xl shadow-sm p-12 text-center">
-            <div className="max-w-md mx-auto">
-              <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                <ShoppingBag className="text-gray-400" size={48} />
-              </div>
-              <h2 className="text-2xl font-light mb-4">Your cart is empty</h2>
-              <p className="text-gray-600 mb-8">
-                Looks like you haven't added anything to your cart yet.
-              </p>
-              <Link
-                to="/shop"
-                className="inline-flex items-center gap-2 px-8 py-3 bg-black text-white rounded-xl hover:bg-gray-800 transition-colors"
-              >
-                Start Shopping
-                <ArrowRight size={20} />
-              </Link>
-            </div>
-          </div>
-        ) : (
-          <div className="grid lg:grid-cols-3 gap-5 sm:gap-8">
-            {/* Cart Items */}
-            <div className="lg:col-span-2 space-y-4">
-              {cartItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="bg-white rounded-2xl shadow-sm p-4 sm:p-6 transition-all hover:shadow-md"
-                >
-                  <div className="flex flex-col sm:flex-row gap-4 sm:gap-6">
-                    {/* Product Image */}
-                    <Link
-                      to={`/product/${item.product_id}`}
-                      className="w-full sm:w-28 h-48 sm:h-36 bg-gray-100 rounded-xl flex-shrink-0 overflow-hidden group"
-                    >
-                      <img
-                        src={item.product.image_url}
-                        alt={item.product.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                      />
-                    </Link>
-
-                    {/* Product Info */}
-                    <div className="flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <div className="flex-1">
-                            <Link
-                              to={`/product/${item.product_id}`}
-                            className="font-medium text-base sm:text-lg hover:text-gray-600 transition-colors break-words"
-                            >
-                              {item.product.name}
-                            </Link>
-                            {item.product.category && (
-                              <p className="text-sm text-gray-500 mt-1">
-                                {item.product.category}
-                              </p>
-                            )}
-                          </div>
-                          <button
-                            onClick={() => removeItem(item.id)}
-                            disabled={updating === item.id}
-                            className="text-gray-400 hover:text-red-600 transition-colors p-2 disabled:opacity-50"
-                            title="Remove item"
-                          >
-                            <Trash2 size={20} />
-                          </button>
-                        </div>
-
-                        <div className="flex items-center gap-4 text-sm text-gray-600 mb-4">
-                          <span className="px-3 py-1 bg-gray-100 rounded-lg">
-                            Size: {item.size}
-                          </span>
-                        </div>
-
-                        <p className="text-xl font-semibold text-gray-900">
-                          ${item.product.price.toFixed(2)}
-                        </p>
-                      </div>
-
-                      {/* Quantity Controls */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-4">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <span className="text-sm text-gray-600">
-                            Quantity:
-                          </span>
-                          <div className="flex items-center border-2 border-gray-200 rounded-lg overflow-hidden">
-                            <button
-                              onClick={() =>
-                                updateQuantity(item.id, item.quantity - 1)
-                              }
-                              disabled={
-                                updating === item.id || item.quantity <= 1
-                              }
-                              className="p-2 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <Minus size={16} />
-                            </button>
-                            <span className="w-12 text-center font-medium">
-                              {item.quantity}
-                            </span>
-                            <button
-                              onClick={() =>
-                                updateQuantity(item.id, item.quantity + 1)
-                              }
-                              disabled={updating === item.id}
-                              className="p-2 hover:bg-gray-100 transition-colors disabled:opacity-50"
-                            >
-                              <Plus size={16} />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="text-left sm:text-right">
-                          <p className="text-sm text-gray-500">Item Total</p>
-                          <p className="text-lg font-bold">
-                            ${(item.product.price * item.quantity).toFixed(2)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Order Summary */}
-            <div className="lg:col-span-1">
-              <div className="bg-white rounded-2xl shadow-sm p-5 sm:p-6 lg:sticky lg:top-24">
-                <h2 className="text-xl font-semibold mb-6">Order Summary</h2>
-
-                <div className="space-y-4 mb-6">
-                  <div className="flex justify-between text-gray-600">
-                    <span>Subtotal ({cartItems.length} items)</span>
-                    <span className="font-medium">${subtotal.toFixed(2)}</span>
-                  </div>
-
-                </div>
-
-                <div className="border-t border-gray-200 pt-4 mb-6">
-                  <div className="flex justify-between items-center">
-                    <span className="text-lg font-semibold">Total</span>
-                    <span className="text-2xl font-bold">
-                      ${total.toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-
-                <button
-                  onClick={openCheckoutForm}
-                  disabled={loading}
-                  className="w-full bg-black text-white py-4 px-6 rounded-xl hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium mb-4"
-                >
-                  {loading ? "Processing..." : "Proceed to Checkout"}
-                </button>
-
-                <Link
-                  to="/shop"
-                  className="block w-full text-center py-3 px-6 border-2 border-gray-200 rounded-xl hover:border-black transition-colors font-medium"
-                >
-                  Continue Shopping
-                </Link>
-
-              </div>
-            </div>
-          </div>
-        )}
+  if (items.length === 0) {
+    return (
+      <div className="store-container py-20 text-center">
+        <h1 className="font-display text-3xl font-bold">Your Cart Is Empty</h1>
+        <p className="mt-3 text-sm text-[var(--sf-text-muted)]">Start building your premium athletic kit.</p>
+        <Link to="/shop" className="mt-5 inline-block text-sm font-semibold text-[var(--sf-accent)]">
+          Continue shopping
+        </Link>
       </div>
+    );
+  }
 
-      {showCheckoutForm && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[120] bg-black/55 p-3 sm:p-6"
-              onClick={() => setShowCheckoutForm(false)}
-            >
-              <div className="h-full w-full overflow-y-auto overscroll-contain">
-                <div className="mx-auto flex min-h-full w-full max-w-2xl items-center justify-center">
-                  <div
-                    role="dialog"
-                    aria-modal="true"
-                    className="w-full bg-white rounded-2xl shadow-xl border border-gray-200/60 max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-3rem)] flex flex-col"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <div className="p-4 sm:p-6 border-b border-gray-200 shrink-0">
-                      <h2 className="text-xl font-semibold">Checkout Details</h2>
-                      <p className="text-sm text-gray-600 mt-1">
-                        {user
-                          ? "Enter order information for this checkout."
-                          : "Continue as guest and enter your order details."}
-                      </p>
-                    </div>
+  return (
+    <div className="store-container pb-8 pt-8">
+      <h1 className="font-display text-4xl font-bold">Cart</h1>
 
-                    <div className="p-4 sm:p-6 space-y-4 overflow-y-auto overscroll-contain">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Email {!user ? "*" : "(for updates)"}
-                  </label>
-                  <input
-                    type="email"
-                    value={checkoutForm.email}
-                    onChange={(e) =>
-                      setCheckoutForm((prev) => ({ ...prev, email: e.target.value }))
-                    }
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                    placeholder="your@email.com"
-                    disabled={Boolean(user?.email)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Full Name *
-                  </label>
-                  <input
-                    type="text"
-                    value={checkoutForm.fullName}
-                    onChange={(e) =>
-                      setCheckoutForm((prev) => ({ ...prev, fullName: e.target.value }))
-                    }
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                    placeholder="Your full name"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Phone *
-                  </label>
-                  <input
-                    type="tel"
-                    value={checkoutForm.phone}
-                    onChange={(e) =>
-                      setCheckoutForm((prev) => ({ ...prev, phone: e.target.value }))
-                    }
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                    placeholder="+961 70 123 456"
-                  />
-                </div>
-              </div>
+      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_360px]">
+        <section className="space-y-3">
+          {items.map((item) => (
+            <article key={item.id} className="store-card flex gap-3 p-3 md:p-4">
+              <img
+                src={item.product.image_url}
+                alt={item.product.name}
+                className="h-24 w-20 rounded-[10px] border border-[var(--sf-line)] object-cover md:h-28 md:w-24"
+              />
 
-              {user ? (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Saved Location
-                </label>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <select
-                    value={selectedAddressId}
-                    onChange={(e) => handleAddressSelect(e.target.value)}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  >
-                    <option value="">Select a saved location</option>
-                    {savedAddresses.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.label} — {entry.city}
-                      </option>
-                    ))}
-                    <option value="__add_new__">+ Add address</option>
-                  </select>
-                  <button
-                    type="button"
-                    onClick={openAddAddressModal}
-                    className="px-4 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50 whitespace-nowrap"
-                  >
-                    Add address
-                  </button>
+              <div className="flex flex-1 flex-col justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.1em] text-[var(--sf-text-muted)]">{item.product.category || "Apparel"}</p>
+                  <Link to={`/product/${item.product_id}`} className="text-sm font-semibold text-[var(--sf-text)] hover:text-[var(--sf-accent)] md:text-base">
+                    {item.product.name}
+                  </Link>
+                  <p className="mt-1 text-sm text-[var(--sf-text-muted)]">Size: {item.size}</p>
                 </div>
-                {savedAddresses.length > 0 ? (
-                  <div className="mt-3 space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {savedAddresses.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className={`rounded-xl border p-3 ${
-                          selectedAddressId === entry.id
-                            ? "border-cyan-400/70 bg-cyan-500/10"
-                            : "border-gray-200"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-gray-900">
-                              {entry.label}
-                            </p>
-                            <p className="text-xs text-gray-600 truncate mt-0.5">
-                              {entry.address}
-                            </p>
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              {entry.city}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => openEditAddressModal(entry)}
-                              className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-300 hover:bg-gray-50"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteAddress(entry.id)}
-                              className="px-2.5 py-1.5 text-xs rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="inline-flex items-center rounded-[10px] border border-[var(--sf-line)]">
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center"
+                      onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                      disabled={updatingId === item.id}
+                    >
+                      <Minus size={15} />
+                    </button>
+                    <span className="inline-flex min-w-8 justify-center text-sm font-semibold">{item.quantity}</span>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center"
+                      onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                      disabled={updatingId === item.id}
+                    >
+                      <Plus size={15} />
+                    </button>
                   </div>
-                ) : null}
-              </div>
-              ) : null}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Street Address *
-                </label>
-                <input
-                  type="text"
-                  value={checkoutForm.address}
-                  onChange={(e) =>
-                    setCheckoutForm((prev) => ({ ...prev, address: e.target.value }))
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  placeholder="Street, building, floor..."
-                />
+                  <div className="flex items-center gap-4">
+                    <p className="text-sm font-semibold text-[var(--sf-text)]">
+                      {formatPrice(item.product.price * item.quantity)}
+                    </p>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-[var(--sf-line)] text-[var(--sf-text-muted)] hover:text-[var(--sf-danger)]"
+                      onClick={() => removeItem(item.id)}
+                      disabled={updatingId === item.id}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </div>
               </div>
+            </article>
+          ))}
+        </section>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Directions (optional)
-                </label>
-                <textarea
-                  value={checkoutForm.directions}
-                  onChange={(e) =>
-                    setCheckoutForm((prev) => ({ ...prev, directions: e.target.value }))
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  placeholder="Landmark or order notes..."
-                  rows={2}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  City *
-                </label>
-                <input
-                  type="text"
-                  value={checkoutForm.city}
-                  onChange={(e) =>
-                    setCheckoutForm((prev) => ({ ...prev, city: e.target.value }))
-                  }
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                  placeholder="City"
-                />
-              </div>
-
+        <aside className="store-card h-fit p-5 lg:sticky lg:top-28">
+          <h2 className="text-lg font-semibold text-[var(--sf-text)]">Order Summary</h2>
+          <div className="mt-4 space-y-2 text-sm">
+            <div className="flex items-center justify-between text-[var(--sf-text-muted)]">
+              <span>Subtotal</span>
+              <span className="text-[var(--sf-text)]">{formatPrice(subtotal)}</span>
             </div>
+            <div className="flex items-center justify-between text-[var(--sf-text-muted)]">
+              <span>Shipping</span>
+              <span className="text-[var(--sf-text)]">{shipping === 0 ? "Free" : formatPrice(shipping)}</span>
+            </div>
+            <div className="flex items-center justify-between border-t border-[var(--sf-line)] pt-3 text-base font-semibold text-[var(--sf-text)]">
+              <span>Total</span>
+              <span>{formatPrice(total)}</span>
+            </div>
+          </div>
 
-                    <div className="p-4 sm:p-6 border-t border-gray-200 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => setShowCheckoutForm(false)}
-                        className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={checkout}
-                        disabled={loading}
-                        className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-black text-white hover:bg-gray-800 disabled:opacity-50"
-                      >
-                        {loading ? "Processing..." : "Place Order"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
-
-      {showAddAddressModal && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[130] bg-black/55 p-3 sm:p-6"
-              onClick={closeAddAddressModal}
-            >
-              <div className="h-full w-full overflow-y-auto overscroll-contain">
-                <div className="mx-auto flex min-h-full w-full max-w-xl items-center justify-center">
-                  <div
-                    role="dialog"
-                    aria-modal="true"
-                    className="w-full bg-white rounded-2xl shadow-xl border border-gray-200/60 max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-3rem)] flex flex-col"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <div className="p-4 sm:p-6 border-b border-gray-200 shrink-0">
-                      <h3 className="text-lg font-semibold">
-                        {editingAddressId ? "Edit Address" : "Add New Address"}
-                      </h3>
-                      <p className="text-sm text-gray-600 mt-1">
-                        {editingAddressId
-                          ? "Update this saved location."
-                          : "Save a named location for faster checkout."}
-                      </p>
-                    </div>
-                    <div className="p-4 sm:p-6 space-y-4 overflow-y-auto overscroll-contain">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Location Name *
-                        </label>
-                        <input
-                          type="text"
-                          value={newAddressForm.label}
-                          onChange={(e) =>
-                            setNewAddressForm((prev) => ({ ...prev, label: e.target.value }))
-                          }
-                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                          placeholder="Home, Office..."
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Street Address *
-                        </label>
-                        <input
-                          type="text"
-                          value={newAddressForm.address}
-                          onChange={(e) =>
-                            setNewAddressForm((prev) => ({ ...prev, address: e.target.value }))
-                          }
-                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                          placeholder="Street, building, floor..."
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Directions (optional)
-                        </label>
-                        <textarea
-                          value={newAddressForm.directions}
-                          onChange={(e) =>
-                            setNewAddressForm((prev) => ({
-                              ...prev,
-                              directions: e.target.value,
-                            }))
-                          }
-                          rows={2}
-                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                          placeholder="Landmark or order notes..."
-                        />
-                      </div>
-                      <div>
-                        <input
-                          type="text"
-                          value={newAddressForm.city}
-                          onChange={(e) =>
-                            setNewAddressForm((prev) => ({ ...prev, city: e.target.value }))
-                          }
-                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:border-black"
-                          placeholder="City *"
-                        />
-                      </div>
-                    </div>
-                    <div className="p-4 sm:p-6 border-t border-gray-200 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end shrink-0">
-                      <button
-                        type="button"
-                        onClick={closeAddAddressModal}
-                        className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSaveAddress}
-                        className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-black text-white hover:bg-gray-800"
-                      >
-                        {editingAddressId ? "Update Address" : "Save Address"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+          <Button fullWidth size="lg" className="mt-5">
+            Proceed to Checkout
+          </Button>
+          <p className="mt-3 text-xs text-[var(--sf-text-muted)]">
+            Secure checkout with trusted payment methods.
+          </p>
+        </aside>
+      </div>
     </div>
   );
 }
