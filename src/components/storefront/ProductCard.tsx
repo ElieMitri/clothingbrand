@@ -11,6 +11,7 @@ interface ProductCardProps {
 export function ProductCard({ product, onQuickAdd }: ProductCardProps) {
   const compareAtPrice = getCompareAtPrice(product);
   const discountPercent = getDiscountPercent(product);
+  const isSoldOut = Boolean(product.sold_out);
 
   return (
     <article className="group store-card flex h-full flex-col overflow-hidden">
@@ -70,10 +71,14 @@ export function ProductCard({ product, onQuickAdd }: ProductCardProps) {
           variant="secondary"
           fullWidth
           className="mt-auto"
-          onClick={() => onQuickAdd?.(product)}
+          onClick={() => {
+            if (isSoldOut) return;
+            onQuickAdd?.(product);
+          }}
+          disabled={isSoldOut}
           iconLeft={<ShoppingBag size={15} />}
         >
-          Quick Add
+          {isSoldOut ? "Sold Out" : "Quick Add"}
         </Button>
       </div>
     </article>

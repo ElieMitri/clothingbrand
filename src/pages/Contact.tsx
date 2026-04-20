@@ -1,8 +1,4 @@
-import { useState } from "react";
 import { Instagram, Mail, Phone } from "lucide-react";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
-import { db } from "../lib/firebase";
-import LbLogo from "../assets/lbathletes-logo.png";
 
 function WhatsAppLogo({ className = "" }: { className?: string }) {
   return (
@@ -24,39 +20,6 @@ export function Contact() {
     .replace(/[^\d]/g, "")
     .trim();
   const whatsappLink = `https://wa.me/${whatsappNumber}`;
-
-  const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    message: "",
-  });
-  const [status, setStatus] = useState<"idle" | "sending" | "success" | "error">(
-    "idle"
-  );
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    try {
-      setStatus("sending");
-
-      await addDoc(collection(db, "contact_messages"), {
-        name: formData.name.trim(),
-        email: formData.email.trim().toLowerCase(),
-        message: formData.message.trim(),
-        created_at: serverTimestamp(),
-        status: "new",
-      });
-
-      setStatus("success");
-      setFormData({ name: "", email: "", message: "" });
-      setTimeout(() => setStatus("idle"), 4000);
-    } catch (error) {
-      console.error("Contact form submit failed:", error);
-      setStatus("error");
-      setTimeout(() => setStatus("idle"), 4000);
-    }
-  };
 
   return (
     <div className="min-h-screen pt-24 pb-16 px-4">
@@ -83,25 +46,25 @@ export function Contact() {
 
             <div className="mt-8 space-y-6">
               <div className="flex items-start gap-4">
-                <div className="h-10 w-10 rounded-xl bg-cyan-500/20 border border-cyan-400/35 text-cyan-100 flex items-center justify-center">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 text-blue-700">
                   <Mail size={18} />
                 </div>
                 <div>
-                  <p className="text-xs tracking-[0.16em] text-slate-300">EMAIL</p>
-                  <p className="mt-1 text-slate-100 font-medium">
+                  <p className="text-xs tracking-[0.16em] text-slate-500">EMAIL</p>
+                  <p className="mt-1 text-slate-700 font-semibold">
                     lbathletes@hotmail.com
                   </p>
                 </div>
               </div>
 
               <div className="flex items-start gap-4">
-                <div className="h-10 w-10 rounded-xl bg-cyan-500/20 border border-cyan-400/35 text-cyan-100 flex items-center justify-center">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700">
                   <Phone size={18} />
                 </div>
                 <div>
-                  <p className="text-xs tracking-[0.16em] text-slate-300">PHONE</p>
+                  <p className="text-xs tracking-[0.16em] text-slate-500">PHONE</p>
                   <div className="mt-1 flex items-center gap-3">
-                    <p className="text-slate-100 font-medium">+961 81 107 752</p>
+                    <p className="text-slate-700 font-semibold">+961 81 107 752</p>
                     <a
                       href={whatsappLink}
                       target="_blank"
@@ -116,24 +79,19 @@ export function Contact() {
               </div>
 
               <div className="flex items-start gap-4">
-                <div className="h-10 w-10 rounded-xl bg-cyan-500/20 border border-cyan-400/35 text-cyan-100 flex items-center justify-center">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700">
                   <Instagram size={18} />
                 </div>
                 <div>
-                  <p className="text-xs tracking-[0.16em] text-slate-300">INSTAGRAM</p>
-                  <p className="mt-1 text-slate-300 text-sm">
+                  <p className="text-xs tracking-[0.16em] text-slate-500">INSTAGRAM</p>
+                  <p className="mt-1 text-slate-600 text-sm">
                     Follow our latest drops, launches, and brand updates.
                   </p>
-                  {/* <img
-                    src={LbLogo}
-                    alt="LBathletes"
-                    className="mt-3 h-14 w-14 md:h-16 md:w-16 rounded-2xl object-cover ring-1 ring-cyan-300/35"
-                  /> */}
                   <a
                     href="https://instagram.com/lbathletes"
                     target="_blank"
                     rel="noreferrer"
-                    className="mt-3 inline-flex items-center gap-1 rounded-xl border border-cyan-300/45 bg-cyan-500/10 px-4 py-2 text-cyan-100 hover:bg-cyan-500/20 transition-colors font-semibold text-sm"
+                    className="mt-3 inline-flex items-center gap-1 rounded-xl border border-fuchsia-300 bg-fuchsia-50 px-4 py-2 text-fuchsia-700 hover:bg-fuchsia-100 transition-colors font-semibold text-sm"
                   >
                     <Instagram size={16} />
                     @lbathletes

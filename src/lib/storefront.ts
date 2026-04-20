@@ -54,6 +54,13 @@ export const isSizeSoldOut = (product: StoreProduct, size: string) => {
   return soldOutSet.has(normalizeSize(size));
 };
 
+export const getPreferredCartSize = (product: StoreProduct) => {
+  const availableSize = getDefaultSizes(product).find(
+    (size) => !isSizeSoldOut(product, size)
+  );
+  return availableSize || "One Size";
+};
+
 export const toDate = (value: unknown) => {
   if (value && typeof value === "object" && "toDate" in (value as object)) {
     try {

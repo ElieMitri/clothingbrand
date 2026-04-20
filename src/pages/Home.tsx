@@ -1,13 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRight, Award, ShieldCheck, Truck, Zap } from "lucide-react";
-import { collection, onSnapshot } from "firebase/firestore";
+import {
+  ArrowRight,
+  Award,
+  Quote,
+  ShieldCheck,
+  Star,
+  Truck,
+  Zap,
+} from "lucide-react";
+import { collection, doc, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../contexts/AuthContext";
 import { addGuestCartItem, addItemToUserCart } from "../lib/cart";
 import { StoreProduct } from "../lib/storefront";
 import { ProductCard } from "../components/storefront/ProductCard";
 import { Button } from "../components/storefront/Button";
+import HeroImage from "../assets/hero.jpeg";
 
 const valueItems = [
   {
@@ -36,14 +45,20 @@ const testimonials = [
   {
     quote: "The fit and quality are better than any brand I used this year.",
     author: "Maya K.",
+    role: "Hybrid Athlete",
+    rating: 5,
   },
   {
     quote: "Simple checkout, fast shipping, and products that perform in the gym.",
     author: "Karim S.",
+    role: "Strength Coach",
+    rating: 5,
   },
   {
     quote: "Premium feel without overdesign. Exactly what I want in sportswear.",
     author: "Rami H.",
+    role: "Crossfit Member",
+    rating: 5,
   },
 ];
 
@@ -51,6 +66,7 @@ export function Home() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [products, setProducts] = useState<StoreProduct[]>([]);
+  const [todayPickProductId, setTodayPickProductId] = useState("");
   const [quickAddingId, setQuickAddingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -65,31 +81,34 @@ export function Home() {
     return () => unsubscribe();
   }, []);
 
-  const featuredProducts = useMemo(() => {
-    const featured = products.filter((item) => item.is_featured);
-    if (featured.length > 0) return featured.slice(0, 8);
-    return products.slice(0, 8);
-  }, [products]);
-
-  const collectionTiles = useMemo(() => {
-    const categories = Array.from(
-      new Set(
-        products
-          .map((item) => String(item.category || "").trim())
-          .filter(Boolean)
-      )
-    );
-
-    return categories.slice(0, 3).map((category, index) => {
-      const heroProduct =
-        products.find((item) => item.category === category && item.image_url) ||
-        products[index];
-      return {
-        name: category,
-        image: heroProduct?.image_url || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=1200&q=80",
-      };
+  useEffect(() => {
+    return onSnapshot(doc(db, "site_settings", "homepage"), (snapshot) => {
+      if (!snapshot.exists()) {
+        setTodayPickProductId("");
+        return;
+      }
+      const data = snapshot.data() as { today_pick_product_id?: string };
+      setTodayPickProductId(String(data.today_pick_product_id || "").trim());
     });
-  }, [products]);
+  }, []);
+
+  const featuredPick = useMemo(() => {
+    if (todayPickProductId) {
+      const adminSelected = products.find((item) => item.id === todayPickProductId);
+      if (adminSelected) return adminSelected;
+    }
+    return products.find((item) => item.is_featured) || products[0] || null;
+  }, [products, todayPickProductId]);
+
+  const randomProducts = useMemo(() => {
+    const pool = products.filter((item) => item.id !== featuredPick?.id);
+    const shuffled = [...pool];
+    for (let index = shuffled.length - 1; index > 0; index -= 1) {
+      const randomIndex = Math.floor(Math.random() * (index + 1));
+      [shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]];
+    }
+    return shuffled.slice(0, 8);
+  }, [products, featuredPick?.id]);
 
   const handleQuickAdd = async (product: StoreProduct) => {
     const size = Array.isArray(product.sizes) && product.sizes.length > 0 ? product.sizes[0] : "M";
@@ -110,17 +129,14 @@ export function Home() {
     <div className="pb-8">
       <section className="relative -mt-28 w-full min-h-screen overflow-hidden bg-white">
         <img
-          src="https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=2200&q=80"
+          src={HeroImage}
           alt="Athletic apparel hero"
           className="absolute inset-0 h-full w-full object-cover"
         />
         <div className="absolute inset-0 bg-gradient-to-r from-black/65 via-black/45 to-black/30" />
 
         <div className="store-container relative z-10 flex min-h-screen items-center py-10 pt-36">
-          <div className="max-w-2xl rounded-[var(--sf-radius-lg)] bg-black/30 p-6 shadow-[0_18px_40px_rgba(15,23,42,0.24)] backdrop-blur-[2px] md:p-10">
-            <p className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-white/80">
-              Spring / Summer 2026
-            </p>
+          <div className="max-w-2xl p-6 md:p-10">
             <h1 className="font-display text-4xl font-extrabold leading-tight text-balance text-white md:text-6xl">
               Premium Athletic Apparel Designed For Daily Performance
             </h1>
@@ -129,10 +145,7 @@ export function Home() {
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <Button size="lg" onClick={() => navigate("/shop")} iconRight={<ArrowRight size={16} />}>
-                Shop Best Sellers
-              </Button>
-              <Button size="lg" variant="secondary" onClick={() => navigate("/new-arrivals")}>
-                Explore New Arrivals
+                Shop Now
               </Button>
             </div>
           </div>
@@ -153,39 +166,29 @@ export function Home() {
 
       <section className="store-container mt-16">
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="font-display text-2xl font-bold">Featured Collections</h2>
-          <Link to="/collections" className="text-sm font-semibold text-[var(--sf-accent)] hover:text-[var(--sf-accent-hover)]">
-            View all
-          </Link>
+          <h2 className="font-display text-2xl font-bold">Featured Pick</h2>
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          {collectionTiles.map((tile) => (
-            <Link
-              key={tile.name}
-              to={`/shop?category=${encodeURIComponent(tile.name)}`}
-              className="group relative overflow-hidden rounded-[var(--sf-radius-lg)] border border-[var(--sf-line)]"
-            >
-              <img src={tile.image} alt={tile.name} className="h-56 w-full object-cover transition-transform duration-500 group-hover:scale-105" />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/55 to-black/5" />
-              <div className="absolute bottom-4 left-4 text-white">
-                <p className="text-xs uppercase tracking-[0.12em]">Collection</p>
-                <p className="font-display text-2xl font-bold">{tile.name}</p>
-              </div>
-            </Link>
-          ))}
-        </div>
+        {featuredPick ? (
+          <div className="max-w-sm">
+            <ProductCard product={featuredPick} onQuickAdd={handleQuickAdd} />
+            {quickAddingId === featuredPick.id ? (
+              <p className="mt-2 text-xs text-[var(--sf-text-muted)]">Adding to cart...</p>
+            ) : null}
+          </div>
+        ) : (
+          <div className="store-card p-8 text-center">
+            <p className="text-sm text-[var(--sf-text-muted)]">No featured product configured yet.</p>
+          </div>
+        )}
       </section>
 
       <section className="store-container mt-16">
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="font-display text-2xl font-bold">Best Sellers</h2>
-          <Link to="/shop" className="text-sm font-semibold text-[var(--sf-accent)] hover:text-[var(--sf-accent-hover)]">
-            Shop all products
-          </Link>
+        <div className="mb-5">
+          <h2 className="font-display text-2xl font-bold">Discover More</h2>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {featuredProducts.map((product) => (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {randomProducts.map((product) => (
             <div key={product.id} className="h-full">
               <ProductCard product={product} onQuickAdd={handleQuickAdd} />
               {quickAddingId === product.id ? (
@@ -194,21 +197,51 @@ export function Home() {
             </div>
           ))}
         </div>
+
+        <div className="mt-8 flex justify-center">
+          <Link
+            to="/shop"
+            className="inline-flex h-11 items-center justify-center rounded-[10px] bg-[var(--sf-accent)] px-6 text-sm font-semibold text-white hover:bg-[var(--sf-accent-hover)]"
+          >
+            Shop More
+          </Link>
+        </div>
       </section>
 
       <section className="store-container mt-16">
-        <div className="store-card p-6 md:p-8">
+        <div className="store-card overflow-hidden p-6 md:p-8">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <h2 className="font-display text-2xl font-bold">Trusted By Athletes</h2>
             <p className="text-sm text-[var(--sf-text-muted)]">4.9/5 average customer satisfaction</p>
           </div>
           <div className="grid gap-4 md:grid-cols-3">
             {testimonials.map((testimonial) => (
-              <article key={testimonial.author} className="rounded-[12px] border border-[var(--sf-line)] p-4">
+              <article
+                key={testimonial.author}
+                className="relative rounded-[14px] border border-[var(--sf-line)] bg-gradient-to-b from-white to-[var(--sf-bg-soft)] p-5 shadow-[0_8px_22px_rgba(15,23,42,0.06)]"
+              >
+                <Quote size={18} className="absolute right-4 top-4 text-[var(--sf-accent)]/30" />
+                <div className="mb-3 flex items-center gap-1 text-amber-500">
+                  {Array.from({ length: testimonial.rating }).map((_, index) => (
+                    <Star key={`${testimonial.author}-${index}`} size={14} fill="currentColor" />
+                  ))}
+                </div>
                 <p className="text-sm leading-6 text-[var(--sf-text)]">“{testimonial.quote}”</p>
-                <p className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--sf-text-muted)]">
-                  {testimonial.author}
-                </p>
+                <div className="mt-4 flex items-center gap-3">
+                  <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[var(--sf-accent)] text-xs font-semibold text-white">
+                    {testimonial.author
+                      .split(" ")
+                      .map((entry) => entry[0])
+                      .join("")
+                      .slice(0, 2)}
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold text-[var(--sf-text)]">{testimonial.author}</p>
+                    <p className="text-xs uppercase tracking-[0.08em] text-[var(--sf-text-muted)]">
+                      {testimonial.role}
+                    </p>
+                  </div>
+                </div>
               </article>
             ))}
           </div>

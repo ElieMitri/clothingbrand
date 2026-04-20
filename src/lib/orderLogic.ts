@@ -8,6 +8,10 @@ export type OrderStatus =
   | "delivered"
   | "cancelled";
 
+export type PaymentMethod = "cash_on_delivery" | "whish_money";
+export type PaymentStatus = "pending" | "paid";
+export type FulfillmentStatus = "unfulfilled" | "processing" | "fulfilled";
+
 export interface OrderLineItem {
   product_id: string;
   product_name?: string;
@@ -27,6 +31,9 @@ interface PlaceOrderInput {
   tax: number;
   total: number;
   cartDocIds?: string[];
+  paymentMethod: PaymentMethod;
+  paymentStatus: PaymentStatus;
+  fulfillmentStatus?: FulfillmentStatus;
 }
 
 interface UpdateOrderStatusInput {
@@ -67,6 +74,9 @@ export async function placeOrderWithInventory({
   tax,
   total,
   cartDocIds,
+  paymentMethod,
+  paymentStatus,
+  fulfillmentStatus,
 }: PlaceOrderInput): Promise<string> {
   const orderRef = doc(collection(db, "orders"));
   const normalizedUserId = String(userId || "").trim();
@@ -85,6 +95,9 @@ export async function placeOrderWithInventory({
       tax,
       total,
       status: "pending" as OrderStatus,
+      payment_method: paymentMethod,
+      payment_status: paymentStatus,
+      fulfillment_status: fulfillmentStatus || "unfulfilled",
       created_at: now,
       updated_at: now,
     };

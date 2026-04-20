@@ -4,6 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { db, auth } from "../lib/firebase";
 import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
 import { updateProfile } from "firebase/auth";
+import { MyOrdersSection } from "../components/storefront/MyOrdersSection";
 import {
   User,
   Mail,
@@ -72,7 +73,10 @@ export function Profile() {
       const ordersSnapshot = await getDocs(ordersRef);
 
       const totalSpent = ordersSnapshot.docs.reduce((sum, doc) => {
-        return sum + (doc.data().total || 0);
+        const data = doc.data() as { status?: string; total?: number };
+        const status = String(data.status || "").trim().toLowerCase();
+        if (status === "cancelled" || status === "canceled") return sum;
+        return sum + Number(data.total || 0);
       }, 0);
 
       setStats({
@@ -408,6 +412,14 @@ export function Profile() {
               </div>
 
             </div>
+          </div>
+
+          <div id="my-orders" className="lg:col-span-3">
+            <div className="mb-5">
+              <h2 className="text-2xl font-semibold">My Orders</h2>
+              <p className="text-gray-600 mt-1">Track status, expand details, and cancel pending orders.</p>
+            </div>
+            {user ? <MyOrdersSection userId={user.uid} userEmail={user.email} /> : null}
           </div>
 
         </div>

@@ -2,9 +2,11 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ChevronDown, Menu, Search, ShoppingBag, User, X } from "lucide-react";
-import { collection, doc, onSnapshot, orderBy, query } from "firebase/firestore";
+import { collection, doc, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { useAuth } from "../../contexts/AuthContext";
 import { db } from "../../lib/firebase";
+import { getGuestCartCount } from "../../lib/cart";
+import WebsiteLogo from "../../assets/logo website.jpeg";
 
 interface ShopMenuItemEntry {
   id?: string;
@@ -29,10 +31,7 @@ const defaultShopDropdownLinks: ShopMenuItemEntry[] = [
 
 const primaryLinks = [{ label: "Home", to: "/" }];
 
-const secondaryLinks = [
-  { label: "About", to: "/about" },
-  { label: "Contact", to: "/contact" },
-];
+const secondaryLinks = [{ label: "Contact", to: "/contact" }];
 
 const mobileLinks = [{ label: "Home", to: "/" }, ...secondaryLinks];
 
@@ -52,6 +51,7 @@ export function StoreHeader() {
   const [shopDropdownOpen, setShopDropdownOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
   const [canRenderPortal, setCanRenderPortal] = useState(false);
+  const [cartItemCount, setCartItemCount] = useState(0);
   const [shopDropdownLinks, setShopDropdownLinks] = useState<ShopMenuItemEntry[]>(
     defaultShopDropdownLinks
   );
@@ -67,6 +67,36 @@ export function StoreHeader() {
   useEffect(() => {
     setCanRenderPortal(true);
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      const syncGuestCount = () => setCartItemCount(getGuestCartCount());
+      syncGuestCount();
+      window.addEventListener("guest-cart-updated", syncGuestCount);
+      window.addEventListener("storage", syncGuestCount);
+      return () => {
+        window.removeEventListener("guest-cart-updated", syncGuestCount);
+        window.removeEventListener("storage", syncGuestCount);
+      };
+    }
+
+    const cartsRef = collection(db, "carts");
+    const cartsQuery = query(cartsRef, where("user_id", "==", user.uid));
+
+    const unsubscribe = onSnapshot(
+      cartsQuery,
+      (snapshot) => {
+        const totalItems = snapshot.docs.reduce(
+          (sum, entry) => sum + Number(entry.data().quantity || 0),
+          0
+        );
+        setCartItemCount(totalItems);
+      },
+      () => setCartItemCount(0)
+    );
+
+    return () => unsubscribe();
+  }, [user]);
 
   useEffect(() => {
     const onScroll = () => setIsScrolled(window.scrollY > 8);
@@ -242,9 +272,10 @@ export function StoreHeader() {
     <header
       className={`fixed inset-x-0 top-0 z-50 transition-all duration-300 ${headerShellClass}`}
     >
-      <div className="bg-gradient-to-r from-[var(--sf-accent)] via-[#294f83] to-[var(--sf-accent)] transition-all duration-300">
+      <div className="bg-gradient-to-r from-[var(--sf-accent)] via-[#4f7eb4] to-[var(--sf-accent)] transition-all duration-300">
         <p className="store-container py-2 text-center text-xs font-semibold tracking-[0.08em] text-white uppercase">
-          Free shipping on orders over $120
+          🇱🇧 Free shipping on orders over $120| Shop Now 🔥
+
         </p>
       </div>
 
@@ -260,11 +291,14 @@ export function StoreHeader() {
 
         <Link
           to="/"
-          className={`font-display text-lg font-extrabold tracking-[0.12em] transition-colors ${
-            isHeroNavMode ? "text-white" : "text-[var(--sf-text)]"
-          }`}
+          className="inline-flex items-center"
+          aria-label="LB Athletes home"
         >
-          LBATHLETES
+          <img
+            src={WebsiteLogo}
+            alt="LB Athletes"
+            className="h-16 w-auto object-contain md:h-16 lg:h-20"
+          />
         </Link>
 
         <nav className="hidden items-center gap-6 px-1 py-1.5 lg:flex">
@@ -360,7 +394,7 @@ export function StoreHeader() {
               value={searchValue}
               onChange={(event) => setSearchValue(event.target.value)}
               placeholder="Search"
-              className={`w-36 border-0 bg-transparent px-2 text-sm outline-none transition-colors placeholder:transition-colors ${searchInputClass}`}
+              className={`w-36 border-0 bg-transparent px-2 text-sm outline-none transition-colors placeholder:transition-colors focus-visible:outline-none focus-visible:ring-0 ${searchInputClass}`}
               aria-label="Search products"
             />
           </form>
@@ -379,6 +413,11 @@ export function StoreHeader() {
             aria-label="Cart"
           >
             <ShoppingBag size={17} />
+            {cartItemCount > 0 ? (
+              <span className="absolute -right-1 -top-1 inline-flex min-w-[18px] items-center justify-center rounded-full bg-[var(--sf-accent)] px-1.5 text-[11px] font-semibold leading-[18px] text-white">
+                {cartItemCount > 99 ? "99+" : cartItemCount}
+              </span>
+            ) : null}
           </Link>
         </div>
       </div>

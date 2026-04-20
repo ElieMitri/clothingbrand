@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Minus, Plus, Trash2 } from "lucide-react";
+import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import {
   collection,
   deleteDoc,
@@ -181,12 +181,20 @@ export function Cart() {
 
   if (items.length === 0) {
     return (
-      <div className="store-container py-20 text-center">
-        <h1 className="font-display text-3xl font-bold">Your Cart Is Empty</h1>
-        <p className="mt-3 text-sm text-[var(--sf-text-muted)]">Start building your premium athletic kit.</p>
-        <Link to="/shop" className="mt-5 inline-block text-sm font-semibold text-[var(--sf-accent)]">
-          Continue shopping
-        </Link>
+      <div className="store-container py-20">
+        <div className="mx-auto flex max-w-lg flex-col items-center rounded-[var(--sf-radius-lg)] border border-[var(--sf-line)] bg-white p-8 text-center shadow-[var(--sf-shadow-sm)]">
+          <span className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[var(--sf-bg-soft)] text-[var(--sf-accent)]">
+            <ShoppingBag size={24} />
+          </span>
+          <h1 className="mt-5 font-display text-3xl font-bold">Your Cart Is Empty</h1>
+          <p className="mt-3 text-sm text-[var(--sf-text-muted)]">Start building your premium athletic kit.</p>
+          <Link
+            to="/shop"
+            className="mt-6 inline-flex h-11 items-center justify-center rounded-[10px] bg-[var(--sf-accent)] px-6 text-sm font-semibold text-white hover:bg-[var(--sf-accent-hover)]"
+          >
+            Continue shopping
+          </Link>
+        </div>
       </div>
     );
   }

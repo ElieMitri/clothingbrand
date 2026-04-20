@@ -270,7 +270,7 @@ export function ProductDetail() {
           <h2 className="font-display text-2xl font-bold">Related Products</h2>
           <Link to="/shop" className="text-sm font-semibold text-[var(--sf-accent)]">View all</Link>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {relatedProducts.map((item) => (
             <ProductCard key={item.id} product={item} onQuickAdd={() => navigate(`/product/${item.id}`)} />
           ))}

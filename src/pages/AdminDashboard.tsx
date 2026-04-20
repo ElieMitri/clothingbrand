@@ -6,7 +6,7 @@ import {
   useState,
   type ChangeEvent,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Plus,
   Edit,
@@ -206,6 +206,11 @@ interface WebNotificationTemplate {
   message: string;
 }
 
+const isCancelledOrder = (status?: string) => {
+  const normalized = String(status || "").trim().toLowerCase();
+  return normalized === "cancelled" || normalized === "canceled";
+};
+
 interface SubscriberView extends Subscriber {
   preferences: NotificationPreferences;
 }
@@ -293,6 +298,15 @@ type UploadImageItem = {
   file: File;
   id: string;
 };
+
+type AdminTab =
+  | "overview"
+  | "products"
+  | "orders"
+  | "users"
+  | "featured"
+  | "collections"
+  | "subscribers";
 
 const slugifyPathToken = (value: string) =>
   String(value || "")
@@ -445,15 +459,8 @@ const quickAddProductPresets: QuickAddProductPreset[] = [
 export function AdminDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<
-    | "overview"
-    | "products"
-    | "orders"
-    | "users"
-    | "featured"
-    | "collections"
-    | "subscribers"
-  >("overview");
+  const location = useLocation();
+  const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [isSideNavOpen, setIsSideNavOpen] = useState(false);
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(false);
 
@@ -539,6 +546,9 @@ export function AdminDashboard() {
   const [importedProducts, setImportedProducts] = useState<LinkImportProduct[]>(
     []
   );
+  const [selectedImportedIndices, setSelectedImportedIndices] = useState<
+    number[]
+  >([]);
   const [importError, setImportError] = useState("");
   const [productForm, setProductForm] = useState({
     name: "",
@@ -694,6 +704,30 @@ export function AdminDashboard() {
     onConfirm: () => void;
     danger?: boolean;
   } | null>(null);
+
+  useEffect(() => {
+    const section = String(location.pathname.split("/")[2] || "").toLowerCase();
+    const tabBySection: Record<string, AdminTab> = {
+      overview: "overview",
+      dashboard: "overview",
+      analytics: "overview",
+      products: "products",
+      orders: "orders",
+      customers: "users",
+      users: "users",
+      discounts: "featured",
+      settings: "featured",
+      featured: "featured",
+      collections: "collections",
+      subscribers: "subscribers",
+      campaigns: "subscribers",
+      newsletter: "subscribers",
+    };
+    const nextTab = tabBySection[section];
+    if (nextTab && nextTab !== activeTab) {
+      setActiveTab(nextTab);
+    }
+  }, [activeTab, location.pathname]);
 
   const categories = useMemo(() => {
     const fromProducts = products
@@ -1634,9 +1668,7 @@ export function AdminDashboard() {
   };
 
   const calculateMonthlyRevenue = (ords: Order[], prods: Product[]) => {
-    const revenueOrders = ords.filter(
-      (order) => !["cancelled"].includes(order.status)
-    );
+    const revenueOrders = ords.filter((order) => !isCancelledOrder(order.status));
     const monthlyData: { [key: string]: MonthlyRevenue } = {};
 
     revenueOrders.forEach((order) => {
@@ -1686,9 +1718,7 @@ export function AdminDashboard() {
     ords: Order[],
     subs: Subscriber[]
   ) => {
-    const revenueOrders = ords.filter(
-      (order) => !["cancelled"].includes(order.status)
-    );
+    const revenueOrders = ords.filter((order) => !isCancelledOrder(order.status));
     const now = new Date();
     const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -2193,6 +2223,20 @@ export function AdminDashboard() {
     setProductEntryMode("manual");
   };
 
+  const toggleImportedProductSelection = (index: number) => {
+    setSelectedImportedIndices((prev) =>
+      prev.includes(index) ? prev.filter((item) => item !== index) : [...prev, index]
+    );
+  };
+
+  const selectAllImportedProducts = () => {
+    setSelectedImportedIndices(importedProducts.map((_, index) => index));
+  };
+
+  const clearImportedProductSelection = () => {
+    setSelectedImportedIndices([]);
+  };
+
   const importProductsFromUrl = async () => {
     const normalized = importUrl.trim();
     if (!normalized) {
@@ -2204,6 +2248,7 @@ export function AdminDashboard() {
       setImportingFromLink(true);
       setImportError("");
       setImportedProducts([]);
+      setSelectedImportedIndices([]);
 
       const response = await fetch("/api/import-products-from-url", {
         method: "POST",
@@ -2229,6 +2274,7 @@ export function AdminDashboard() {
       }
 
       setImportedProducts(parsedProducts);
+      setSelectedImportedIndices(parsedProducts.map((_, index) => index));
     } catch (error) {
       console.error("Error importing products from URL:", error);
       setImportError(
@@ -2244,6 +2290,10 @@ export function AdminDashboard() {
       setImportError("Import products first, then add them.");
       return;
     }
+    if (selectedImportedIndices.length === 0) {
+      setImportError("Select at least one imported product to add.");
+      return;
+    }
 
     try {
       setAddingImportedProducts(true);
@@ -2251,7 +2301,11 @@ export function AdminDashboard() {
 
       const batch = writeBatch(db);
       let validCount = 0;
-      for (const item of importedProducts) {
+      const selectedItems = selectedImportedIndices
+        .map((index) => importedProducts[index])
+        .filter((item): item is LinkImportProduct => Boolean(item));
+
+      for (const item of selectedItems) {
         const name = String(item.name || "").trim();
         if (!name) continue;
 
@@ -2344,6 +2398,7 @@ export function AdminDashboard() {
       alert(
         `Successfully added ${validCount} imported product${validCount === 1 ? "" : "s"}!`
       );
+      setSelectedImportedIndices([]);
       setShowProductModal(false);
     } catch (error) {
       console.error("Error adding imported products:", error);
@@ -3706,11 +3761,8 @@ export function AdminDashboard() {
     }
   };
 
-  const getAllowedStatusOptions = (currentStatus: OrderStatus): OrderStatus[] => {
-    if (currentStatus === "cancelled") {
-      return ["pending", "processing", "shipped", "delivered"];
-    }
-    return ["pending", "processing", "shipped", "delivered"];
+  const getAllowedStatusOptions = (_currentStatus: OrderStatus): OrderStatus[] => {
+    return ["pending", "processing", "shipped", "delivered", "cancelled"];
   };
 
   const deleteSubscriber = async (subscriberId: string) => {
@@ -4117,10 +4169,10 @@ export function AdminDashboard() {
             return latest;
           }, null)
         : null;
-    const totalSpent = relatedOrders.reduce(
-      (sum, order) => sum + Number(order.total || 0),
-      0
-    );
+    const totalSpent = relatedOrders.reduce((sum, order) => {
+      if (isCancelledOrder(order.status)) return sum;
+      return sum + Number(order.total || 0);
+    }, 0);
     const fullName = String(
       `${entry.firstName || ""} ${entry.lastName || ""}`.trim() ||
         entry.displayName ||
@@ -5346,33 +5398,29 @@ export function AdminDashboard() {
                           ${(order.total || 0).toFixed(2)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          {order.status === "cancelled" ? (
-                            <span className="inline-flex px-3 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800">
-                              Cancelled
-                            </span>
-                          ) : (
-                            <select
-                              value={order.status}
-                              onChange={(e) =>
-                                updateOrderStatus(order.id, e.target.value as OrderStatus)
-                              }
-                              className={`px-3 py-1 text-xs font-semibold rounded-full border-0 cursor-pointer ${
-                                order.status === "pending"
-                                  ? "bg-yellow-100 text-yellow-800"
-                                  : order.status === "processing"
-                                  ? "bg-blue-100 text-blue-800"
-                                  : order.status === "shipped"
-                                  ? "bg-purple-100 text-purple-800"
-                                  : "bg-green-100 text-green-800"
-                              }`}
-                            >
-                              {getAllowedStatusOptions(order.status).map((status) => (
-                                <option key={status} value={status}>
-                                  {status.charAt(0).toUpperCase() + status.slice(1)}
-                                </option>
-                              ))}
-                            </select>
-                          )}
+                          <select
+                            value={order.status}
+                            onChange={(e) =>
+                              updateOrderStatus(order.id, e.target.value as OrderStatus)
+                            }
+                            className={`px-3 py-1 text-xs font-semibold rounded-full border-0 cursor-pointer ${
+                              order.status === "pending"
+                                ? "bg-yellow-100 text-yellow-800"
+                                : order.status === "processing"
+                                ? "bg-blue-100 text-blue-800"
+                                : order.status === "shipped"
+                                ? "bg-purple-100 text-purple-800"
+                                : order.status === "cancelled"
+                                ? "bg-red-100 text-red-800"
+                                : "bg-green-100 text-green-800"
+                            }`}
+                          >
+                            {getAllowedStatusOptions(order.status).map((status) => (
+                              <option key={status} value={status}>
+                                {status.charAt(0).toUpperCase() + status.slice(1)}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                           <div className="flex gap-2 flex-wrap">
@@ -7845,21 +7893,59 @@ export function AdminDashboard() {
                         Found {importedProducts.length} product
                         {importedProducts.length === 1 ? "" : "s"}
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => mapImportedProductToForm(importedProducts[0])}
-                        className="text-sm px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-                      >
-                        Load first item into manual form
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={selectAllImportedProducts}
+                          className="text-sm px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                        >
+                          Select all
+                        </button>
+                        <button
+                          type="button"
+                          onClick={clearImportedProductSelection}
+                          className="text-sm px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                        >
+                          Clear
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const firstSelectedIndex = selectedImportedIndices[0];
+                            const selectedItem =
+                              typeof firstSelectedIndex === "number"
+                                ? importedProducts[firstSelectedIndex]
+                                : importedProducts[0];
+                            if (!selectedItem) return;
+                            mapImportedProductToForm(selectedItem);
+                          }}
+                          className="text-sm px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                        >
+                          Load selected into manual form
+                        </button>
+                      </div>
                     </div>
+                    <p className="text-xs text-gray-500">
+                      Selected for import: {selectedImportedIndices.length}/
+                      {importedProducts.length}
+                    </p>
 
                     <div className="max-h-72 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
                       {importedProducts.map((product, index) => (
                         <div
                           key={`${product.name}-${index}`}
-                          className="p-3 flex items-center gap-3"
+                          className={`p-3 flex items-center gap-3 ${
+                            selectedImportedIndices.includes(index)
+                              ? "bg-gray-50"
+                              : "bg-white"
+                          }`}
                         >
+                          <input
+                            type="checkbox"
+                            checked={selectedImportedIndices.includes(index)}
+                            onChange={() => toggleImportedProductSelection(index)}
+                            className="h-4 w-4"
+                          />
                           <div className="w-14 h-14 rounded-lg overflow-hidden border border-gray-200 bg-white flex items-center justify-center">
                             {product.image_url ? (
                               <img
@@ -7906,6 +7992,7 @@ export function AdminDashboard() {
                   isManualProductEntry
                     ? savingProductImages
                     : importedProducts.length === 0 ||
+                      selectedImportedIndices.length === 0 ||
                       importingFromLink ||
                       addingImportedProducts
                 }
@@ -7921,8 +8008,8 @@ export function AdminDashboard() {
                   : addingImportedProducts
                   ? "Adding Imported Products..."
                   : importedProducts.length > 0
-                  ? `Add ${importedProducts.length} Imported Product${
-                      importedProducts.length === 1 ? "" : "s"
+                  ? `Add ${selectedImportedIndices.length} Selected Product${
+                      selectedImportedIndices.length === 1 ? "" : "s"
                     }`
                   : "Add Imported Products"}
               </button>
@@ -7933,8 +8020,8 @@ export function AdminDashboard() {
 
       {/* Order Edit Modal */}
       {showOrderModal && editingOrder && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 flex items-stretch justify-end z-50">
+          <div className="bg-white w-full max-w-3xl h-full overflow-y-auto">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
               <h2 className="text-2xl font-light">
                 Edit Order #{editingOrder.id.slice(0, 8).toUpperCase()}
@@ -7965,25 +8052,19 @@ export function AdminDashboard() {
 
               <div>
                 <label className="block text-sm font-medium mb-2">Status</label>
-                {editingOrder.status === "cancelled" ? (
-                  <div className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-red-100 text-red-800 font-semibold">
-                    Cancelled
-                  </div>
-                ) : (
-                  <select
-                    value={orderForm.status}
-                    onChange={(e) =>
-                      setOrderForm({ ...orderForm, status: e.target.value })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
-                  >
-                    {getAllowedStatusOptions(editingOrder.status).map((status) => (
-                      <option key={status} value={status}>
-                        {status.charAt(0).toUpperCase() + status.slice(1)}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                <select
+                  value={orderForm.status}
+                  onChange={(e) =>
+                    setOrderForm({ ...orderForm, status: e.target.value as OrderStatus })
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-black"
+                >
+                  {getAllowedStatusOptions(orderForm.status as OrderStatus).map((status) => (
+                    <option key={status} value={status}>
+                      {status.charAt(0).toUpperCase() + status.slice(1)}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -781,7 +781,7 @@ export function Navbar() {
                           </Link>
 
                           <Link
-                            to="/orders"
+                            to="/profile#my-orders"
                             onClick={() => setIsUserMenuOpen(false)}
                             className="flex items-center gap-3 px-5 py-3 text-sm text-slate-200 hover:bg-slate-800/70 transition-colors"
                           >
@@ -954,9 +954,9 @@ export function Navbar() {
                     </Link>
 
                     <Link
-                      to="/orders"
+                      to="/profile#my-orders"
                       className={`flex items-center gap-3 px-5 py-3.5 text-sm tracking-[0.12em] rounded-xl transition-all ${
-                        isActivePath("/orders")
+                        isActivePath("/profile")
                           ? "bg-cyan-500/20 text-cyan-100 font-medium border border-cyan-400/40"
                           : "text-slate-200 hover:bg-slate-800/70"
                       }`}
