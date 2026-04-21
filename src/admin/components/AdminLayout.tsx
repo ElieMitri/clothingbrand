@@ -9,7 +9,7 @@ import {
   ShoppingCart,
   Users,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAdminLiveData } from "../hooks/useAdminLiveData";
 import { SidebarNav } from "./SidebarNav";
@@ -38,6 +38,11 @@ export function AdminLayout() {
     const params = new URLSearchParams(location.search);
     return params.get("q") || "";
   }, [location.search]);
+  const [searchDraft, setSearchDraft] = useState(searchValue);
+
+  useEffect(() => {
+    setSearchDraft(searchValue);
+  }, [searchValue]);
 
   const shellClassName = useMemo(
     () => `adm-shell ${sidebarOpen ? "" : "adm-shell--collapsed"}`.trim(),
@@ -45,9 +50,22 @@ export function AdminLayout() {
   );
 
   const handleSearchChange = (value: string) => {
+    setSearchDraft(value);
+  };
+
+  const handleSearchSubmit = (value: string) => {
+    const query = String(value || "").trim();
+    const path = location.pathname;
+    const searchableSections = ["/admin/products", "/admin/orders", "/admin/customers", "/admin/collections"];
+    const isSearchableSection = searchableSections.some((prefix) => path.startsWith(prefix));
+
+    if (query && !isSearchableSection) {
+      navigate(`/admin/products?q=${encodeURIComponent(query)}`);
+      return;
+    }
+
     const params = new URLSearchParams(location.search);
-    const next = String(value || "");
-    if (next.trim()) params.set("q", next);
+    if (query) params.set("q", query);
     else params.delete("q");
 
     navigate(
@@ -59,19 +77,6 @@ export function AdminLayout() {
     );
   };
 
-  const handleSearchSubmit = () => {
-    const params = new URLSearchParams(location.search);
-    const query = String(params.get("q") || "").trim();
-    if (!query) return;
-
-    const path = location.pathname;
-    const searchableSections = ["/admin/products", "/admin/orders", "/admin/customers", "/admin/collections"];
-    const isSearchableSection = searchableSections.some((prefix) => path.startsWith(prefix));
-    if (!isSearchableSection) {
-      navigate(`/admin/products?q=${encodeURIComponent(query)}`);
-    }
-  };
-
   return (
     <div className={shellClassName}>
       <SidebarNav items={navItems} collapsed={!sidebarOpen} storeName={storeName} />
@@ -79,7 +84,7 @@ export function AdminLayout() {
         <TopBar
           onToggleSidebar={() => setSidebarOpen((value) => !value)}
           storeName={storeName}
-          searchValue={searchValue}
+          searchValue={searchDraft}
           onSearchChange={handleSearchChange}
           onSearchSubmit={handleSearchSubmit}
         />

@@ -11,7 +11,7 @@ interface TopBarProps {
   storeName: string;
   searchValue: string;
   onSearchChange: (value: string) => void;
-  onSearchSubmit: () => void;
+  onSearchSubmit: (value: string) => void;
 }
 
 interface AdminNotification {
@@ -74,7 +74,7 @@ export function TopBar({
 
   const handleSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    onSearchSubmit();
+    onSearchSubmit(searchValue);
   };
 
   const handleSignOut = async () => {
