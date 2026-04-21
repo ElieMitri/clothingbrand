@@ -70,7 +70,6 @@ import {
   getDefaultOneSizeSizes,
   getDefaultShoeSizeGuide,
   getDefaultShoeSizes,
-  getDefaultSizesByCategory,
 } from "../lib/productSizing";
 
 type DateField = Timestamp | Date | string | null | undefined;
@@ -1341,11 +1340,6 @@ export function AdminDashboard() {
     }));
   };
 
-  const buildSizingContext = () =>
-    [productForm.category, productForm.subcategory, productForm.product_type]
-      .map((entry) => String(entry || "").trim())
-      .filter(Boolean)
-      .join(" ");
   useEffect(() => {
     if (!mainImageUpload) {
       setMainImagePreviewUrl("");
@@ -1370,33 +1364,6 @@ export function AdminDashboard() {
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, [additionalImageUploads]);
-  const normalizeSizesForContext = (context: string, sizes: string[]) => {
-    const defaultSizes = getDefaultSizesByCategory(context);
-    const isGloveContext =
-      defaultSizes.length > 0 && defaultSizes.every((size) => /oz/i.test(size));
-    const isOneSizeContext =
-      defaultSizes.length === 1 &&
-      defaultSizes[0].toLowerCase() === getDefaultOneSizeSizes()[0].toLowerCase();
-
-    const apparelTokens = new Set(
-      getDefaultApparelSizes().map((size) => String(size).trim().toLowerCase())
-    );
-    const looksLikeApparelSizing =
-      sizes.length > 0 &&
-      sizes.every((size) => apparelTokens.has(String(size).trim().toLowerCase()));
-
-    if (looksLikeApparelSizing) {
-      return getDefaultGloveSizes();
-    }
-
-    if (isOneSizeContext && looksLikeApparelSizing) {
-      return getDefaultOneSizeSizes();
-    }
-
-    if (!isGloveContext) return sizes;
-
-    return sizes;
-  };
   useEffect(() => {
     if (user === undefined) return;
     const adminEmails = ["lbathletes@hotmail.com", "sammourdany@gmail.com"];
@@ -2077,13 +2044,8 @@ export function AdminDashboard() {
         Object.keys(colorGalleriesFromRows).length > 0
           ? colorGalleriesFromRows
           : parseColorGalleryLinks(productForm.color_gallery_links);
-      const sizingContext = buildSizingContext();
       const manualSizes = parseCommaSeparatedValues(productForm.sizes);
-      const selectedSizes = showSizingFields
-        ? manualSizes.length > 0
-          ? normalizeSizesForContext(sizingContext, manualSizes)
-          : getDefaultSizesByCategory(sizingContext)
-        : [];
+      const selectedSizes = showSizingFields ? manualSizes : [];
       const soldOutSizesRaw = parseCommaSeparatedValues(productForm.sold_out_sizes);
       const soldOutSizesNormalized = soldOutSizesRaw.filter((value, index, all) => {
         const normalized = value.toLowerCase();
@@ -2187,8 +2149,6 @@ export function AdminDashboard() {
       /\b(supplement|herbal|protein|whey|creatine|pre[\s-]?workout|bcaa|vitamin|mass|collagen|omega|electrolyte|gainer)\b/.test(
         `${category} ${productType}`.toLowerCase()
       );
-    const sizes = getDefaultSizesByCategory(`${category} ${productType}`);
-
     setProductForm((prev) => ({
       ...prev,
       name: item.name || "",
@@ -2211,7 +2171,7 @@ export function AdminDashboard() {
       sold_out_sizes: "",
       discount_percentage: 0,
       colors: Array.isArray(item.colors) ? item.colors.join(", ") : "",
-      sizes: sizes.join(", "),
+      sizes: "",
       images: Array.isArray(item.images) ? item.images.join(", ") : "",
       authenticity: "original" as ProductAuthenticity,
       is_featured: false,
@@ -2338,7 +2298,6 @@ export function AdminDashboard() {
               )
             : [];
         const imageUrl = images[0] || "";
-        const sizes = getDefaultSizesByCategory(`${category} ${productType}`);
         const price = Math.max(0, Number(item.price || 0));
         const originalPrice = Math.max(
           price,
@@ -2376,7 +2335,7 @@ export function AdminDashboard() {
                 .map((color) => String(color || "").trim())
                 .filter(Boolean)
             : [],
-          sizes,
+          sizes: [],
           size_stock: {},
           images,
           color_images: {},

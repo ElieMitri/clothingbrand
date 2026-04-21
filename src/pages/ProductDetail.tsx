@@ -183,29 +183,31 @@ export function ProductDetail() {
               </div>
             ) : null}
 
-            <div>
-              <p className="mb-2 text-sm font-semibold text-[var(--sf-text)]">Size</p>
-              <div className="grid grid-cols-4 gap-2">
-                {sizes.map((size) => {
-                  const soldOut = isSizeSoldOut(product, size);
-                  return (
-                    <button
-                      key={size}
-                      type="button"
-                      disabled={soldOut}
-                      onClick={() => setSelectedSize(size)}
-                      className={`rounded-[10px] border px-3 py-2 text-sm font-medium ${
-                        selectedSize === size
-                          ? "border-[var(--sf-accent)] bg-[var(--sf-bg-soft)]"
-                          : "border-[var(--sf-line)]"
-                      } ${soldOut ? "cursor-not-allowed opacity-40" : ""}`}
-                    >
-                      {size}
-                    </button>
-                  );
-                })}
+            {sizes.length > 0 ? (
+              <div>
+                <p className="mb-2 text-sm font-semibold text-[var(--sf-text)]">Size</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {sizes.map((size) => {
+                    const soldOut = isSizeSoldOut(product, size);
+                    return (
+                      <button
+                        key={size}
+                        type="button"
+                        disabled={soldOut}
+                        onClick={() => setSelectedSize(size)}
+                        className={`rounded-[10px] border px-3 py-2 text-sm font-medium ${
+                          selectedSize === size
+                            ? "border-[var(--sf-accent)] bg-[var(--sf-bg-soft)]"
+                            : "border-[var(--sf-line)]"
+                        } ${soldOut ? "cursor-not-allowed opacity-40" : ""}`}
+                      >
+                        {size}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            ) : null}
 
             <div>
               <p className="mb-2 text-sm font-semibold text-[var(--sf-text)]">Quantity</p>

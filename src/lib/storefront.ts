@@ -41,9 +41,7 @@ export const getDiscountPercent = (product: StoreProduct) => {
 export const normalizeSize = (value: string) => String(value || "").trim().toLowerCase();
 
 export const getDefaultSizes = (product?: Partial<StoreProduct>) => {
-  const source = Array.isArray(product?.sizes) && product?.sizes?.length
-    ? product.sizes
-    : ["XS", "S", "M", "L", "XL"];
+  const source = Array.isArray(product?.sizes) ? product.sizes : [];
 
   return source.map((size) => String(size).trim()).filter(Boolean);
 };
