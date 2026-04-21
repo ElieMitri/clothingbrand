@@ -11,6 +11,7 @@ import { orderSavedViews } from "../data/adminConstants";
 import type { OrderRow } from "../types";
 import { useToast } from "../hooks/useToast";
 import { useAdminLiveData } from "../hooks/useAdminLiveData";
+import { getUnitProfitFromProductDoc } from "../utils/transforms";
 import { updateOrderStatusWithInventory, type OrderStatus } from "../../lib/orderLogic";
 import { db } from "../../lib/firebase";
 
@@ -59,14 +60,12 @@ export function OrdersPage() {
     });
   }, [activeView, orders, query, statusFilter]);
 
-  const productNameById = useMemo(() => {
-    const byId = new Map<string, string>();
+  const productById = useMemo(() => {
+    const byId = new Map<string, (typeof productsRaw)[number]>();
     productsRaw.forEach((product) => {
       const id = String(product.id || "").trim();
       if (!id) return;
-      const name = String(product.name || "").trim();
-      if (!name) return;
-      byId.set(id, name);
+      byId.set(id, product);
     });
     return byId;
   }, [productsRaw]);
@@ -80,10 +79,16 @@ export function OrdersPage() {
     if (!focusedRawOrder || !Array.isArray(focusedRawOrder.items)) return [];
     return focusedRawOrder.items.map((item, index) => {
       const productId = String(item?.product_id || "").trim();
+      const productDoc = productById.get(productId);
       const quantity = Math.max(1, Number(item?.quantity || 0) || 1);
       const unitPrice = Math.max(0, Number(item?.price ?? item?.unitPrice ?? 0));
       const lineTotal = unitPrice * quantity;
-      const displayName = String(item?.product_name || "").trim() || productNameById.get(productId) || "Product";
+      const unitProfit = getUnitProfitFromProductDoc(productDoc, unitPrice);
+      const lineProfit = unitProfit * quantity;
+      const displayName =
+        String(item?.product_name || "").trim() ||
+        String(productDoc?.name || "").trim() ||
+        "Product";
       const size = String(item?.size || "").trim();
       const imageUrl = String(item?.product_image || "").trim();
       return {
@@ -93,17 +98,23 @@ export function OrdersPage() {
         size,
         quantity,
         unitPrice,
+        unitProfit,
         lineTotal,
+        lineProfit,
         imageUrl,
       };
     });
-  }, [focusedRawOrder, productNameById]);
+  }, [focusedRawOrder, productById]);
 
   const focusedOrderSubtotal = useMemo(() => {
     const explicitSubtotal = Number(focusedRawOrder?.subtotal || 0);
     if (explicitSubtotal > 0) return explicitSubtotal;
     return focusedOrderItems.reduce((sum, item) => sum + item.lineTotal, 0);
   }, [focusedOrderItems, focusedRawOrder]);
+
+  const focusedOrderProfit = useMemo(() => {
+    return focusedOrderItems.reduce((sum, item) => sum + item.lineProfit, 0);
+  }, [focusedOrderItems]);
 
   const columns: DataTableColumn<OrderRow>[] = [
     {
@@ -529,7 +540,9 @@ export function OrdersPage() {
                       </div>
                       <div className="adm-order-item__money">
                         <p className="adm-muted">{money.format(item.unitPrice)} each</p>
+                        <p className="adm-muted">Profit/item {money.format(item.unitProfit)}</p>
                         <p>{money.format(item.lineTotal)}</p>
+                        <p className="adm-order-item__profit">Profit {money.format(item.lineProfit)}</p>
                       </div>
                     </div>
                   ))}
@@ -539,6 +552,10 @@ export function OrdersPage() {
                 <div>
                   <span>Subtotal</span>
                   <strong>{money.format(focusedOrderSubtotal)}</strong>
+                </div>
+                <div>
+                  <span>Estimated profit</span>
+                  <strong>{money.format(focusedOrderProfit)}</strong>
                 </div>
                 <div>
                   <span>Total</span>

@@ -923,6 +923,11 @@
   font-weight: 700;
 }
 
+.adm-order-item__profit {
+  color: var(--adm-success);
+  font-weight: 700;
+}
+
 .adm-order-summary {
   border-top: 1px dashed var(--adm-border-strong);
   padding-top: 10px;
