@@ -839,9 +839,22 @@
   gap: 10px;
 }
 
+.adm-order-meta {
+  border: 1px solid var(--adm-border);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fcfdff;
+}
+
 .adm-drawer dl > div {
   display: grid;
   gap: 4px;
+}
+
+.adm-order-meta__fulfillment {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
 }
 
 .adm-drawer dt {
@@ -866,6 +879,70 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
+}
+
+.adm-mini-table__row--order-item {
+  background: #fff;
+}
+
+.adm-order-items {
+  border: 1px solid var(--adm-border);
+  border-radius: 12px;
+  padding: 12px;
+  background: #f8fafc;
+  display: grid;
+  gap: 10px;
+}
+
+.adm-order-items__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.adm-order-items__header h4 {
+  margin: 0;
+}
+
+.adm-order-item__title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.adm-order-item__money {
+  text-align: right;
+}
+
+.adm-order-item__money p {
+  margin: 0;
+}
+
+.adm-order-item__money p:last-child {
+  font-weight: 700;
+}
+
+.adm-order-summary {
+  border-top: 1px dashed var(--adm-border-strong);
+  padding-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.adm-order-summary > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.adm-order-summary > div:last-child {
+  font-size: 16px;
+}
+
+.adm-order-actions {
+  display: grid;
   gap: 10px;
 }
 
@@ -1232,5 +1309,10 @@
 
   .adm-orders-panel .adm-table-wrap {
     min-height: calc(100vh - 260px);
+  }
+
+  .adm-order-items__header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

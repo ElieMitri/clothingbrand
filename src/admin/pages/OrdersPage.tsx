@@ -99,6 +99,12 @@ export function OrdersPage() {
     });
   }, [focusedRawOrder, productNameById]);
 
+  const focusedOrderSubtotal = useMemo(() => {
+    const explicitSubtotal = Number(focusedRawOrder?.subtotal || 0);
+    if (explicitSubtotal > 0) return explicitSubtotal;
+    return focusedOrderItems.reduce((sum, item) => sum + item.lineTotal, 0);
+  }, [focusedOrderItems, focusedRawOrder]);
+
   const columns: DataTableColumn<OrderRow>[] = [
     {
       key: "order",
@@ -430,132 +436,140 @@ export function OrdersPage() {
         <>
           <div className="adm-overlay" onClick={() => setFocusedOrder(null)} />
           <aside className="adm-drawer adm-drawer--full" aria-label="Order detail panel">
-          <header>
-            <h3>{focusedOrder.orderNumber}</h3>
-            <button type="button" className="adm-button adm-button--ghost" onClick={() => setFocusedOrder(null)}>
-              Close
-            </button>
-          </header>
-          <dl>
-            <div>
-              <dt>Customer</dt>
-              <dd>{focusedOrder.customer}</dd>
-            </div>
-            <div>
-              <dt>Email</dt>
-              <dd>{focusedOrder.email}</dd>
-            </div>
-            <div>
-              <dt>Location</dt>
-              <dd>{focusedOrder.location}</dd>
-            </div>
-            <div>
-              <dt>Payment</dt>
-              <dd>
-                <StatusBadge tone={paymentTone[focusedOrder.paymentStatus]}>{focusedOrder.paymentStatus}</StatusBadge>
-              </dd>
-            </div>
-            <div>
-              <dt>Shipment</dt>
-              <dd>
-                <select
-                  value={focusedOrder.shipmentStatus}
-                  onChange={async (event) => {
-                    await updateStatus(focusedOrder.id, event.target.value as OrderStatus);
-                  }}
-                  className="adm-input"
-                  disabled={savingStatusOrderId === focusedOrder.id}
-                >
-                  {allStatuses.map((status) => (
-                    <option key={status} value={status}>
-                      {status}
-                    </option>
-                  ))}
-                </select>
-              </dd>
-            </div>
-            <div>
-              <dt>Fulfillment</dt>
-              <dd>
-                <StatusBadge tone={fulfillmentTone[focusedOrder.fulfillmentStatus]}>
-                  {focusedOrder.fulfillmentStatus}
-                </StatusBadge>
-                <button
-                  type="button"
-                  className="adm-button adm-button--ghost"
-                  onClick={() => {
-                    void toggleFulfillment(focusedOrder.id);
-                  }}
-                  disabled={savingFulfillmentOrderId === focusedOrder.id}
-                  style={{ marginTop: 8 }}
-                >
-                  {savingFulfillmentOrderId === focusedOrder.id
-                    ? "Saving..."
-                    : focusedOrder.fulfillmentStatus === "fulfilled"
-                    ? "Mark unfulfilled"
-                    : "Mark fulfilled"}
-                </button>
-              </dd>
-            </div>
-            <div>
-              <dt>Total</dt>
-              <dd>{money.format(focusedOrder.total)}</dd>
-            </div>
-          </dl>
-          <section>
-            <h4 style={{ margin: "0 0 8px" }}>Order items</h4>
-            {focusedOrderItems.length === 0 ? (
-              <p className="adm-muted">No items were found for this order.</p>
-            ) : (
-              <div className="adm-mini-table">
-                {focusedOrderItems.map((item) => (
-                  <div key={item.id} className="adm-mini-table__row">
-                    <div className="adm-product-cell">
-                      {item.imageUrl ? (
-                        <img src={item.imageUrl} alt={item.displayName} />
-                      ) : null}
-                      <div>
-                        <p style={{ margin: 0, fontWeight: 600 }}>{item.displayName}</p>
-                        <p className="adm-muted">
-                          {item.productId ? `ID: ${item.productId}` : "ID: -"}
-                          {" · "}
-                          {item.size ? `Size: ${item.size}` : "Size: -"}
-                          {" · "}
-                          Qty {item.quantity}
-                        </p>
+            <header>
+              <div>
+                <h3>{focusedOrder.orderNumber}</h3>
+                <p className="adm-muted">Detailed order breakdown</p>
+              </div>
+              <button type="button" className="adm-button adm-button--ghost" onClick={() => setFocusedOrder(null)}>
+                Close
+              </button>
+            </header>
+            <dl className="adm-order-meta">
+              <div>
+                <dt>Customer</dt>
+                <dd>{focusedOrder.customer}</dd>
+              </div>
+              <div>
+                <dt>Email</dt>
+                <dd>{focusedOrder.email}</dd>
+              </div>
+              <div>
+                <dt>Location</dt>
+                <dd>{focusedOrder.location}</dd>
+              </div>
+              <div>
+                <dt>Payment</dt>
+                <dd>
+                  <StatusBadge tone={paymentTone[focusedOrder.paymentStatus]}>{focusedOrder.paymentStatus}</StatusBadge>
+                </dd>
+              </div>
+              <div>
+                <dt>Shipment</dt>
+                <dd>
+                  <select
+                    value={focusedOrder.shipmentStatus}
+                    onChange={async (event) => {
+                      await updateStatus(focusedOrder.id, event.target.value as OrderStatus);
+                    }}
+                    className="adm-input"
+                    disabled={savingStatusOrderId === focusedOrder.id}
+                  >
+                    {allStatuses.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
+                </dd>
+              </div>
+              <div>
+                <dt>Fulfillment</dt>
+                <dd className="adm-order-meta__fulfillment">
+                  <StatusBadge tone={fulfillmentTone[focusedOrder.fulfillmentStatus]}>
+                    {focusedOrder.fulfillmentStatus}
+                  </StatusBadge>
+                  <button
+                    type="button"
+                    className="adm-button adm-button--ghost"
+                    onClick={() => {
+                      void toggleFulfillment(focusedOrder.id);
+                    }}
+                    disabled={savingFulfillmentOrderId === focusedOrder.id}
+                  >
+                    {savingFulfillmentOrderId === focusedOrder.id
+                      ? "Saving..."
+                      : focusedOrder.fulfillmentStatus === "fulfilled"
+                      ? "Mark unfulfilled"
+                      : "Mark fulfilled"}
+                  </button>
+                </dd>
+              </div>
+            </dl>
+            <section className="adm-order-items">
+              <div className="adm-order-items__header">
+                <h4>Order items</h4>
+                <p className="adm-muted">{focusedOrderItems.length} line items</p>
+              </div>
+              {focusedOrderItems.length === 0 ? (
+                <p className="adm-muted">No items were found for this order.</p>
+              ) : (
+                <div className="adm-mini-table">
+                  {focusedOrderItems.map((item) => (
+                    <div key={item.id} className="adm-mini-table__row adm-mini-table__row--order-item">
+                      <div className="adm-product-cell">
+                        {item.imageUrl ? <img src={item.imageUrl} alt={item.displayName} /> : null}
+                        <div>
+                          <p className="adm-order-item__title">{item.displayName}</p>
+                          <p className="adm-muted">
+                            {item.productId ? `ID: ${item.productId}` : "ID: -"} ·{" "}
+                            {item.size ? `Size: ${item.size}` : "Size: -"} · Qty {item.quantity}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="adm-order-item__money">
+                        <p className="adm-muted">{money.format(item.unitPrice)} each</p>
+                        <p>{money.format(item.lineTotal)}</p>
                       </div>
                     </div>
-                    <div style={{ textAlign: "right" }}>
-                      <p className="adm-muted">{money.format(item.unitPrice)} each</p>
-                      <p style={{ margin: 0, fontWeight: 700 }}>{money.format(item.lineTotal)}</p>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+              )}
+              <div className="adm-order-summary">
+                <div>
+                  <span>Subtotal</span>
+                  <strong>{money.format(focusedOrderSubtotal)}</strong>
+                </div>
+                <div>
+                  <span>Total</span>
+                  <strong>{money.format(focusedOrder.total)}</strong>
+                </div>
               </div>
-            )}
-          </section>
-          <button
-            type="button"
-            className="adm-button adm-button--primary"
-            onClick={() =>
-              showToast({
-                title: "Customer notified",
-                description: `Update sent for ${focusedOrder.orderNumber}.`,
-              })
-            }
-          >
-            Send update
-          </button>
-          <button
-            type="button"
-            className="adm-button adm-button--ghost"
-            onClick={() => {
-              void deleteOrder(focusedOrder);
-            }}
-            disabled={deletingOrderId === focusedOrder.id}
-          >
-            {deletingOrderId === focusedOrder.id ? "Deleting..." : "Delete order"}
-          </button>
+            </section>
+            <div className="adm-order-actions">
+              <button
+                type="button"
+                className="adm-button adm-button--primary"
+                onClick={() =>
+                  showToast({
+                    title: "Customer notified",
+                    description: `Update sent for ${focusedOrder.orderNumber}.`,
+                  })
+                }
+              >
+                Send update
+              </button>
+              <button
+                type="button"
+                className="adm-button adm-button--ghost"
+                onClick={() => {
+                  void deleteOrder(focusedOrder);
+                }}
+                disabled={deletingOrderId === focusedOrder.id}
+              >
+                {deletingOrderId === focusedOrder.id ? "Deleting..." : "Delete order"}
+              </button>
+            </div>
           </aside>
         </>
       ) : null}
