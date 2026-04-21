@@ -39,6 +39,7 @@ interface Order {
   id: string;
   items: OrderItem[];
   total: number;
+  shipping?: number;
   status: OrderStatus;
   cancel_reason?: string;
   status_note?: string;
@@ -138,6 +139,7 @@ export function Orders() {
               id: orderDoc.id,
               items: itemsWithDetails,
               total: data.total,
+              shipping: data.shipping,
               status: data.status,
               created_at: data.created_at,
               shipping_address: data.shipping_address,
@@ -297,7 +299,12 @@ export function Orders() {
         const subtotal = Number(
           order.items.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0)
         );
-        const shipping = DELIVERY_CHARGE;
+        const shipping =
+          typeof order.shipping === "number"
+            ? Number(order.shipping)
+            : subtotal > 120
+            ? 0
+            : DELIVERY_CHARGE;
         const tax = 0;
 
         const response = await fetch("/api/send-order-status-discord", {

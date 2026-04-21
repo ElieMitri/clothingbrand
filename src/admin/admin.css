@@ -30,6 +30,8 @@
 
 .adm-main {
   min-width: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .adm-content {
@@ -45,6 +47,19 @@
   position: sticky;
   top: 0;
   height: 100vh;
+  z-index: 42;
+}
+
+.adm-sidebar__header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 8px;
+}
+
+.adm-sidebar__toggle {
+  border-color: var(--adm-border-strong);
+  background: #f8fafc;
 }
 
 .adm-sidebar__brand {
@@ -259,6 +274,35 @@
   gap: 16px;
 }
 
+.adm-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  border: 0;
+  background: rgba(15, 23, 42, 0.42);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+  z-index: 41;
+}
+
+.adm-mobile-launcher {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  width: 46px;
+  height: 46px;
+  border: 1px solid var(--adm-border-strong);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--adm-text);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 35;
+  cursor: pointer;
+}
+
 .adm-page-header {
   display: grid;
   gap: 12px;
@@ -359,6 +403,26 @@
 
 .adm-panel {
   padding: 16px;
+}
+
+.adm-orders-panel {
+  min-height: calc(100vh - 220px);
+  display: flex;
+  flex-direction: column;
+}
+
+.adm-orders-panel .adm-empty-state {
+  min-height: calc(100vh - 300px);
+}
+
+.adm-orders-panel .adm-table-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 300px);
+}
+
+.adm-orders-panel .adm-table-footer {
+  margin-top: auto;
 }
 
 .adm-panel__header {
@@ -980,16 +1044,56 @@
   gap: 10px;
 }
 
+.adm-checklist-form {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .adm-checklist li {
   border: 1px solid var(--adm-border);
   border-radius: 10px;
   padding: 10px;
   display: flex;
+  align-items: flex-start;
   gap: 10px;
 }
 
 .adm-checklist li.is-done svg {
   color: #16a34a;
+}
+
+.adm-checklist__toggle {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  margin-top: 1px;
+}
+
+.adm-checklist__content {
+  min-width: 0;
+  flex: 1;
+}
+
+.adm-checklist__delete {
+  border: 0;
+  background: transparent;
+  color: var(--adm-muted);
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.adm-checklist__delete:hover {
+  color: var(--adm-danger);
 }
 
 .adm-checklist p {
@@ -1055,22 +1159,52 @@
   }
 
   .adm-sidebar {
-    position: static;
-    height: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--adm-border);
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: min(84vw, 320px);
+    max-width: 320px;
+    height: 100vh;
+    border-right: 1px solid var(--adm-border);
+    border-bottom: 0;
+    transform: translateX(-106%);
+    transition: transform 0.24s ease;
+    box-shadow: 14px 0 36px rgba(15, 23, 42, 0.2);
+    overflow-y: auto;
+  }
+
+  .adm-shell.adm-shell--sidebar-open .adm-sidebar {
+    transform: translateX(0);
+  }
+
+  .adm-shell.adm-shell--sidebar-open .adm-sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .adm-sidebar__header {
+    display: none;
+  }
+
+  .adm-mobile-launcher {
+    display: inline-flex;
   }
 
   .adm-topbar {
-    flex-wrap: wrap;
-    height: auto;
-    padding: 10px;
+    flex-wrap: nowrap;
+    height: 64px;
+    padding: 0 10px;
+    gap: 8px;
   }
 
   .adm-search {
-    order: 10;
-    max-width: 100%;
+    max-width: none;
     width: 100%;
+    min-width: 0;
+  }
+
+  .adm-top-pill {
+    display: none;
   }
 
   .adm-content {
@@ -1086,5 +1220,17 @@
   .adm-form-grid,
   .adm-breakdown-grid {
     grid-template-columns: 1fr;
+  }
+
+  .adm-orders-panel {
+    min-height: calc(100vh - 190px);
+  }
+
+  .adm-orders-panel .adm-empty-state {
+    min-height: calc(100vh - 260px);
+  }
+
+  .adm-orders-panel .adm-table-wrap {
+    min-height: calc(100vh - 260px);
   }
 }

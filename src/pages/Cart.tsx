@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import {
   collection,
@@ -32,6 +32,7 @@ interface CartItem {
 
 export function Cart() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [items, setItems] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -79,7 +80,9 @@ export function Cart() {
       const enriched = await Promise.all(
         cartSnap.docs.map(async (entry) => {
           const cartData = entry.data();
-          const productSnap = await getDoc(doc(db, "products", String(cartData.product_id || "")));
+          const productSnap = await getDoc(
+            doc(db, "products", String(cartData.product_id || ""))
+          );
           if (!productSnap.exists()) return null;
 
           const productData = productSnap.data();
@@ -164,7 +167,7 @@ export function Cart() {
     () => items.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
     [items]
   );
-  const shipping = items.length === 0 ? 0 : 4;
+  const shipping = subtotal > 120 || items.length === 0 ? 0 : 4;
   const total = subtotal + shipping;
 
   if (loading) {
@@ -279,7 +282,12 @@ export function Cart() {
             </div>
           </div>
 
-          <Button fullWidth size="lg" className="mt-5">
+          <Button
+            fullWidth
+            size="lg"
+            className="mt-5"
+            onClick={() => navigate("/checkout")}
+          >
             Proceed to Checkout
           </Button>
           <p className="mt-3 text-xs text-[var(--sf-text-muted)]">

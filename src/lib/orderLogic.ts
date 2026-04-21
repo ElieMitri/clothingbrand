@@ -25,6 +25,15 @@ export interface OrderLineItem {
 interface PlaceOrderInput {
   userId?: string | null;
   userEmail?: string | null;
+  customerName?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  directions?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zipCode?: string | null;
+  country?: string | null;
+  shippingAddress?: string | null;
   items: OrderLineItem[];
   subtotal: number;
   shipping: number;
@@ -68,6 +77,15 @@ const STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
 export async function placeOrderWithInventory({
   userId,
   userEmail,
+  customerName,
+  phone,
+  address,
+  directions,
+  city,
+  state,
+  zipCode,
+  country,
+  shippingAddress,
   items,
   subtotal,
   shipping,
@@ -89,6 +107,15 @@ export async function placeOrderWithInventory({
     const orderData = {
       user_id: normalizedUserId || null,
       user_email: userEmail || null,
+      customer_name: customerName || null,
+      phone: phone || null,
+      address: address || null,
+      directions: directions || null,
+      city: city || null,
+      state: state || null,
+      zipCode: zipCode || null,
+      country: country || null,
+      shipping_address: shippingAddress || address || null,
       items,
       subtotal,
       shipping,

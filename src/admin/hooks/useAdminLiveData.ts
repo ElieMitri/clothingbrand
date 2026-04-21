@@ -42,7 +42,24 @@ export function useAdminLiveData() {
       search?: string;
       visitor_id?: string;
       session_id?: string;
+      city?: string;
+      region?: string;
+      country?: string;
       created_at?: unknown;
+    }>
+  >([]);
+  const [presenceRaw, setPresenceRaw] = useState<
+    Array<{
+      id: string;
+      session_id?: string;
+      visitor_id?: string;
+      current_path?: string;
+      city?: string;
+      region?: string;
+      country?: string;
+      last_seen?: unknown;
+      updated_at?: unknown;
+      source?: string;
     }>
   >([]);
   const [saleSettings, setSaleSettings] = useState<{
@@ -237,6 +254,9 @@ export function useAdminLiveData() {
               search?: string;
               visitor_id?: string;
               session_id?: string;
+              city?: string;
+              region?: string;
+              country?: string;
               created_at?: unknown;
             },
             "id"
@@ -245,6 +265,30 @@ export function useAdminLiveData() {
         setAnalyticsEventsRaw(rows);
         analyticsReady = true;
         settleLoading();
+      })
+    );
+
+    unsubs.push(
+      onSnapshot(collection(db, "analytics_presence"), (snap) => {
+        const rows = snap.docs.map((entry) => ({
+          id: entry.id,
+          ...(entry.data() as Omit<
+            {
+              id: string;
+              session_id?: string;
+              visitor_id?: string;
+              current_path?: string;
+              city?: string;
+              region?: string;
+              country?: string;
+              last_seen?: unknown;
+              updated_at?: unknown;
+              source?: string;
+            },
+            "id"
+          >),
+        }));
+        setPresenceRaw(rows);
       })
     );
 
@@ -276,5 +320,6 @@ export function useAdminLiveData() {
     collectionsRaw,
     newsletterSubscribers,
     analyticsEventsRaw,
+    presenceRaw,
   };
 }

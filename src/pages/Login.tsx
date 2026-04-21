@@ -15,6 +15,12 @@ export function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const { signIn, resetPassword } = useAuth();
+  const nextPath = useMemo(() => {
+    const query = new URLSearchParams(location.search);
+    const next = String(query.get("next") || "").trim();
+    if (!next.startsWith("/")) return "/";
+    return next;
+  }, [location.search]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -87,7 +93,7 @@ export function Login() {
         localStorage.removeItem("remember_email");
       }
 
-      navigate("/", { replace: true });
+      navigate(nextPath, { replace: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to sign in.";
       setError(message);

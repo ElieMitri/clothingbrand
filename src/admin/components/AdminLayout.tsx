@@ -2,6 +2,7 @@ import {
   BarChart3,
   Layers3,
   LayoutDashboard,
+  Menu,
   Megaphone,
   Percent,
   Settings,
@@ -10,10 +11,9 @@ import {
   Users,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import { useAdminLiveData } from "../hooks/useAdminLiveData";
 import { SidebarNav } from "./SidebarNav";
-import { TopBar } from "./TopBar";
 import type { NavItem } from "../types";
 
 const navItems: NavItem[] = [
@@ -29,65 +29,71 @@ const navItems: NavItem[] = [
 ];
 
 export function AdminLayout() {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth <= 900 : false
+  );
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth > 900 : true
+  );
   const location = useLocation();
-  const navigate = useNavigate();
   const { storeSettings } = useAdminLiveData();
   const storeName = storeSettings?.store_name || "LB Athletes";
-  const searchValue = useMemo(() => {
-    const params = new URLSearchParams(location.search);
-    return params.get("q") || "";
-  }, [location.search]);
-  const [searchDraft, setSearchDraft] = useState(searchValue);
 
   useEffect(() => {
-    setSearchDraft(searchValue);
-  }, [searchValue]);
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(max-width: 900px)");
+    const syncViewport = () => {
+      const mobile = media.matches;
+      setIsMobile(mobile);
+      setSidebarOpen((previous) => (mobile ? false : previous));
+    };
+
+    syncViewport();
+    media.addEventListener("change", syncViewport);
+    return () => media.removeEventListener("change", syncViewport);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    setSidebarOpen(false);
+  }, [isMobile, location.pathname]);
 
   const shellClassName = useMemo(
-    () => `adm-shell ${sidebarOpen ? "" : "adm-shell--collapsed"}`.trim(),
-    [sidebarOpen]
+    () =>
+      `adm-shell ${sidebarOpen ? "adm-shell--sidebar-open" : ""} ${
+        sidebarOpen || isMobile ? "" : "adm-shell--collapsed"
+      }`.trim(),
+    [isMobile, sidebarOpen]
   );
-
-  const handleSearchChange = (value: string) => {
-    setSearchDraft(value);
-  };
-
-  const handleSearchSubmit = (value: string) => {
-    const query = String(value || "").trim();
-    const path = location.pathname;
-    const searchableSections = ["/admin/products", "/admin/orders", "/admin/customers", "/admin/collections"];
-    const isSearchableSection = searchableSections.some((prefix) => path.startsWith(prefix));
-
-    if (query && !isSearchableSection) {
-      navigate(`/admin/products?q=${encodeURIComponent(query)}`);
-      return;
-    }
-
-    const params = new URLSearchParams(location.search);
-    if (query) params.set("q", query);
-    else params.delete("q");
-
-    navigate(
-      {
-        pathname: location.pathname,
-        search: params.toString() ? `?${params.toString()}` : "",
-      },
-      { replace: true }
-    );
-  };
 
   return (
     <div className={shellClassName}>
-      <SidebarNav items={navItems} collapsed={!sidebarOpen} storeName={storeName} />
+      <SidebarNav
+        items={navItems}
+        collapsed={!sidebarOpen && !isMobile}
+        storeName={storeName}
+        onToggleSidebar={() => setSidebarOpen((value) => !value)}
+        onNavigateItem={() => {
+          if (isMobile) setSidebarOpen(false);
+        }}
+      />
+      <button
+        type="button"
+        className="adm-sidebar-backdrop"
+        onClick={() => setSidebarOpen(false)}
+        aria-label="Close sidebar"
+      />
       <div className="adm-main">
-        <TopBar
-          onToggleSidebar={() => setSidebarOpen((value) => !value)}
-          storeName={storeName}
-          searchValue={searchDraft}
-          onSearchChange={handleSearchChange}
-          onSearchSubmit={handleSearchSubmit}
-        />
+        {isMobile && !sidebarOpen ? (
+          <button
+            type="button"
+            className="adm-mobile-launcher"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open sidebar"
+          >
+            <Menu size={20} />
+          </button>
+        ) : null}
         <main className="adm-content">
           <Outlet />
         </main>

@@ -38,6 +38,12 @@ export interface AdminProductDoc {
 }
 
 export interface AdminOrderItemDoc {
+  product_id?: string;
+  product_name?: string;
+  product_image?: string;
+  size?: string;
+  price?: number;
+  unitPrice?: number;
   quantity?: number;
 }
 
@@ -47,6 +53,10 @@ export interface AdminOrderDoc {
   user_email?: string;
   created_at?: unknown;
   status?: OrderStatus;
+  fulfillment_status?: "unfulfilled" | "processing" | "fulfilled";
+  city?: string;
+  state?: string;
+  country?: string;
   total?: number;
   subtotal?: number;
   shipping?: number;
@@ -104,8 +114,16 @@ const derivePaymentStatus = (
 };
 
 const deriveFulfillmentStatus = (
+  fulfillmentStatus: AdminOrderDoc["fulfillment_status"] | undefined,
   status: OrderStatus | undefined
 ): OrderRow["fulfillmentStatus"] => {
+  if (
+    fulfillmentStatus === "fulfilled" ||
+    fulfillmentStatus === "processing" ||
+    fulfillmentStatus === "unfulfilled"
+  ) {
+    return fulfillmentStatus;
+  }
   if (status === "processing") return "processing";
   if (status === "shipped" || status === "delivered") return "fulfilled";
   return "unfulfilled";
@@ -128,6 +146,75 @@ const customerNameFromEmail = (email: string) => {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+};
+
+const buildProductById = (products: AdminProductDoc[]) => {
+  const byId = new Map<string, AdminProductDoc>();
+  products.forEach((product) => {
+    const id = String(product.id || "").trim();
+    if (!id) return;
+    byId.set(id, product);
+  });
+  return byId;
+};
+
+const getOrderLocationLabel = (order: AdminOrderDoc) => {
+  const location = [order.city, order.state, order.country]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+    .join(", ");
+  return location || "-";
+};
+
+const getEffectiveSalePrice = (salePrice: number, product?: AdminProductDoc) => {
+  const requested = Math.max(0, Number(salePrice || 0));
+  if (requested > 0) return requested;
+  return Math.max(0, Number(product?.price || 0));
+};
+
+export const getUnitProfitFromProductDoc = (
+  product: AdminProductDoc | undefined,
+  salePrice: number
+) => {
+  const effectiveSalePrice = getEffectiveSalePrice(salePrice, product);
+  const commission = Math.max(0, Number(product?.commission_percentage || 0));
+  const costPrice = Math.max(0, Number(product?.cost_price || 0));
+  const retailPrice = Math.max(
+    0,
+    Number(product?.original_price || product?.price || effectiveSalePrice)
+  );
+
+  if (retailPrice > 0 && costPrice > 0) {
+    // Explicit retail/cost model: margin based on retail - cost.
+    return retailPrice - costPrice;
+  }
+
+  if (commission > 0) {
+    // Commission model: margin is commission percent of sale price.
+    return effectiveSalePrice * (commission / 100);
+  }
+
+  if (costPrice > 0) {
+    return effectiveSalePrice - costPrice;
+  }
+
+  return 0;
+};
+
+const getOrderProfit = (
+  order: AdminOrderDoc,
+  productById: Map<string, AdminProductDoc>
+) => {
+  const items = Array.isArray(order.items) ? order.items : [];
+  return items.reduce((sum, item) => {
+    const quantity = Number(item?.quantity || 0);
+    if (quantity <= 0) return sum;
+    const unitSalePrice = Number(item?.price ?? item?.unitPrice ?? 0);
+    const productId = String(item?.product_id || "").trim();
+    const product = productById.get(productId);
+    const unitProfit = getUnitProfitFromProductDoc(product, unitSalePrice);
+    return sum + unitProfit * quantity;
+  }, 0);
 };
 
 export const mapProducts = (products: AdminProductDoc[]): ProductRow[] => {
@@ -161,8 +248,9 @@ export const mapOrders = (orders: AdminOrderDoc[]): OrderRow[] => {
       email: email || "-",
       date: dateValue.toLocaleDateString(),
       paymentStatus: derivePaymentStatus(order.status),
-      fulfillmentStatus: deriveFulfillmentStatus(order.status),
+      fulfillmentStatus: deriveFulfillmentStatus(order.fulfillment_status, order.status),
       shipmentStatus: deriveShipmentStatus(order.status),
+      location: getOrderLocationLabel(order),
       total: Number(order.total || 0),
       tags: [String(order.status || "pending")],
     };
@@ -182,10 +270,15 @@ export const mapCustomers = (
     });
 
     const spend = relatedOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
-    const location = [entry.city, entry.state, entry.country]
+    const profileLocation = [entry.city, entry.state, entry.country]
       .map((part) => String(part || "").trim())
       .filter(Boolean)
       .join(", ");
+    const recentOrderLocation =
+      [...relatedOrders]
+        .sort((a, b) => toDate(b.created_at).getTime() - toDate(a.created_at).getTime())
+        .map((order) => getOrderLocationLabel(order))
+        .find((label) => label !== "-") || "";
 
     const name = String(
       `${entry.firstName || ""} ${entry.lastName || ""}`.trim() ||
@@ -197,7 +290,7 @@ export const mapCustomers = (
       id: entry.id,
       name,
       email: email || "-",
-      location: location || "-",
+      location: profileLocation || recentOrderLocation || "-",
       spend,
       orderCount: relatedOrders.length,
       tags: relatedOrders.length > 3 ? ["Returning"] : ["New"],
@@ -209,38 +302,40 @@ export const buildDashboardKpis = (
   orders: AdminOrderDoc[],
   products: AdminProductDoc[]
 ): KpiMetric[] => {
-  const validOrders = orders.filter((order) => order.status !== "cancelled");
-  const sales = validOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
-  const ordersCount = validOrders.length;
-  const avgOrderValue = ordersCount > 0 ? sales / ordersCount : 0;
-  const totalOrders = orders.length;
-  const conversionLike =
-    totalOrders > 0 ? (ordersCount / totalOrders) * 100 : 0;
+  const activeOrders = orders.filter((order) => order.status !== "cancelled");
+  const grossSales = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+  const netRevenue = activeOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+  const productById = buildProductById(products);
+  const estimatedProfit = activeOrders.reduce(
+    (sum, order) => sum + getOrderProfit(order, productById),
+    0
+  );
+  const profitMargin = netRevenue > 0 ? (estimatedProfit / netRevenue) * 100 : 0;
 
   return [
     {
-      label: "Net sales",
-      value: numberFormatter.format(sales),
-      delta: `${ordersCount} active orders`,
-      trend: ordersCount > 0 ? "up" : "down",
+      label: "Gross sales",
+      value: numberFormatter.format(grossSales),
+      delta: `${orders.length} total orders`,
+      trend: grossSales > 0 ? "up" : "down",
+    },
+    {
+      label: "Net revenue",
+      value: numberFormatter.format(netRevenue),
+      delta: `${activeOrders.length} non-cancelled orders`,
+      trend: netRevenue > 0 ? "up" : "down",
+    },
+    {
+      label: "Estimated profit",
+      value: numberFormatter.format(estimatedProfit),
+      delta: `${percentageFormatter.format(profitMargin)}% margin`,
+      trend: estimatedProfit > 0 ? "up" : "down",
     },
     {
       label: "Orders",
-      value: String(totalOrders),
+      value: String(orders.length),
       delta: `${products.length} products in catalog`,
-      trend: totalOrders > 0 ? "up" : "down",
-    },
-    {
-      label: "Conversion",
-      value: `${percentageFormatter.format(conversionLike)}%`,
-      delta: "Based on non-cancelled orders",
-      trend: conversionLike >= 50 ? "up" : "down",
-    },
-    {
-      label: "Average order value",
-      value: numberFormatter.format(avgOrderValue),
-      delta: "Live from Firestore",
-      trend: avgOrderValue > 0 ? "up" : "down",
+      trend: orders.length > 0 ? "up" : "down",
     },
   ];
 };

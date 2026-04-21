@@ -4,6 +4,7 @@ import { PageHeader } from "../components/PageHeader";
 import { StatCard } from "../components/StatCard";
 import { TrendChart } from "../components/TrendChart";
 import { useAdminLiveData } from "../hooks/useAdminLiveData";
+import { getUnitProfitFromProductDoc } from "../utils/transforms";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -14,7 +15,7 @@ const dayKey = (date: Date) =>
   ).padStart(2, "0")}`;
 
 export function AnalyticsPage() {
-  const { loading, ordersRaw, productsRaw, customers, subscribersCount, analyticsEventsRaw } =
+  const { loading, ordersRaw, productsRaw, customers, subscribersCount, analyticsEventsRaw, presenceRaw } =
     useAdminLiveData();
   const [range, setRange] = useState<RangeOption>("30");
 
@@ -30,7 +31,29 @@ export function AnalyticsPage() {
     });
 
     const nonCancelled = inRange.filter((order) => order.status !== "cancelled");
+    const productById = new Map<string, (typeof productsRaw)[number]>();
+    productsRaw.forEach((product) => {
+      const productId = String(product.id || "").trim();
+      if (!productId) return;
+      productById.set(productId, product);
+    });
+
+    const grossSales = inRange.reduce((sum, order) => sum + Number(order.total || 0), 0);
     const revenue = nonCancelled.reduce((sum, order) => sum + Number(order.total || 0), 0);
+    const profit = nonCancelled.reduce((sum, order) => {
+      const items = Array.isArray(order.items) ? order.items : [];
+      const orderProfit = items.reduce((itemSum, item) => {
+        const quantity = Number(item?.quantity || 0);
+        if (quantity <= 0) return itemSum;
+        const unitSalePrice = Number(item?.price ?? item?.unitPrice ?? 0);
+        const productId = String(item?.product_id || "").trim();
+        const product = productById.get(productId);
+        const unitProfit = getUnitProfitFromProductDoc(product, unitSalePrice);
+        return itemSum + unitProfit * quantity;
+      }, 0);
+      return sum + orderProfit;
+    }, 0);
+    const profitMargin = revenue > 0 ? (profit / revenue) * 100 : 0;
     const totalOrders = inRange.length;
     const fulfilledOrders = nonCancelled.filter(
       (order) => order.status === "shipped" || order.status === "delivered"
@@ -85,6 +108,57 @@ export function AnalyticsPage() {
       .slice(0, 5)
       .map(([path, count]) => ({ path, count }));
 
+    const cityBuckets = new Map<string, { visitors: Set<string>; views: number }>();
+    inRangeEvents.forEach((event) => {
+      const cityName = String(event.city || "").trim();
+      const countryName = String(event.country || "").trim();
+      const label = cityName || countryName || "Unknown";
+      const visitorKey = String(event.visitor_id || event.session_id || event.id).trim();
+      const bucket = cityBuckets.get(label) || { visitors: new Set<string>(), views: 0 };
+      if (visitorKey) bucket.visitors.add(visitorKey);
+      bucket.views += 1;
+      cityBuckets.set(label, bucket);
+    });
+
+    const topCities = Array.from(cityBuckets.entries())
+      .map(([city, value]) => ({
+        city,
+        visitors: value.visitors.size,
+        views: value.views,
+      }))
+      .sort((a, b) => {
+        if (b.visitors !== a.visitors) return b.visitors - a.visitors;
+        return b.views - a.views;
+      })
+      .slice(0, 8);
+
+    const onlineCutoffMs = Date.now() - 2 * 60 * 1000;
+    const activePresence = presenceRaw.filter((entry) => {
+      const seenAt = toDate(entry.last_seen).getTime();
+      return seenAt >= onlineCutoffMs;
+    });
+    const onlineSessions = activePresence.length;
+    const onlineVisitors = new Set(
+      activePresence
+        .map((entry) => String(entry.visitor_id || entry.session_id || entry.id).trim())
+        .filter(Boolean)
+    ).size;
+    const onlineCityBuckets = new Map<string, Set<string>>();
+    activePresence.forEach((entry) => {
+      const cityName = String(entry.city || "").trim();
+      const countryName = String(entry.country || "").trim();
+      const label = cityName || countryName || "Unknown";
+      const visitorKey = String(entry.visitor_id || entry.session_id || entry.id).trim();
+      if (!visitorKey) return;
+      const visitors = onlineCityBuckets.get(label) || new Set<string>();
+      visitors.add(visitorKey);
+      onlineCityBuckets.set(label, visitors);
+    });
+    const topOnlineCities = Array.from(onlineCityBuckets.entries())
+      .map(([city, visitors]) => ({ city, onlineVisitors: visitors.size }))
+      .sort((a, b) => b.onlineVisitors - a.onlineVisitors)
+      .slice(0, 8);
+
     const channelBreakdown = {
       returningRate:
         customers.length > 0
@@ -96,19 +170,26 @@ export function AnalyticsPage() {
       pageViewCount,
       uniqueVisitors,
       uniqueSessions,
+      onlineVisitors,
+      onlineSessions,
       avgPagesPerSession: uniqueSessions > 0 ? pageViewCount / uniqueSessions : 0,
       topPages,
+      topCities,
+      topOnlineCities,
     };
 
     return {
+      grossSales,
       revenue,
+      profit,
+      profitMargin,
       totalOrders,
       completionRate,
       avgOrderValue,
       chart,
       channelBreakdown,
     };
-  }, [analyticsEventsRaw, customers, ordersRaw, productsRaw.length, range, subscribersCount]);
+  }, [analyticsEventsRaw, customers, ordersRaw, productsRaw, range, subscribersCount]);
 
   return (
     <div className="adm-page">
@@ -130,28 +211,28 @@ export function AnalyticsPage() {
 
       <section className="adm-grid adm-grid--kpi">
         <StatCard
-          label="Revenue"
+          label="Net revenue"
           value={money.format(analytics.revenue)}
           delta={`Live window: ${range} days`}
           trend={analytics.revenue > 0 ? "up" : "down"}
         />
         <StatCard
-          label="Orders"
-          value={String(analytics.totalOrders)}
-          delta={`${analytics.channelBreakdown.cancelled} cancelled`}
-          trend={analytics.totalOrders > 0 ? "up" : "down"}
+          label="Gross sales"
+          value={money.format(analytics.grossSales)}
+          delta={`${analytics.totalOrders} total orders`}
+          trend={analytics.grossSales > 0 ? "up" : "down"}
         />
         <StatCard
-          label="Website visitors"
-          value={String(analytics.channelBreakdown.uniqueVisitors)}
-          delta={`${analytics.channelBreakdown.pageViewCount} page views`}
-          trend={analytics.channelBreakdown.uniqueVisitors > 0 ? "up" : "down"}
+          label="Estimated profit"
+          value={money.format(analytics.profit)}
+          delta={`${analytics.profitMargin.toFixed(1)}% margin`}
+          trend={analytics.profit > 0 ? "up" : "down"}
         />
         <StatCard
-          label="Sessions"
-          value={String(analytics.channelBreakdown.uniqueSessions)}
-          delta={`${analytics.channelBreakdown.avgPagesPerSession.toFixed(2)} pages/session`}
-          trend={analytics.channelBreakdown.uniqueSessions > 0 ? "up" : "down"}
+          label="Online now"
+          value={String(analytics.channelBreakdown.onlineVisitors)}
+          delta={`${analytics.channelBreakdown.onlineSessions} active sessions (includes guests)`}
+          trend={analytics.channelBreakdown.onlineVisitors > 0 ? "up" : "down"}
         />
       </section>
 
@@ -206,6 +287,38 @@ export function AnalyticsPage() {
                   <li key={entry.path}>
                     <code>{entry.path}</code>
                     <strong>{entry.count}</strong>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="adm-top-pages">
+            <p className="adm-muted">Visitors by city ({range} days)</p>
+            {analytics.channelBreakdown.topCities.length === 0 ? (
+              <p className="adm-muted">No city data yet. New visits will populate this list.</p>
+            ) : (
+              <ul>
+                {analytics.channelBreakdown.topCities.map((entry) => (
+                  <li key={entry.city}>
+                    <code>{entry.city}</code>
+                    <strong>{entry.visitors} visitors · {entry.views} views</strong>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="adm-top-pages">
+            <p className="adm-muted">Online visitors by city (last 2 min)</p>
+            {analytics.channelBreakdown.topOnlineCities.length === 0 ? (
+              <p className="adm-muted">No one is currently online.</p>
+            ) : (
+              <ul>
+                {analytics.channelBreakdown.topOnlineCities.map((entry) => (
+                  <li key={entry.city}>
+                    <code>{entry.city}</code>
+                    <strong>{entry.onlineVisitors} online</strong>
                   </li>
                 ))}
               </ul>

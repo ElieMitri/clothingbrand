@@ -6,6 +6,7 @@ import { Home } from "./pages/Home";
 import { Shop } from "./pages/Shop";
 import { ProductDetail } from "./pages/ProductDetail";
 import { Cart } from "./pages/Cart";
+import { Checkout } from "./pages/Checkout";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import { Contact } from "./pages/Contact";
@@ -35,7 +36,7 @@ import { CampaignsPage } from "./admin/pages/CampaignsPage";
 function AppRoutes() {
   const location = useLocation();
   return (
-    <div key={`${location.pathname}${location.search}`} className="route-transition">
+    <div key={location.pathname} className="route-transition">
         <Routes>
           {/* Routes WITH Navbar */}
           <Route element={<MainLayout />}>
@@ -95,6 +96,7 @@ function AppRoutes() {
           </Route>
 
           {/* Routes WITHOUT Navbar */}
+          <Route path="/checkout" element={<Checkout />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
         </Routes>

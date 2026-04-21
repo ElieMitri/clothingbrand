@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { Download, Filter, Plus } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { DataTable, type DataTableColumn } from "../components/DataTable";
@@ -11,6 +12,7 @@ import type { OrderRow } from "../types";
 import { useToast } from "../hooks/useToast";
 import { useAdminLiveData } from "../hooks/useAdminLiveData";
 import { updateOrderStatusWithInventory, type OrderStatus } from "../../lib/orderLogic";
+import { db } from "../../lib/firebase";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -25,20 +27,9 @@ const fulfillmentTone: Record<OrderRow["fulfillmentStatus"], "success" | "warnin
   processing: "warning",
   unfulfilled: "neutral",
 };
-const shipmentTone: Record<
-  OrderRow["shipmentStatus"],
-  "neutral" | "warning" | "info" | "success" | "danger"
-> = {
-  pending: "neutral",
-  processing: "warning",
-  shipped: "info",
-  delivered: "success",
-  cancelled: "danger",
-};
-
 export function OrdersPage() {
   const { showToast } = useToast();
-  const { loading, orders, ordersRaw } = useAdminLiveData();
+  const { loading, orders, ordersRaw, productsRaw } = useAdminLiveData();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [page, setPage] = useState(1);
@@ -46,6 +37,8 @@ export function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [focusedOrder, setFocusedOrder] = useState<OrderRow | null>(null);
   const [savingStatusOrderId, setSavingStatusOrderId] = useState<string>("");
+  const [savingFulfillmentOrderId, setSavingFulfillmentOrderId] = useState<string>("");
+  const [deletingOrderId, setDeletingOrderId] = useState<string>("");
   const query = searchParams.get("q") || "";
 
   const allStatuses: OrderStatus[] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -65,6 +58,46 @@ export function OrdersPage() {
       return true;
     });
   }, [activeView, orders, query, statusFilter]);
+
+  const productNameById = useMemo(() => {
+    const byId = new Map<string, string>();
+    productsRaw.forEach((product) => {
+      const id = String(product.id || "").trim();
+      if (!id) return;
+      const name = String(product.name || "").trim();
+      if (!name) return;
+      byId.set(id, name);
+    });
+    return byId;
+  }, [productsRaw]);
+
+  const focusedRawOrder = useMemo(() => {
+    if (!focusedOrder) return null;
+    return ordersRaw.find((entry) => entry.id === focusedOrder.id) || null;
+  }, [focusedOrder, ordersRaw]);
+
+  const focusedOrderItems = useMemo(() => {
+    if (!focusedRawOrder || !Array.isArray(focusedRawOrder.items)) return [];
+    return focusedRawOrder.items.map((item, index) => {
+      const productId = String(item?.product_id || "").trim();
+      const quantity = Math.max(1, Number(item?.quantity || 0) || 1);
+      const unitPrice = Math.max(0, Number(item?.price ?? item?.unitPrice ?? 0));
+      const lineTotal = unitPrice * quantity;
+      const displayName = String(item?.product_name || "").trim() || productNameById.get(productId) || "Product";
+      const size = String(item?.size || "").trim();
+      const imageUrl = String(item?.product_image || "").trim();
+      return {
+        id: `${productId || "item"}-${index}`,
+        displayName,
+        productId,
+        size,
+        quantity,
+        unitPrice,
+        lineTotal,
+        imageUrl,
+      };
+    });
+  }, [focusedRawOrder, productNameById]);
 
   const columns: DataTableColumn<OrderRow>[] = [
     {
@@ -88,6 +121,11 @@ export function OrdersPage() {
           <p className="adm-muted">{row.email}</p>
         </div>
       ),
+    },
+    {
+      key: "location",
+      header: "Location",
+      render: (row) => row.location,
     },
     {
       key: "payment",
@@ -120,7 +158,18 @@ export function OrdersPage() {
       key: "fulfillment",
       header: "Fulfillment",
       render: (row) => (
-        <StatusBadge tone={fulfillmentTone[row.fulfillmentStatus]}>{row.fulfillmentStatus}</StatusBadge>
+        <button
+          type="button"
+          className="adm-button adm-button--ghost"
+          onClick={(event) => {
+            event.stopPropagation();
+            void toggleFulfillment(row.id);
+          }}
+          disabled={savingFulfillmentOrderId === row.id}
+          style={{ height: 32, padding: "0 10px", textTransform: "capitalize" }}
+        >
+          {savingFulfillmentOrderId === row.id ? "Saving..." : row.fulfillmentStatus}
+        </button>
       ),
     },
     {
@@ -169,6 +218,104 @@ export function OrdersPage() {
       });
     } finally {
       setSavingStatusOrderId("");
+    }
+  };
+
+  const toggleFulfillment = async (orderId: string) => {
+    const rawOrder = ordersRaw.find((entry) => entry.id === orderId);
+    if (!rawOrder) {
+      showToast({ title: "Order not found", description: "Could not resolve selected order." });
+      return;
+    }
+
+    const currentFulfillment =
+      rawOrder.fulfillment_status === "fulfilled" ||
+      rawOrder.fulfillment_status === "processing" ||
+      rawOrder.fulfillment_status === "unfulfilled"
+        ? rawOrder.fulfillment_status
+        : rawOrder.status === "shipped" || rawOrder.status === "delivered"
+        ? "fulfilled"
+        : rawOrder.status === "processing"
+        ? "processing"
+        : "unfulfilled";
+
+    const nextFulfillment =
+      currentFulfillment === "fulfilled" ? "unfulfilled" : "fulfilled";
+
+    setSavingFulfillmentOrderId(orderId);
+    try {
+      await updateDoc(doc(db, "orders", orderId), {
+        fulfillment_status: nextFulfillment,
+      });
+
+      const userId = String(rawOrder.user_id || "").trim();
+      if (userId) {
+        try {
+          await updateDoc(doc(db, "users", userId, "orders", orderId), {
+            fulfillment_status: nextFulfillment,
+          });
+        } catch {
+          // Skip if mirror doc is missing.
+        }
+      }
+
+      showToast({
+        title: "Fulfillment updated",
+        description: `Order marked as ${nextFulfillment}.`,
+      });
+    } catch (error) {
+      console.error("Failed to update fulfillment", error);
+      showToast({
+        title: "Fulfillment update failed",
+        description:
+          error instanceof Error ? error.message : "Could not update fulfillment.",
+      });
+    } finally {
+      setSavingFulfillmentOrderId("");
+    }
+  };
+
+  const deleteOrder = async (order: OrderRow) => {
+    const rawOrder = ordersRaw.find((entry) => entry.id === order.id);
+    if (!rawOrder) {
+      showToast({ title: "Order not found", description: "Could not resolve selected order." });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${order.orderNumber}? This permanently removes the order and updates revenue metrics.`
+    );
+    if (!confirmed) return;
+
+    setDeletingOrderId(order.id);
+    try {
+      await deleteDoc(doc(db, "orders", order.id));
+
+      const userId = String(rawOrder.user_id || "").trim();
+      if (userId) {
+        try {
+          await deleteDoc(doc(db, "users", userId, "orders", order.id));
+        } catch {
+          // Skip silently if user-order mirror doesn't exist.
+        }
+      }
+
+      if (focusedOrder?.id === order.id) {
+        setFocusedOrder(null);
+      }
+
+      showToast({
+        title: "Order deleted",
+        description: `${order.orderNumber} was removed successfully.`,
+      });
+    } catch (error) {
+      console.error("Failed to delete order", error);
+      showToast({
+        title: "Delete failed",
+        description: error instanceof Error ? error.message : "Could not delete order.",
+      });
+    } finally {
+      setDeletingOrderId("");
     }
   };
 
@@ -240,7 +387,7 @@ export function OrdersPage() {
         </div>
       ) : null}
 
-      <section className="adm-card adm-panel">
+      <section className="adm-card adm-panel adm-orders-panel">
         {loading ? <p className="adm-muted">Loading orders from Firestore...</p> : null}
         {!loading && filteredRows.length === 0 ? (
           <EmptyState
@@ -261,16 +408,18 @@ export function OrdersPage() {
             onRowClick={setFocusedOrder}
             rowActions={[
               {
-                label: "Archive",
-                onClick: (row) => showToast({ title: `${row.orderNumber} archived` }),
-              },
-              {
                 label: "Send invoice",
                 onClick: (row) =>
                   showToast({
                     title: "Invoice sent",
                     description: `Invoice sent to ${row.email}.`,
                   }),
+              },
+              {
+                label: "Delete order",
+                onClick: (row) => {
+                  void deleteOrder(row);
+                },
               },
             ]}
           />
@@ -295,6 +444,10 @@ export function OrdersPage() {
             <div>
               <dt>Email</dt>
               <dd>{focusedOrder.email}</dd>
+            </div>
+            <div>
+              <dt>Location</dt>
+              <dd>{focusedOrder.location}</dd>
             </div>
             <div>
               <dt>Payment</dt>
@@ -327,6 +480,21 @@ export function OrdersPage() {
                 <StatusBadge tone={fulfillmentTone[focusedOrder.fulfillmentStatus]}>
                   {focusedOrder.fulfillmentStatus}
                 </StatusBadge>
+                <button
+                  type="button"
+                  className="adm-button adm-button--ghost"
+                  onClick={() => {
+                    void toggleFulfillment(focusedOrder.id);
+                  }}
+                  disabled={savingFulfillmentOrderId === focusedOrder.id}
+                  style={{ marginTop: 8 }}
+                >
+                  {savingFulfillmentOrderId === focusedOrder.id
+                    ? "Saving..."
+                    : focusedOrder.fulfillmentStatus === "fulfilled"
+                    ? "Mark unfulfilled"
+                    : "Mark fulfilled"}
+                </button>
               </dd>
             </div>
             <div>
@@ -334,6 +502,38 @@ export function OrdersPage() {
               <dd>{money.format(focusedOrder.total)}</dd>
             </div>
           </dl>
+          <section>
+            <h4 style={{ margin: "0 0 8px" }}>Order items</h4>
+            {focusedOrderItems.length === 0 ? (
+              <p className="adm-muted">No items were found for this order.</p>
+            ) : (
+              <div className="adm-mini-table">
+                {focusedOrderItems.map((item) => (
+                  <div key={item.id} className="adm-mini-table__row">
+                    <div className="adm-product-cell">
+                      {item.imageUrl ? (
+                        <img src={item.imageUrl} alt={item.displayName} />
+                      ) : null}
+                      <div>
+                        <p style={{ margin: 0, fontWeight: 600 }}>{item.displayName}</p>
+                        <p className="adm-muted">
+                          {item.productId ? `ID: ${item.productId}` : "ID: -"}
+                          {" · "}
+                          {item.size ? `Size: ${item.size}` : "Size: -"}
+                          {" · "}
+                          Qty {item.quantity}
+                        </p>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <p className="adm-muted">{money.format(item.unitPrice)} each</p>
+                      <p style={{ margin: 0, fontWeight: 700 }}>{money.format(item.lineTotal)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
           <button
             type="button"
             className="adm-button adm-button--primary"
@@ -345,6 +545,16 @@ export function OrdersPage() {
             }
           >
             Send update
+          </button>
+          <button
+            type="button"
+            className="adm-button adm-button--ghost"
+            onClick={() => {
+              void deleteOrder(focusedOrder);
+            }}
+            disabled={deletingOrderId === focusedOrder.id}
+          >
+            {deletingOrderId === focusedOrder.id ? "Deleting..." : "Delete order"}
           </button>
           </aside>
         </>

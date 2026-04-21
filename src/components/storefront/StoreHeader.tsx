@@ -274,7 +274,7 @@ export function StoreHeader() {
     >
       <div className="bg-gradient-to-r from-[var(--sf-accent)] via-[#4f7eb4] to-[var(--sf-accent)] transition-all duration-300">
         <p className="store-container py-2 text-center text-xs font-semibold tracking-[0.08em] text-white uppercase">
-          🇱🇧 $4 delivery charge | Shop Now 🔥
+          🇱🇧 Free shipping on orders over $120 | Shop Now 🔥
 
         </p>
       </div>

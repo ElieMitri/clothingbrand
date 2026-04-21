@@ -33,6 +33,7 @@ export interface OrderRow {
   orderNumber: string;
   customer: string;
   email: string;
+  location: string;
   date: string;
   paymentStatus: OrderPaymentStatus;
   fulfillmentStatus: OrderFulfillmentStatus;

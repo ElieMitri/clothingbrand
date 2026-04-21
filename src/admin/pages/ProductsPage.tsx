@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { addDoc, collection, doc, Timestamp, updateDoc, writeBatch } from "firebase/firestore";
-import { Link2, Plus, Save } from "lucide-react";
+import { Link2, Plus, Save, Search, X } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { db } from "../../lib/firebase";
 import { DataTable, type DataTableColumn } from "../components/DataTable";
@@ -123,21 +123,41 @@ export function ProductsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [importUrl, setImportUrl] = useState("");
   const [importingFromUrl, setImportingFromUrl] = useState(false);
+  const [importQueue, setImportQueue] = useState<ImportedLinkProduct[]>([]);
+  const [selectedImportIndexes, setSelectedImportIndexes] = useState<number[]>([]);
+  const [importQueueSourceUrl, setImportQueueSourceUrl] = useState("");
+  const [committingImportSelection, setCommittingImportSelection] = useState(false);
   const [focusedProductId, setFocusedProductId] = useState<string>("");
   const [editor, setEditor] = useState<ProductEditorState>(emptyEditor);
   const query = searchParams.get("q") || "";
 
   const filteredRows = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
     return products.filter((product) => {
       if (activeView === "active" && product.status !== "active") return false;
       if (activeView === "draft" && product.status !== "draft") return false;
       if (activeView === "low" && product.inventory > 15) return false;
-      if (query && !`${product.title} ${product.sku}`.toLowerCase().includes(query.toLowerCase())) {
+      if (!normalizedQuery) return true;
+
+      const raw = productsRaw.find((entry) => entry.id === product.id);
+      const haystack = [
+        product.title,
+        product.sku,
+        product.category,
+        raw?.brand,
+        raw?.subcategory,
+        raw?.product_type,
+      ]
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter(Boolean)
+        .join(" ");
+
+      if (!haystack.includes(normalizedQuery)) {
         return false;
       }
       return true;
     });
-  }, [activeView, products, query]);
+  }, [activeView, products, productsRaw, query]);
 
   useEffect(() => {
     if (!focusedProductId && products.length > 0) {
@@ -315,9 +335,47 @@ export function ProductsPage() {
         throw new Error("No products were detected at this URL.");
       }
 
+      setImportQueue(importedProducts);
+      setSelectedImportIndexes(importedProducts.map((_, index) => index));
+      setImportQueueSourceUrl(sourceUrl);
+      setImportUrl(sourceUrl);
+      showToast({
+        title: "Products ready to import",
+        description: `Choose which ${importedProducts.length} item${
+          importedProducts.length === 1 ? "" : "s"
+        } to import.`,
+      });
+    } catch (error) {
+      console.error("Import from URL failed", error);
+      showToast({
+        title: "Import failed",
+        description: error instanceof Error ? error.message : "Could not import from this URL.",
+      });
+    } finally {
+      setImportingFromUrl(false);
+    }
+  };
+
+  const commitSelectedImports = async () => {
+    if (selectedImportIndexes.length === 0) {
+      showToast({ title: "Select at least one product to import" });
+      return;
+    }
+
+    const selectedEntries = selectedImportIndexes
+      .map((index) => importQueue[index])
+      .filter((entry): entry is ImportedLinkProduct => Boolean(entry));
+
+    if (selectedEntries.length === 0) {
+      showToast({ title: "Selected products are no longer available in preview" });
+      return;
+    }
+
+    setCommittingImportSelection(true);
+    try {
       let committed = 0;
-      for (let index = 0; index < importedProducts.length; index += 400) {
-        const chunk = importedProducts.slice(index, index + 400);
+      for (let index = 0; index < selectedEntries.length; index += 400) {
+        const chunk = selectedEntries.slice(index, index + 400);
         const batch = writeBatch(db);
         chunk.forEach((entry) => {
           const name = String(entry.name || "").trim();
@@ -350,8 +408,10 @@ export function ProductsPage() {
             sold_out: false,
             sold_out_sizes: [],
             price: Number.isFinite(price) ? Math.max(0, price) : 0,
-            original_price: Number.isFinite(compareAt) ? Math.max(compareAt, price) : Math.max(0, price),
-            source_url: String(entry.source_url || sourceUrl).trim(),
+            original_price: Number.isFinite(compareAt)
+              ? Math.max(compareAt, price)
+              : Math.max(0, price),
+            source_url: String(entry.source_url || importQueueSourceUrl).trim(),
             is_featured: false,
             is_new_arrival: false,
             created_at: Timestamp.now(),
@@ -362,19 +422,23 @@ export function ProductsPage() {
         await batch.commit();
       }
 
+      setImportQueue([]);
+      setSelectedImportIndexes([]);
+      setImportQueueSourceUrl("");
       setImportUrl("");
       showToast({
         title: "Import complete",
-        description: `${committed} product${committed === 1 ? "" : "s"} imported from link.`,
+        description: `${committed} product${committed === 1 ? "" : "s"} imported.`,
       });
     } catch (error) {
-      console.error("Import from URL failed", error);
+      console.error("Import commit failed", error);
       showToast({
         title: "Import failed",
-        description: error instanceof Error ? error.message : "Could not import from this URL.",
+        description:
+          error instanceof Error ? error.message : "Could not import selected products.",
       });
     } finally {
-      setImportingFromUrl(false);
+      setCommittingImportSelection(false);
     }
   };
 
@@ -428,19 +492,36 @@ export function ProductsPage() {
       />
 
       <FilterBar savedViews={productSavedViews} activeView={activeView} onViewChange={setActiveView}>
-        <input
-          value={query}
-          onChange={(event) => {
-            const value = event.target.value;
-            const next = new URLSearchParams(searchParams);
-            if (value.trim()) next.set("q", value);
-            else next.delete("q");
-            setSearchParams(next, { replace: true });
-          }}
-          className="adm-input"
-          placeholder="Search by title or SKU"
-          aria-label="Search products"
-        />
+        <label className="adm-inline-field" style={{ minWidth: 320, flex: 1 }}>
+          <Search size={15} />
+          <input
+            value={query}
+            onChange={(event) => {
+              const value = event.target.value;
+              const next = new URLSearchParams(searchParams);
+              if (value.trim()) next.set("q", value);
+              else next.delete("q");
+              setSearchParams(next, { replace: true });
+            }}
+            placeholder="Search title, SKU, brand, category..."
+            aria-label="Search products"
+          />
+          {query ? (
+            <button
+              type="button"
+              className="adm-icon-button"
+              style={{ width: 28, height: 28 }}
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.delete("q");
+                setSearchParams(next, { replace: true });
+              }}
+              aria-label="Clear product search"
+            >
+              <X size={14} />
+            </button>
+          ) : null}
+        </label>
       </FilterBar>
 
       <section className="adm-card adm-panel">
@@ -479,6 +560,81 @@ export function ProductsPage() {
           </label>
         </div>
       </section>
+
+      {importQueue.length > 0 ? (
+        <section className="adm-card adm-panel">
+          <header className="adm-panel__header">
+            <h3>Choose products to import</h3>
+            <span className="adm-muted">
+              {selectedImportIndexes.length}/{importQueue.length} selected
+            </span>
+          </header>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+            <button
+              type="button"
+              className="adm-button adm-button--ghost"
+              onClick={() => setSelectedImportIndexes(importQueue.map((_, index) => index))}
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              className="adm-button adm-button--ghost"
+              onClick={() => setSelectedImportIndexes([])}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="adm-button adm-button--primary"
+              onClick={commitSelectedImports}
+              disabled={committingImportSelection}
+            >
+              {committingImportSelection ? "Importing..." : "Import selected"}
+            </button>
+          </div>
+          <div className="adm-table-wrap">
+            <table className="adm-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 40 }} />
+                  <th>Product</th>
+                  <th>Brand</th>
+                  <th>Category</th>
+                  <th>Price</th>
+                </tr>
+              </thead>
+              <tbody>
+                {importQueue.map((entry, index) => {
+                  const selected = selectedImportIndexes.includes(index);
+                  return (
+                    <tr key={`${entry.name || "import"}-${index}`}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() =>
+                            setSelectedImportIndexes((prev) =>
+                              prev.includes(index)
+                                ? prev.filter((value) => value !== index)
+                                : [...prev, index]
+                            )
+                          }
+                          aria-label={`Select imported product ${entry.name || index + 1}`}
+                        />
+                      </td>
+                      <td>{String(entry.name || "Untitled product")}</td>
+                      <td>{String(entry.brand || "-")}</td>
+                      <td>{String(entry.category || "-")}</td>
+                      <td>{money.format(Number(entry.price || 0))}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
 
       {selectedIds.length > 0 ? (
         <div className="adm-bulk-toolbar" role="status">
