@@ -90,6 +90,30 @@ export function ProductDetail() {
   }, [product]);
 
   const compareAt = product ? getCompareAtPrice(product) : undefined;
+  const descriptionContent = useMemo(() => {
+    const fallback =
+      "Engineered for movement, comfort, and all-day performance.";
+    const raw = String(product?.description || "").trim();
+    if (!raw) return { lead: fallback, bullets: [] as string[] };
+
+    const compact = raw.replace(/\s+/g, " ").trim();
+    const bulletCandidates = compact
+      .split(/[✔✅•]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    if (bulletCandidates.length <= 1) {
+      return { lead: compact, bullets: [] as string[] };
+    }
+
+    const lead = bulletCandidates[0];
+    const bullets = bulletCandidates
+      .slice(1)
+      .map((entry) => entry.replace(/^[\-–—|:;,.\s]+/, "").trim())
+      .filter(Boolean);
+
+    return { lead: lead || fallback, bullets };
+  }, [product?.description]);
 
   const handleAddToCart = async (buyNow = false) => {
     if (!product) return;
@@ -241,8 +265,18 @@ export function ProductDetail() {
 
             <div className="rounded-[12px] border border-[var(--sf-line)] bg-[var(--sf-bg-soft)] p-4">
               <p className="text-sm leading-6 text-[var(--sf-text-muted)]">
-                {product.description || "Engineered for movement, comfort, and all-day performance."}
+                {descriptionContent.lead}
               </p>
+              {descriptionContent.bullets.length > 0 ? (
+                <ul className="mt-3 space-y-1 text-sm leading-6 text-[var(--sf-text-muted)]">
+                  {descriptionContent.bullets.map((item) => (
+                    <li key={item} className="flex items-start gap-2">
+                      <span className="mt-2 h-1.5 w-1.5 rounded-full bg-[var(--sf-accent)]" />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
 
             <div className="grid gap-2">

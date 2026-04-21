@@ -2159,7 +2159,7 @@ export function AdminDashboard() {
       cost_price: 0,
       original_price: Number(item.original_price || item.price || 0),
       commission_percentage: 0,
-      description: item.description || "",
+      description: normalizeImportedDescription(item.description),
       image_url: item.image_url || item.images?.[0] || "",
       category,
       subcategory: "",
@@ -2197,6 +2197,47 @@ export function AdminDashboard() {
     setSelectedImportedIndices([]);
   };
 
+  const normalizeImportedDescription = (value?: string) => {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+
+    const withoutHtml = raw
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&");
+
+    const normalized = withoutHtml
+      .replace(/[✔✅]+/g, " | ")
+      .replace(/[\u2022•]+/g, " | ")
+      .replace(/\s*\|\s*/g, " | ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const parts = normalized
+      .split(/\s*\|\s*/)
+      .map((entry) => entry.trim().replace(/^[-–—]+\s*/, ""))
+      .filter(Boolean);
+
+    const uniqueParts: string[] = [];
+    const seen = new Set<string>();
+    parts.forEach((entry) => {
+      const key = entry.toLowerCase().replace(/[^\w\s]/g, "").trim();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      uniqueParts.push(entry);
+    });
+
+    const toSentence = (entry: string) => {
+      const cleaned = entry.replace(/\s+/g, " ").trim();
+      if (!cleaned) return "";
+      return /[.!?]$/.test(cleaned) ? cleaned : `${cleaned}.`;
+    };
+
+    return uniqueParts.map(toSentence).filter(Boolean).join(" ");
+  };
+
   const importProductsFromUrl = async () => {
     const normalized = importUrl.trim();
     if (!normalized) {
@@ -2224,7 +2265,10 @@ export function AdminDashboard() {
       }
 
       const parsedProducts = Array.isArray(payload?.products)
-        ? (payload.products as LinkImportProduct[])
+        ? (payload.products as LinkImportProduct[]).map((item) => ({
+            ...item,
+            description: normalizeImportedDescription(item.description),
+          }))
         : [];
 
       if (parsedProducts.length === 0) {
@@ -2313,7 +2357,7 @@ export function AdminDashboard() {
           price,
           cost_price: 0,
           original_price: originalPrice,
-          description: String(item.description || "").trim(),
+          description: normalizeImportedDescription(item.description),
           image_url: imageUrl,
           category,
           subcategory: null,
