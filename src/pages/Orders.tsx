@@ -48,7 +48,7 @@ interface Order {
   user_id?: string;
 }
 
-const DELIVERY_CHARGE = 0;
+const DELIVERY_CHARGE = 4;
 
 export function Orders() {
   const { user } = useAuth();

@@ -164,7 +164,7 @@ export function Cart() {
     () => items.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
     [items]
   );
-  const shipping = subtotal > 120 || items.length === 0 ? 0 : 8;
+  const shipping = items.length === 0 ? 0 : 4;
   const total = subtotal + shipping;
 
   if (loading) {
