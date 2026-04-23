@@ -272,6 +272,7 @@
 .adm-page {
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 
 .adm-sidebar-backdrop {
@@ -403,6 +404,7 @@
 
 .adm-panel {
   padding: 16px;
+  min-width: 0;
 }
 
 .adm-orders-panel {
@@ -515,11 +517,16 @@
 }
 
 .adm-table-wrap {
+  width: 100%;
+  max-width: 100%;
   overflow: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 
 .adm-table {
   width: 100%;
+  min-width: 760px;
   border-collapse: collapse;
 }
 
@@ -1223,6 +1230,11 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.adm-product-cell > div {
+  min-width: 0;
 }
 
 .adm-product-cell img {
@@ -1328,10 +1340,21 @@
 
   .adm-content {
     padding: 16px;
+    min-width: 0;
+    overflow-x: hidden;
   }
 
   .adm-page-header__main {
     flex-direction: column;
+  }
+
+  .adm-page-header__actions {
+    width: 100%;
+  }
+
+  .adm-page-header__actions .adm-button {
+    width: 100%;
+    justify-content: center;
   }
 
   .adm-grid--kpi,
@@ -1352,11 +1375,58 @@
 
   .adm-orders-panel .adm-table-wrap {
     min-height: calc(100vh - 260px);
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   .adm-order-items__header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .adm-filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .adm-filter-bar__views,
+  .adm-filter-bar__controls {
+    width: 100%;
+  }
+
+  .adm-filter-bar__controls .adm-input,
+  .adm-filter-bar__controls .adm-inline-field {
+    width: 100%;
+  }
+
+  .adm-bulk-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .adm-bulk-toolbar > div {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .adm-panel__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .adm-mini-table__row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .adm-product-cell {
+    align-items: flex-start;
+  }
+
+  .adm-order-item__money {
+    text-align: left;
+    width: 100%;
   }
 
   .adm-order-product-picker__row {
@@ -1366,5 +1436,14 @@
 
   .adm-order-product-picker__actions {
     justify-items: stretch;
+  }
+
+  .adm-table {
+    min-width: 680px;
+  }
+
+  .adm-table th,
+  .adm-table td {
+    white-space: nowrap;
   }
 }
