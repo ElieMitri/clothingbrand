@@ -356,15 +356,7 @@ export function OrdersPage() {
 
   const clearSelection = () => setSelectedIds([]);
 
-  const escapeHtml = (value: unknown) =>
-    String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-
-  const downloadOrderReceipt = (row: OrderRow) => {
+  const downloadOrderReceipt = async (row: OrderRow) => {
     const rawOrder = ordersRaw.find((entry) => entry.id === row.id);
     if (!rawOrder) {
       showToast({ title: "Order not found", description: "Could not load order details for receipt." });
@@ -391,190 +383,326 @@ export function OrdersPage() {
         ? rawOrder.created_at.toDate().toLocaleString()
         : row.date || "-";
 
-    const itemsHtml =
-      items.length === 0
-        ? `<tr><td colspan="3" class="muted center">No items</td></tr>`
-        : items
-            .map((item) => {
-              const name = escapeHtml(String(item?.product_name || "Product").trim() || "Product");
-              const qty = Math.max(1, Number(item?.quantity || 1));
-              const unit = Math.max(0, Number(item?.price ?? item?.unitPrice ?? 0));
-              const line = unit * qty;
-              return `
-                <tr>
-                  <td>${name}</td>
-                  <td>${qty}</td>
-                  <td class="right">${money.format(line)}</td>
-                </tr>
-              `;
-            })
-            .join("");
-
-    const logoUrl = `${window.location.origin}/logo-modified.png`;
-
-    const receiptHtml = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Receipt ${escapeHtml(row.orderNumber)}</title>
-          <style>
-            body {
-              margin: 0;
-              padding: 24px;
-              background: #f5f7fb;
-              font-family: "Helvetica Neue", Arial, sans-serif;
-              color: #0f172a;
-            }
-            .receipt {
-              width: min(420px, 100%);
-              margin: 0 auto;
-              background: #fff;
-              border: 1px solid #e2e8f0;
-              border-radius: 12px;
-              padding: 18px;
-              box-shadow: 0 14px 36px rgba(15, 23, 42, 0.1);
-            }
-            .logo {
-              width: 92px;
-              height: auto;
-              display: block;
-              margin: 0 auto 10px;
-            }
-            h1 {
-              margin: 0;
-              text-align: center;
-              font-size: 18px;
-              letter-spacing: 0.4px;
-            }
-            .sub {
-              margin: 4px 0 12px;
-              text-align: center;
-              color: #64748b;
-              font-size: 12px;
-            }
-            .sep {
-              border-top: 1px dashed #cbd5e1;
-              margin: 12px 0;
-            }
-            .row {
-              display: flex;
-              justify-content: space-between;
-              gap: 12px;
-              margin: 4px 0;
-              font-size: 13px;
-            }
-            .label {
-              color: #64748b;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 8px;
-              font-size: 12px;
-            }
-            th, td {
-              padding: 6px 4px;
-              border-bottom: 1px solid #e2e8f0;
-              text-align: left;
-            }
-            th {
-              color: #64748b;
-              font-weight: 600;
-            }
-            .right {
-              text-align: right;
-            }
-            .center {
-              text-align: center;
-            }
-            .muted {
-              color: #94a3b8;
-            }
-            .totals .row {
-              margin: 6px 0;
-            }
-            .totals .grand {
-              font-weight: 700;
-              font-size: 15px;
-            }
-            @media print {
-              body {
-                background: #fff;
-                padding: 0;
-              }
-              .receipt {
-                border: 0;
-                border-radius: 0;
-                box-shadow: none;
-                width: 100%;
-                margin: 0;
-              }
-            }
-          </style>
-        </head>
-        <body>
-          <article class="receipt">
-            <img src="${logoUrl}" alt="Logo" class="logo" />
-            <h1>Order Receipt</h1>
-            <p class="sub">Thank you for your order</p>
-
-            <div class="row"><span class="label">Order #</span><strong>${escapeHtml(
-              row.orderNumber
-            )}</strong></div>
-            <div class="row"><span class="label">Date</span><span>${escapeHtml(orderDate)}</span></div>
-            <div class="row"><span class="label">Payment</span><span>${escapeHtml(
-              row.paymentStatus
-            )}</span></div>
-
-            <div class="sep"></div>
-
-            <div class="row"><span class="label">Name</span><span>${escapeHtml(customerName)}</span></div>
-            <div class="row"><span class="label">Email</span><span>${escapeHtml(email || "-")}</span></div>
-            <div class="row"><span class="label">Phone</span><span>${escapeHtml(phone)}</span></div>
-
-            <div class="sep"></div>
-
-            <table>
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th>Qty</th>
-                  <th class="right">Total</th>
-                </tr>
-              </thead>
-              <tbody>${itemsHtml}</tbody>
-            </table>
-
-            <div class="sep"></div>
-
-            <div class="totals">
-              <div class="row"><span class="label">Subtotal</span><span>${money.format(subtotal)}</span></div>
-              <div class="row"><span class="label">Shipping</span><span>${money.format(shipping)}</span></div>
-              <div class="row"><span class="label">Tax</span><span>${money.format(tax)}</span></div>
-              <div class="row grand"><span>Total</span><span>${money.format(total)}</span></div>
-            </div>
-          </article>
-        </body>
-      </html>
-    `;
+    const loadImage = (src: string) =>
+      new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.decoding = "async";
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("Image load failed"));
+        image.src = src;
+      });
 
     const fileNameSafeOrder = String(row.orderNumber || row.id || "receipt")
       .replace(/[^a-zA-Z0-9_-]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .toLowerCase();
-    const blob = new Blob([receiptHtml], { type: "text/html;charset=utf-8" });
+
+    const width = 1080;
+    const height = 1920; // 9:16 portrait
+    const horizontalPadding = 64;
+    const cardPadding = 40;
+    const rowHeight = 42;
+    const itemsCount = Math.max(1, items.length);
+    const maxItemsToRender = 14;
+    const visibleItems = items.slice(0, maxItemsToRender);
+    const hiddenItemsCount = Math.max(0, items.length - visibleItems.length);
+    const estimatedRows = itemsCount + (hiddenItemsCount > 0 ? 1 : 0);
+    const cardHeight = Math.min(height - 80, 740 + estimatedRows * rowHeight);
+    const canvasHeight = height;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = canvasHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      showToast({ title: "Receipt failed", description: "Could not generate receipt image." });
+      return;
+    }
+
+    const drawRoundedRect = (x: number, y: number, w: number, h: number, r: number) => {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    };
+
+    const pageGradient = ctx.createLinearGradient(0, 0, 0, canvasHeight);
+    pageGradient.addColorStop(0, "#eef3ff");
+    pageGradient.addColorStop(1, "#f7f9fc");
+    ctx.fillStyle = pageGradient;
+    ctx.fillRect(0, 0, width, canvasHeight);
+
+    ctx.globalAlpha = 0.3;
+    ctx.fillStyle = "#dbe7ff";
+    ctx.beginPath();
+    ctx.arc(width - 120, 140, 220, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(120, canvasHeight - 140, 180, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    const cardX = 34;
+    const cardY = 24;
+    const cardWidth = width - cardX * 2;
+    const fullCardHeight = height - cardY * 2;
+
+    drawRoundedRect(cardX + 6, cardY + 8, cardWidth, fullCardHeight, 28);
+    ctx.fillStyle = "rgba(15, 23, 42, 0.1)";
+    ctx.fill();
+
+    drawRoundedRect(cardX, cardY, cardWidth, fullCardHeight, 28);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.strokeStyle = "#d8e2f2";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    const contentX = cardX + 42;
+    const contentRightX = cardX + cardWidth - 42;
+    const contentWidth = contentRightX - contentX;
+    const truncateByWidth = (value: string, maxWidth: number, font: string) => {
+      ctx.font = font;
+      if (ctx.measureText(value).width <= maxWidth) return value;
+      let next = value;
+      while (next.length > 1 && ctx.measureText(`${next}…`).width > maxWidth) {
+        next = next.slice(0, -1);
+      }
+      return `${next}…`;
+    };
+
+    const headerHeight = 280;
+    drawRoundedRect(cardX + 16, cardY + 16, cardWidth - 32, headerHeight, 22);
+    const headerGradient = ctx.createLinearGradient(cardX, cardY, cardX + cardWidth, cardY + headerHeight);
+    headerGradient.addColorStop(0, "#0f172a");
+    headerGradient.addColorStop(1, "#1d4ed8");
+    ctx.fillStyle = headerGradient;
+    ctx.fill();
+
+    const headerInnerTop = cardY + 16;
+    const headerBottomY = cardY + 16 + headerHeight;
+    const headerSubtitleY = headerBottomY - 24;
+    const headerTitleY = headerSubtitleY - 38;
+    const logoPanelTop = headerInnerTop + 22;
+    const logoPanelBottomLimit = headerTitleY - 26;
+    const logoPanelMaxHeight = Math.max(48, logoPanelBottomLimit - logoPanelTop);
+    const logoPanelMaxWidth = 330;
+    let logoBottomY = logoPanelTop;
+    try {
+      const logoResponse = await fetch("/logo-modified.png", { cache: "no-store" });
+      if (logoResponse.ok) {
+        const logoBlob = await logoResponse.blob();
+        const logoObjectUrl = URL.createObjectURL(logoBlob);
+        try {
+          const logoImage = await loadImage(logoObjectUrl);
+          const naturalWidth = Math.max(1, logoImage.naturalWidth);
+          const naturalHeight = Math.max(1, logoImage.naturalHeight);
+          const panelPadX = 20;
+          const panelPadY = 14;
+          const maxInnerWidth = Math.max(40, logoPanelMaxWidth - panelPadX * 2);
+          const maxInnerHeight = Math.max(28, logoPanelMaxHeight - panelPadY * 2);
+          const scale = Math.min(maxInnerWidth / naturalWidth, maxInnerHeight / naturalHeight);
+          const logoTargetWidth = Math.max(88, Math.round(naturalWidth * scale));
+          const logoTargetHeight = Math.max(26, Math.round(naturalHeight * scale));
+          const panelWidth = logoTargetWidth + panelPadX * 2;
+          const panelHeight = logoTargetHeight + panelPadY * 2;
+          const panelX = Math.round((width - panelWidth) / 2);
+          const panelY = logoPanelTop;
+          const logoX = panelX + panelPadX;
+          const logoY = panelY + panelPadY;
+          ctx.fillStyle = "#ffffff";
+          drawRoundedRect(panelX, panelY, panelWidth, panelHeight, 16);
+          ctx.fill();
+          ctx.drawImage(logoImage, logoX, logoY, logoTargetWidth, logoTargetHeight);
+          logoBottomY = panelY + panelHeight;
+        } finally {
+          URL.revokeObjectURL(logoObjectUrl);
+        }
+      }
+    } catch {
+      // Continue without logo if loading fails.
+    }
+
+    const safeTitleY = Math.max(headerTitleY, logoBottomY + 32) + 18;
+    const safeSubtitleY = Math.max(headerSubtitleY, safeTitleY + 34) + 18;
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "700 54px Helvetica Neue, Arial, sans-serif";
+    ctx.fillText("ORDER RECEIPT", width / 2, safeTitleY);
+    ctx.font = "500 24px Helvetica Neue, Arial, sans-serif";
+    ctx.fillStyle = "#bfdbfe";
+
+    const topSectionY = cardY + headerHeight + 44;
+    const drawLabelValue = (x: number, y: number, label: string, value: string, isStrong?: boolean) => {
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#64748b";
+      ctx.font = "700 21px Helvetica Neue, Arial, sans-serif";
+      ctx.fillText(label, x, y);
+      ctx.fillStyle = "#0f172a";
+      ctx.font = isStrong ? "700 30px Helvetica Neue, Arial, sans-serif" : "500 24px Helvetica Neue, Arial, sans-serif";
+      const shown = truncateByWidth(value, contentWidth / 2 - 20, ctx.font);
+      ctx.fillText(shown, x, y + 34);
+    };
+
+    const leftColX = contentX;
+    const rightColX = contentX + contentWidth / 2 + 10;
+    drawLabelValue(leftColX, topSectionY, "Order #", String(row.orderNumber || "-"), true);
+    drawLabelValue(rightColX, topSectionY, "Date", String(orderDate || "-"));
+    drawLabelValue(leftColX, topSectionY + 90, "Payment", String(row.paymentStatus || "-"));
+    drawLabelValue(rightColX, topSectionY + 90, "Phone", phone || "-");
+
+    const customerBoxY = topSectionY + 192;
+    drawRoundedRect(contentX, customerBoxY, contentWidth, 132, 16);
+    ctx.fillStyle = "#f8fbff";
+    ctx.fill();
+    ctx.strokeStyle = "#dbe6f5";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#64748b";
+    ctx.font = "700 20px Helvetica Neue, Arial, sans-serif";
+    ctx.fillText("Customer", contentX + 20, customerBoxY + 34);
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "700 30px Helvetica Neue, Arial, sans-serif";
+    ctx.fillText(truncateByWidth(customerName || "-", contentWidth - 40, ctx.font), contentX + 20, customerBoxY + 74);
+    ctx.font = "500 22px Helvetica Neue, Arial, sans-serif";
+    ctx.fillStyle = "#334155";
+    ctx.fillText(truncateByWidth(email || "-", contentWidth - 40, ctx.font), contentX + 20, customerBoxY + 108);
+
+    const footerHeight = 74;
+    const totalsHeight = 190;
+    const totalsY = cardY + fullCardHeight - footerHeight - totalsHeight - 24;
+    const tableY = customerBoxY + 156;
+    const tableBottomY = totalsY - 20;
+
+    drawRoundedRect(contentX, tableY, contentWidth, tableBottomY - tableY, 16);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.strokeStyle = "#e2e8f0";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    const tableInnerX = contentX + 18;
+    const tableInnerRightX = contentRightX - 18;
+    const qtyColX = tableInnerRightX - 150;
+    const totalColX = tableInnerRightX;
+    let tableCursorY = tableY + 36;
+    ctx.fillStyle = "#64748b";
+    ctx.textAlign = "left";
+    ctx.font = "700 20px Helvetica Neue, Arial, sans-serif";
+    ctx.fillText("Item", tableInnerX, tableCursorY);
+    ctx.textAlign = "right";
+    ctx.fillText("Qty", qtyColX, tableCursorY);
+    ctx.fillText("Total", totalColX, tableCursorY);
+    tableCursorY += 16;
+    ctx.strokeStyle = "#dfe6f2";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(tableInnerX, tableCursorY);
+    ctx.lineTo(tableInnerRightX, tableCursorY);
+    ctx.stroke();
+    tableCursorY += 30;
+
+    const availableRows = Math.max(1, Math.floor((tableBottomY - tableCursorY - 20) / rowHeight));
+    const tableItems = visibleItems.slice(0, availableRows);
+    const clippedCount = Math.max(0, items.length - tableItems.length);
+
+    if (tableItems.length === 0) {
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "500 22px Helvetica Neue, Arial, sans-serif";
+      ctx.fillText("No items", width / 2, tableCursorY + 28);
+    } else {
+      tableItems.forEach((item, index) => {
+        const qty = Math.max(1, Number(item?.quantity || 1));
+        const unit = Math.max(0, Number(item?.price ?? item?.unitPrice ?? 0));
+        const lineTotal = unit * qty;
+        const rowY = tableCursorY + index * rowHeight;
+
+        if (index % 2 === 1) {
+          ctx.fillStyle = "#f8fafc";
+          ctx.fillRect(tableInnerX - 8, rowY - 24, tableInnerRightX - tableInnerX + 16, rowHeight - 6);
+        }
+
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#0f172a";
+        ctx.font = "500 22px Helvetica Neue, Arial, sans-serif";
+        const name = truncateByWidth(String(item?.product_name || "Product").trim() || "Product", qtyColX - tableInnerX - 20, ctx.font);
+        ctx.fillText(name, tableInnerX, rowY);
+        ctx.textAlign = "right";
+        ctx.fillText(String(qty), qtyColX, rowY);
+        ctx.fillText(money.format(lineTotal), totalColX, rowY);
+      });
+
+      if (clippedCount > 0) {
+        const moreY = tableCursorY + tableItems.length * rowHeight + 4;
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#94a3b8";
+        ctx.font = "500 20px Helvetica Neue, Arial, sans-serif";
+        ctx.fillText(`+ ${clippedCount} more item${clippedCount === 1 ? "" : "s"}`, tableInnerX, moreY);
+      }
+    }
+
+    drawRoundedRect(contentX, totalsY, contentWidth, totalsHeight, 16);
+    ctx.fillStyle = "#f8fbff";
+    ctx.fill();
+    ctx.strokeStyle = "#dbe6f5";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    const totalsRow = (label: string, value: string, y: number, strong?: boolean) => {
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#64748b";
+      ctx.font = strong ? "700 28px Helvetica Neue, Arial, sans-serif" : "600 23px Helvetica Neue, Arial, sans-serif";
+      ctx.fillText(label, contentX + 20, y);
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#0f172a";
+      ctx.font = strong ? "700 36px Helvetica Neue, Arial, sans-serif" : "600 26px Helvetica Neue, Arial, sans-serif";
+      ctx.fillText(value, contentRightX - 20, y);
+    };
+    totalsRow("Subtotal", money.format(subtotal), totalsY + 44);
+    totalsRow("Shipping", money.format(shipping), totalsY + 84);
+    totalsRow("Tax", money.format(tax), totalsY + 124);
+    totalsRow("Total", money.format(total), totalsY + 170, true);
+
+    const footerY = cardY + fullCardHeight - 24;
+    ctx.strokeStyle = "#e2e8f0";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(contentX, footerY - 40);
+    ctx.lineTo(contentRightX, footerY - 40);
+    ctx.stroke();
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#64748b";
+    ctx.font = "600 19px Helvetica Neue, Arial, sans-serif";
+    ctx.fillText("LB Athletes • Official Order Receipt", width / 2, footerY - 10);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((createdBlob) => resolve(createdBlob), "image/png", 1);
+    });
+    if (!blob) {
+      showToast({ title: "Receipt failed", description: "Could not generate PNG file." });
+      return;
+    }
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${fileNameSafeOrder || "receipt"}.html`;
+    anchor.download = `${fileNameSafeOrder || "receipt"}.png`;
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
     showToast({
       title: "Receipt downloaded",
-      description: `Saved as ${fileNameSafeOrder || "receipt"}.html`,
+      description: `Saved as ${fileNameSafeOrder || "receipt"}.png`,
     });
   };
 
