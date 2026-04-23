@@ -122,8 +122,13 @@ const deriveProductStatus = (product: AdminProductDoc): ProductRow["status"] => 
 };
 
 const derivePaymentStatus = (
+  paymentStatus: unknown,
   status: OrderStatus | undefined
 ): OrderRow["paymentStatus"] => {
+  const normalizedPayment = String(paymentStatus || "").trim().toLowerCase();
+  if (normalizedPayment === "paid") return "paid";
+  if (normalizedPayment === "pending") return "pending";
+  if (normalizedPayment === "refunded") return "refunded";
   if (status === "cancelled") return "refunded";
   if (status === "pending") return "pending";
   return "paid";
@@ -320,7 +325,7 @@ export const mapOrders = (orders: AdminOrderDoc[]): OrderRow[] => {
       customer: explicitName || (email ? customerNameFromEmail(email) : "Guest"),
       email: email || "-",
       date: dateValue.toLocaleDateString(),
-      paymentStatus: derivePaymentStatus(order.status),
+      paymentStatus: derivePaymentStatus(order.payment_status, order.status),
       fulfillmentStatus: deriveFulfillmentStatus(order.fulfillment_status, order.status),
       shipmentStatus: deriveShipmentStatus(order.status),
       location: getOrderLocationLabel(order),

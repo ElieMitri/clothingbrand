@@ -1,5 +1,4 @@
 import {
-  BarChart3,
   Layers3,
   LayoutDashboard,
   Menu,
@@ -22,7 +21,6 @@ const navItems: NavItem[] = [
   { key: "products", label: "Products", icon: ShoppingBag, href: "/admin/products" },
   { key: "customers", label: "Customers", icon: Users, href: "/admin/customers" },
   { key: "collections", label: "Collections", icon: Layers3, href: "/admin/collections" },
-  { key: "analytics", label: "Analytics", icon: BarChart3, href: "/admin/analytics" },
   { key: "sales", label: "Sales", icon: Percent, href: "/admin/sales" },
   { key: "campaigns", label: "Campaigns", icon: Megaphone, href: "/admin/campaigns" },
   { key: "settings", label: "Settings", icon: Settings, href: "/admin/settings" },

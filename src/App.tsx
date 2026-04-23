@@ -28,7 +28,6 @@ import { DashboardPage } from "./admin/pages/DashboardPage";
 import { OrdersPage } from "./admin/pages/OrdersPage";
 import { ProductsPage } from "./admin/pages/ProductsPage";
 import { CustomersPage } from "./admin/pages/CustomersPage";
-import { AnalyticsPage } from "./admin/pages/AnalyticsPage";
 import { DiscountsPage } from "./admin/pages/DiscountsPage";
 import { SettingsPage as AdminSettingsPage } from "./admin/pages/SettingsPage";
 import { CollectionsPage } from "./admin/pages/CollectionsPage";
@@ -97,7 +96,6 @@ function AppRoutes() {
             <Route path="products" element={<ProductsPage />} />
             <Route path="customers" element={<CustomersPage />} />
             <Route path="collections" element={<CollectionsPage />} />
-            <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="sales" element={<DiscountsPage />} />
             <Route path="discounts" element={<DiscountsPage />} />
             <Route path="campaigns" element={<CampaignsPage />} />

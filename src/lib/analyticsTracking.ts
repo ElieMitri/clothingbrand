@@ -76,6 +76,11 @@ const getGeoInfo = async () => {
     return { city: "", region: "", country: "", countryCode: "" };
   }
 
+  // In local development, this API route is usually unavailable.
+  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+    return { city: "", region: "", country: "", countryCode: "" };
+  }
+
   const cached = parseGeoCache(readStorage(window.localStorage, GEO_CACHE_KEY));
   if (cached) return cached;
 

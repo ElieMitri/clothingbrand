@@ -1,63 +1,38 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowUpRight, CheckCircle2, Pencil, Plus, Trash2 } from "lucide-react";
+import { CheckCircle2, Pencil, Plus, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { doc, onSnapshot, setDoc, Timestamp, updateDoc } from "firebase/firestore";
+import { doc, onSnapshot, setDoc, Timestamp } from "firebase/firestore";
 import { EmptyState } from "../components/EmptyState";
 import { Modal } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
 import { StatCard } from "../components/StatCard";
-import { StatusBadge } from "../components/StatusBadge";
 import { TrendChart } from "../components/TrendChart";
 import { setupChecklist } from "../data/adminConstants";
 import { useAdminLiveData } from "../hooks/useAdminLiveData";
 import { useToast } from "../hooks/useToast";
 import { db } from "../../lib/firebase";
 import { toDate } from "../../lib/storefront";
+import { getUnitProfitFromOrderItemDoc } from "../utils/transforms";
 import type { ChecklistItem } from "../types";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-const dayKey = (date: Date) =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate()
-  ).padStart(2, "0")}`;
-
-const normalizeCommissionPercent = (value: unknown) => {
-  const parsed = Number(value || 0);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
-  if (parsed <= 1) return parsed * 100;
-  return parsed;
-};
-
-interface OverviewPricingEditor {
-  price: number;
-  cost_price: number;
-  original_price: number;
-  commission_percentage: number;
-  use_manual_profit: boolean;
-  profit_per_unit: number;
-}
-
-const computeAutomaticProfit = (editor: OverviewPricingEditor) => {
-  const salePrice = Math.max(0, Number(editor.price || 0));
-  const commission = Math.max(0, normalizeCommissionPercent(editor.commission_percentage));
-  const costPrice = Math.max(0, Number(editor.cost_price || 0));
-  const retailPrice = Math.max(0, Number(editor.original_price || editor.price || 0));
-
-  if (retailPrice > 0 && costPrice > 0) return retailPrice - costPrice;
-  if (commission > 0) return salePrice * (commission / 100);
-  if (costPrice > 0) return salePrice - costPrice;
-  return 0;
-};
+const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function DashboardPage() {
   const { showToast } = useToast();
-  const { loading, dashboardKpis, orders, products, productsRaw, ordersRaw } = useAdminLiveData();
+  const {
+    dashboardKpis,
+    productsRaw,
+    ordersRaw,
+    customers,
+    subscribersCount,
+    analyticsEventsRaw,
+    presenceRaw,
+  } = useAdminLiveData();
   const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>(setupChecklist);
   const [isChecklistLoading, setIsChecklistLoading] = useState(true);
   const [newChecklistTitle, setNewChecklistTitle] = useState("");
   const [newChecklistDescription, setNewChecklistDescription] = useState("");
-  const [overviewEditors, setOverviewEditors] = useState<Record<string, OverviewPricingEditor>>({});
-  const [savingOverviewProductId, setSavingOverviewProductId] = useState<string>("");
   const [kpiOverrides, setKpiOverrides] = useState<
     Record<string, { enabled: boolean; value: string; delta: string }>
   >({});
@@ -67,6 +42,8 @@ export function DashboardPage() {
     value: "",
     delta: "",
   });
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<"all" | number>("all");
 
   const checklistRef = useMemo(
     () => doc(db, "site_settings", "admin_setup_checklist"),
@@ -228,102 +205,223 @@ export function DashboardPage() {
     }
   };
 
-  const topProducts = useMemo(
-    () => [...products].sort((a, b) => b.inventory - a.inventory).slice(0, 4),
-    [products]
-  );
+  const availableYears = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const dataYears = Array.from(
+      new Set(
+        ordersRaw
+          .map((order) => toDate(order.created_at).getFullYear())
+          .filter((year) => Number.isFinite(year) && year > 2000)
+      )
+    );
+
+    const latestDataYear = dataYears.length > 0 ? Math.max(...dataYears) : currentYear;
+    const earliestDataYear = dataYears.length > 0 ? Math.min(...dataYears) : currentYear - 1;
+
+    // Always keep at least the previous year selectable (e.g., 2027 -> includes 2026).
+    const startYear = Math.min(earliestDataYear, currentYear - 1);
+    const endYear = Math.max(currentYear, latestDataYear);
+
+    const years: number[] = [];
+    for (let year = endYear; year >= startYear; year -= 1) {
+      years.push(year);
+    }
+    return years;
+  }, [ordersRaw]);
 
   useEffect(() => {
-    const topProductIds = new Set(topProducts.map((product) => product.id));
-    if (topProductIds.size === 0) return;
+    if (availableYears.includes(selectedYear)) return;
+    setSelectedYear(availableYears[0]);
+  }, [availableYears, selectedYear]);
 
-    setOverviewEditors((prev) => {
-      const next = { ...prev };
-      topProducts.forEach((product) => {
-        const raw = productsRaw.find((entry) => entry.id === product.id);
-        if (!raw) return;
-        next[product.id] = {
-          price: Number(raw.price || product.price || 0),
-          cost_price: Number(raw.cost_price || 0),
-          original_price: Number(raw.original_price || raw.price || product.price || 0),
-          commission_percentage: normalizeCommissionPercent(raw.commission_percentage),
-          use_manual_profit: Boolean(raw.use_manual_profit),
-          profit_per_unit: Number(raw.profit_per_unit || 0),
-        };
-      });
+  const kpiTrendPoints = useMemo(() => {
+    const start = new Date(selectedYear, selectedMonth === "all" ? 0 : selectedMonth, 1);
+    const end =
+      selectedMonth === "all"
+        ? new Date(selectedYear + 1, 0, 1)
+        : new Date(selectedYear, selectedMonth + 1, 1);
 
-      Object.keys(next).forEach((id) => {
-        if (!topProductIds.has(id)) delete next[id];
-      });
-      return next;
+    const productById = new Map<string, (typeof productsRaw)[number]>();
+    productsRaw.forEach((product) => {
+      const productId = String(product.id || "").trim();
+      if (!productId) return;
+      productById.set(productId, product);
     });
-  }, [productsRaw, topProducts]);
 
-  const updateOverviewEditor = <K extends keyof OverviewPricingEditor>(
-    productId: string,
-    key: K,
-    value: OverviewPricingEditor[K]
-  ) => {
-    setOverviewEditors((prev) => {
-      const current = prev[productId];
-      if (!current) return prev;
+    const getOrderProfit = (order: (typeof ordersRaw)[number]) => {
+      const persistedProfit = Number(order.profit);
+      if (Number.isFinite(persistedProfit) && persistedProfit >= 0) {
+        return persistedProfit;
+      }
+
+      const items = Array.isArray(order.items) ? order.items : [];
+      return items.reduce((sum, item) => {
+        const quantity = Number(item?.quantity || 0);
+        if (quantity <= 0) return sum;
+        const unitSalePrice = Number(item?.price ?? item?.unitPrice ?? 0);
+        const productId = String(item?.product_id || "").trim();
+        const product = productById.get(productId);
+        const unitProfit = getUnitProfitFromOrderItemDoc(item, product, unitSalePrice);
+        return sum + unitProfit * quantity;
+      }, 0);
+    };
+
+    const grossByBucket = new Map<number, number>();
+    const revenueByBucket = new Map<number, number>();
+    const profitByBucket = new Map<number, number>();
+    const ordersByBucket = new Map<number, number>();
+
+    ordersRaw.forEach((order) => {
+      const date = toDate(order.created_at);
+      if (date < start || date >= end) return;
+      const bucket = selectedMonth === "all" ? date.getMonth() : date.getDate() - 1;
+      const total = Math.max(0, Number(order.total || 0));
+
+      grossByBucket.set(bucket, Number(grossByBucket.get(bucket) || 0) + total);
+      ordersByBucket.set(bucket, Number(ordersByBucket.get(bucket) || 0) + 1);
+
+      if (order.status === "cancelled") return;
+      revenueByBucket.set(bucket, Number(revenueByBucket.get(bucket) || 0) + total);
+      profitByBucket.set(bucket, Number(profitByBucket.get(bucket) || 0) + getOrderProfit(order));
+    });
+
+    const bucketCount =
+      selectedMonth === "all"
+        ? 12
+        : new Date(selectedYear, selectedMonth + 1, 0).getDate();
+
+    const points = Array.from({ length: bucketCount }).map((_, index) => {
+      const label =
+        selectedMonth === "all"
+          ? monthLabels[index]
+          : String(index + 1);
       return {
-        ...prev,
-        [productId]: {
-          ...current,
-          [key]: value,
-        },
+        label,
+        grossSales: Number(grossByBucket.get(index) || 0),
+        revenue: Number(revenueByBucket.get(index) || 0),
+        estimatedProfit: Number(profitByBucket.get(index) || 0),
+        orders: Number(ordersByBucket.get(index) || 0),
       };
     });
-  };
 
-  const saveOverviewPricing = async (productId: string) => {
-    const editor = overviewEditors[productId];
-    if (!editor) return;
+    return {
+      grossSales: points.map((point) => ({ label: point.label, value: point.grossSales })),
+      revenue: points.map((point) => ({ label: point.label, value: point.revenue })),
+      estimatedProfit: points.map((point) => ({ label: point.label, value: point.estimatedProfit })),
+      orders: points.map((point) => ({ label: point.label, value: point.orders })),
+    };
+  }, [ordersRaw, productsRaw, selectedMonth, selectedYear]);
 
-    setSavingOverviewProductId(productId);
-    try {
-      await updateDoc(doc(db, "products", productId), {
-        price: Math.max(0, Number(editor.price || 0)),
-        cost_price: Math.max(0, Number(editor.cost_price || 0)),
-        original_price: Math.max(0, Number(editor.original_price || editor.price || 0)),
-        commission_percentage: normalizeCommissionPercent(editor.commission_percentage),
-        use_manual_profit: Boolean(editor.use_manual_profit),
-        profit_per_unit: Math.max(0, Number(editor.profit_per_unit || 0)),
-        updated_at: Timestamp.now(),
-      });
-      showToast({ title: "Overview pricing saved" });
-    } catch (error) {
-      console.error("Failed to save overview pricing", error);
-      showToast({ title: "Failed to save overview pricing" });
-    } finally {
-      setSavingOverviewProductId("");
-    }
-  };
-  const trendPoints = (() => {
-    const now = new Date();
-    const start = new Date(now);
-    start.setDate(now.getDate() - 13);
+  const trendPeriodLabel =
+    selectedMonth === "all"
+      ? `Monthly view for ${selectedYear}`
+      : `Daily view for ${monthLabels[selectedMonth]} ${selectedYear}`;
 
-    const byDay = new Map<string, number>();
-    ordersRaw
-      .filter((order) => order.status !== "cancelled")
-      .forEach((order) => {
-        const date = toDate(order.created_at);
-        if (date < start) return;
-        const key = dayKey(date);
-        byDay.set(key, Number(byDay.get(key) || 0) + Number(order.total || 0));
-      });
+  const analyticsSnapshot = useMemo(() => {
+    const start = new Date(selectedYear, selectedMonth === "all" ? 0 : selectedMonth, 1);
+    const end =
+      selectedMonth === "all"
+        ? new Date(selectedYear + 1, 0, 1)
+        : new Date(selectedYear, selectedMonth + 1, 1);
 
-    return Array.from({ length: 14 }).map((_, offset) => {
-      const date = new Date(start);
-      date.setDate(start.getDate() + offset);
-      return {
-        label: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-        value: Number(byDay.get(dayKey(date)) || 0),
-      };
+    const inRange = ordersRaw.filter((order) => {
+      const createdAt = toDate(order.created_at);
+      return createdAt >= start && createdAt < end;
     });
-  })();
+
+    const nonCancelled = inRange.filter((order) => order.status !== "cancelled");
+
+    const inRangeEvents = analyticsEventsRaw.filter((event) => {
+      if (event.event_type !== "page_view") return false;
+      const createdAt = toDate(event.created_at);
+      return createdAt >= start && createdAt < end;
+    });
+
+    const uniqueVisitors = new Set(
+      inRangeEvents.map((event) => String(event.visitor_id || "").trim()).filter(Boolean)
+    ).size;
+    const uniqueSessions = new Set(
+      inRangeEvents.map((event) => String(event.session_id || "").trim()).filter(Boolean)
+    ).size;
+    const pageViewCount = inRangeEvents.length;
+
+    const pathCounter = new Map<string, number>();
+    inRangeEvents.forEach((event) => {
+      const path = String(event.full_path || event.path || "/").trim() || "/";
+      pathCounter.set(path, Number(pathCounter.get(path) || 0) + 1);
+    });
+    const topPages = Array.from(pathCounter.entries())
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
+      .map(([path, count]) => ({ path, count }));
+
+    const cityBuckets = new Map<string, { visitors: Set<string>; views: number }>();
+    inRangeEvents.forEach((event) => {
+      const cityName = String(event.city || "").trim();
+      const countryName = String(event.country || "").trim();
+      const label = cityName || countryName || "Unknown";
+      const visitorKey = String(event.visitor_id || event.session_id || event.id).trim();
+      const bucket = cityBuckets.get(label) || { visitors: new Set<string>(), views: 0 };
+      if (visitorKey) bucket.visitors.add(visitorKey);
+      bucket.views += 1;
+      cityBuckets.set(label, bucket);
+    });
+    const topCities = Array.from(cityBuckets.entries())
+      .map(([city, value]) => ({ city, visitors: value.visitors.size, views: value.views }))
+      .sort((a, b) => (b.visitors !== a.visitors ? b.visitors - a.visitors : b.views - a.views))
+      .slice(0, 8);
+
+    const onlineCutoffMs = Date.now() - 2 * 60 * 1000;
+    const activePresence = presenceRaw.filter((entry) => toDate(entry.last_seen).getTime() >= onlineCutoffMs);
+    const onlineSessions = activePresence.length;
+    const onlineVisitors = new Set(
+      activePresence
+        .map((entry) => String(entry.visitor_id || entry.session_id || entry.id).trim())
+        .filter(Boolean)
+    ).size;
+    const onlineCityBuckets = new Map<string, Set<string>>();
+    activePresence.forEach((entry) => {
+      const cityName = String(entry.city || "").trim();
+      const countryName = String(entry.country || "").trim();
+      const label = cityName || countryName || "Unknown";
+      const visitorKey = String(entry.visitor_id || entry.session_id || entry.id).trim();
+      if (!visitorKey) return;
+      const visitors = onlineCityBuckets.get(label) || new Set<string>();
+      visitors.add(visitorKey);
+      onlineCityBuckets.set(label, visitors);
+    });
+    const topOnlineCities = Array.from(onlineCityBuckets.entries())
+      .map(([city, visitors]) => ({ city, onlineVisitors: visitors.size }))
+      .sort((a, b) => b.onlineVisitors - a.onlineVisitors)
+      .slice(0, 8);
+
+    const revenue = nonCancelled.reduce((sum, order) => sum + Number(order.total || 0), 0);
+    const totalOrders = inRange.length;
+    const fulfilledOrders = nonCancelled.filter(
+      (order) => order.status === "shipped" || order.status === "delivered"
+    ).length;
+
+    return {
+      returningRate:
+        customers.length > 0
+          ? (customers.filter((customer) => customer.orderCount > 1).length / customers.length) * 100
+          : 0,
+      productCoverage: productsRaw.length,
+      subscribers: subscribersCount,
+      cancelled: inRange.filter((order) => order.status === "cancelled").length,
+      completionRate: totalOrders > 0 ? (fulfilledOrders / totalOrders) * 100 : 0,
+      avgOrderValue: nonCancelled.length > 0 ? revenue / nonCancelled.length : 0,
+      pageViewCount,
+      uniqueVisitors,
+      uniqueSessions,
+      onlineVisitors,
+      onlineSessions,
+      avgPagesPerSession: uniqueSessions > 0 ? pageViewCount / uniqueSessions : 0,
+      topPages,
+      topCities,
+      topOnlineCities,
+    };
+  }, [analyticsEventsRaw, customers, ordersRaw, presenceRaw, productsRaw.length, selectedMonth, selectedYear, subscribersCount]);
 
   const renderedKpis = useMemo(
     () =>
@@ -419,31 +517,185 @@ export function DashboardPage() {
         ))}
       </section>
 
-      <section className="adm-grid adm-grid--two">
+      <section>
         <article className="adm-card adm-panel">
           <header className="adm-panel__header">
-            <h3>Sales and traffic</h3>
-            <button type="button" className="adm-button adm-button--ghost">
-              View report
-            </button>
+            <div>
+              <h3>KPI trends</h3>
+              <p className="adm-muted">{trendPeriodLabel}</p>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <label className="adm-inline-field">
+                Year
+                <select
+                  className="adm-input"
+                  value={selectedYear}
+                  onChange={(event) => setSelectedYear(Number(event.target.value))}
+                  aria-label="Select trend year"
+                >
+                  {availableYears.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="adm-inline-field">
+                Month
+                <select
+                  className="adm-input"
+                  value={selectedMonth}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setSelectedMonth(value === "all" ? "all" : Number(value));
+                  }}
+                  aria-label="Select trend month"
+                >
+                  <option value="all">All months</option>
+                  {monthLabels.map((month, index) => (
+                    <option key={month} value={index}>
+                      {month}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           </header>
-          <TrendChart points={trendPoints} ariaLabel="14-day sales trend graph" />
-          <div className="adm-breakdown-grid">
-            <div>
-              <p className="adm-muted">Orders in feed</p>
-              <strong>{orders.length}</strong>
+          <div className="adm-kpi-trends-grid">
+            <div className="adm-panel" style={{ border: "1px solid var(--adm-border)", borderRadius: 12, padding: 12 }}>
+              <p className="adm-muted">Gross sales</p>
+              <TrendChart points={kpiTrendPoints.grossSales} ariaLabel="Gross sales trend graph" />
             </div>
-            <div>
-              <p className="adm-muted">Products in catalog</p>
-              <strong>{products.length}</strong>
+            <div className="adm-panel" style={{ border: "1px solid var(--adm-border)", borderRadius: 12, padding: 12 }}>
+              <p className="adm-muted">Revenue</p>
+              <TrendChart points={kpiTrendPoints.revenue} ariaLabel="Revenue trend graph" />
             </div>
-            <div>
-              <p className="adm-muted">Data source</p>
-              <strong>Firestore live</strong>
+            <div className="adm-panel" style={{ border: "1px solid var(--adm-border)", borderRadius: 12, padding: 12 }}>
+              <p className="adm-muted">Estimated profit</p>
+              <TrendChart
+                points={kpiTrendPoints.estimatedProfit}
+                ariaLabel="Estimated profit trend graph"
+              />
+            </div>
+            <div className="adm-panel" style={{ border: "1px solid var(--adm-border)", borderRadius: 12, padding: 12 }}>
+              <p className="adm-muted">Orders</p>
+              <TrendChart
+                points={kpiTrendPoints.orders}
+                ariaLabel="Orders trend graph"
+                valueFormatter={(value) => `${Math.max(0, Math.round(value))}`}
+              />
             </div>
           </div>
         </article>
+      </section>
 
+      <section>
+        <article className="adm-card adm-panel">
+          <h3>Commerce + traffic breakdown</h3>
+          <div className="adm-breakdown-grid">
+            <div>
+              <p className="adm-muted">Returning customers</p>
+              <strong>{analyticsSnapshot.returningRate.toFixed(1)}%</strong>
+            </div>
+            <div>
+              <p className="adm-muted">Catalog size</p>
+              <strong>{analyticsSnapshot.productCoverage} products</strong>
+            </div>
+            <div>
+              <p className="adm-muted">Subscribers</p>
+              <strong>{analyticsSnapshot.subscribers}</strong>
+            </div>
+            <div>
+              <p className="adm-muted">Fulfillment completion</p>
+              <strong>{analyticsSnapshot.completionRate.toFixed(1)}%</strong>
+            </div>
+            <div>
+              <p className="adm-muted">Average order value</p>
+              <strong>{money.format(analyticsSnapshot.avgOrderValue)}</strong>
+            </div>
+            <div>
+              <p className="adm-muted">Cancelled orders</p>
+              <strong>{analyticsSnapshot.cancelled}</strong>
+            </div>
+            <div>
+              <p className="adm-muted">Page views</p>
+              <strong>{analyticsSnapshot.pageViewCount}</strong>
+            </div>
+            <div>
+              <p className="adm-muted">Unique visitors</p>
+              <strong>{analyticsSnapshot.uniqueVisitors}</strong>
+            </div>
+            <div>
+              <p className="adm-muted">Unique sessions</p>
+              <strong>{analyticsSnapshot.uniqueSessions}</strong>
+            </div>
+            <div>
+              <p className="adm-muted">Avg pages/session</p>
+              <strong>{analyticsSnapshot.avgPagesPerSession.toFixed(2)}</strong>
+            </div>
+            <div>
+              <p className="adm-muted">Online visitors now</p>
+              <strong>{analyticsSnapshot.onlineVisitors}</strong>
+            </div>
+            <div>
+              <p className="adm-muted">Online sessions now</p>
+              <strong>{analyticsSnapshot.onlineSessions}</strong>
+            </div>
+          </div>
+
+          <div className="adm-top-pages">
+            <p className="adm-muted">Top pages by views</p>
+            {analyticsSnapshot.topPages.length === 0 ? (
+              <p className="adm-muted">No page view data yet.</p>
+            ) : (
+              <ul>
+                {analyticsSnapshot.topPages.map((entry) => (
+                  <li key={entry.path}>
+                    <code>{entry.path}</code>
+                    <strong>{entry.count}</strong>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="adm-top-pages">
+            <p className="adm-muted">Visitors by city</p>
+            {analyticsSnapshot.topCities.length === 0 ? (
+              <p className="adm-muted">No city data yet.</p>
+            ) : (
+              <ul>
+                {analyticsSnapshot.topCities.map((entry) => (
+                  <li key={entry.city}>
+                    <code>{entry.city}</code>
+                    <strong>
+                      {entry.visitors} visitors · {entry.views} views
+                    </strong>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="adm-top-pages">
+            <p className="adm-muted">Online visitors by city (last 2 min)</p>
+            {analyticsSnapshot.topOnlineCities.length === 0 ? (
+              <p className="adm-muted">No one is currently online.</p>
+            ) : (
+              <ul>
+                {analyticsSnapshot.topOnlineCities.map((entry) => (
+                  <li key={entry.city}>
+                    <code>{entry.city}</code>
+                    <strong>{entry.onlineVisitors} online</strong>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </article>
+      </section>
+
+      <section>
         <article className="adm-card adm-panel">
           <header className="adm-panel__header">
             <h3>Setup checklist</h3>
@@ -507,187 +759,6 @@ export function DashboardPage() {
               ))}
             </ul>
           )}
-        </article>
-      </section>
-
-      <section className="adm-grid adm-grid--two">
-        <article className="adm-card adm-panel">
-          <header className="adm-panel__header">
-            <h3>Recent orders</h3>
-            <Link to="/admin/orders" className="adm-inline-link">
-              Open orders <ArrowUpRight size={14} />
-            </Link>
-          </header>
-          {loading ? <p className="adm-muted">Loading orders...</p> : null}
-          {!loading && orders.length === 0 ? (
-            <EmptyState title="No orders yet" description="Orders from Firestore will appear here in real time." />
-          ) : null}
-          {!loading && orders.length > 0 ? (
-            <div className="adm-mini-table">
-              {orders.slice(0, 5).map((order) => (
-                <div key={order.id} className="adm-mini-table__row">
-                  <div>
-                    <p>{order.orderNumber}</p>
-                    <p className="adm-muted">{order.customer}</p>
-                  </div>
-                  <StatusBadge
-                    tone={
-                      order.paymentStatus === "paid"
-                        ? "success"
-                        : order.paymentStatus === "pending"
-                        ? "warning"
-                        : "danger"
-                    }
-                  >
-                    {order.paymentStatus}
-                  </StatusBadge>
-                  <strong>{money.format(order.total)}</strong>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </article>
-
-        <article className="adm-card adm-panel">
-          <header className="adm-panel__header">
-            <h3>Top products</h3>
-            <Link to="/admin/products" className="adm-inline-link">
-              Manage catalog <ArrowUpRight size={14} />
-            </Link>
-          </header>
-          {loading ? <p className="adm-muted">Loading products...</p> : null}
-          {!loading && topProducts.length === 0 ? (
-            <EmptyState title="No products yet" description="Products from Firestore will appear here in real time." />
-          ) : null}
-          {!loading && topProducts.length > 0 ? (
-            <div className="adm-mini-table">
-              {topProducts.map((product, index) => {
-                const editor = overviewEditors[product.id];
-                const automaticProfit = editor ? computeAutomaticProfit(editor) : 0;
-                const activeProfit =
-                  editor && editor.use_manual_profit
-                    ? Math.max(0, Number(editor.profit_per_unit || 0))
-                    : automaticProfit;
-
-                return (
-                  <div key={product.id} className="adm-mini-table__row" style={{ alignItems: "flex-start" }}>
-                    <div className="adm-product-cell">
-                      <img src={product.thumbnail} alt={product.title} loading="lazy" />
-                      <div>
-                        <p>{product.title}</p>
-                        <p className="adm-muted">{product.inventory} in stock</p>
-                      </div>
-                    </div>
-                    <strong>#{index + 1}</strong>
-                    {editor ? (
-                      <div
-                        style={{
-                          marginLeft: "auto",
-                          display: "grid",
-                          gridTemplateColumns: "repeat(3, minmax(90px, 1fr))",
-                          gap: 8,
-                          width: "100%",
-                          maxWidth: 420,
-                        }}
-                      >
-                        <label>
-                          <span className="adm-muted">Sale</span>
-                          <input
-                            className="adm-input"
-                            type="number"
-                            value={editor.price}
-                            onChange={(event) =>
-                              updateOverviewEditor(product.id, "price", Number(event.target.value || 0))
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span className="adm-muted">Cost</span>
-                          <input
-                            className="adm-input"
-                            type="number"
-                            value={editor.cost_price}
-                            onChange={(event) =>
-                              updateOverviewEditor(product.id, "cost_price", Number(event.target.value || 0))
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span className="adm-muted">Compare</span>
-                          <input
-                            className="adm-input"
-                            type="number"
-                            value={editor.original_price}
-                            onChange={(event) =>
-                              updateOverviewEditor(
-                                product.id,
-                                "original_price",
-                                Number(event.target.value || 0)
-                              )
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span className="adm-muted">Commission %</span>
-                          <input
-                            className="adm-input"
-                            type="number"
-                            value={editor.commission_percentage}
-                            onChange={(event) =>
-                              updateOverviewEditor(
-                                product.id,
-                                "commission_percentage",
-                                Number(event.target.value || 0)
-                              )
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span className="adm-muted">Manual profit</span>
-                          <input
-                            className="adm-input"
-                            type="number"
-                            disabled={!editor.use_manual_profit}
-                            value={editor.profit_per_unit}
-                            onChange={(event) =>
-                              updateOverviewEditor(
-                                product.id,
-                                "profit_per_unit",
-                                Number(event.target.value || 0)
-                              )
-                            }
-                          />
-                        </label>
-                        <label className="adm-toggle" style={{ alignSelf: "end" }}>
-                          <input
-                            type="checkbox"
-                            checked={editor.use_manual_profit}
-                            onChange={(event) =>
-                              updateOverviewEditor(product.id, "use_manual_profit", event.target.checked)
-                            }
-                          />
-                          Manual
-                        </label>
-                        <div className="adm-muted" style={{ gridColumn: "1 / span 2" }}>
-                          Auto: {money.format(automaticProfit)} | Active: {money.format(activeProfit)}
-                        </div>
-                        <button
-                          type="button"
-                          className="adm-button adm-button--primary"
-                          disabled={savingOverviewProductId === product.id}
-                          onClick={() => {
-                            void saveOverviewPricing(product.id);
-                          }}
-                        >
-                          {savingOverviewProductId === product.id ? "Saving..." : "Save"}
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
         </article>
       </section>
 

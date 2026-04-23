@@ -5,6 +5,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { DataTable, type DataTableColumn } from "../components/DataTable";
 import { EmptyState } from "../components/EmptyState";
 import { FilterBar } from "../components/FilterBar";
+import { Modal } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
 import { StatusBadge } from "../components/StatusBadge";
 import { orderSavedViews } from "../data/adminConstants";
@@ -43,8 +44,11 @@ export function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [savingStatusOrderId, setSavingStatusOrderId] = useState<string>("");
   const [savingFulfillmentOrderId, setSavingFulfillmentOrderId] = useState<string>("");
+  const [savingPaymentOrderId, setSavingPaymentOrderId] = useState<string>("");
   const [savingDetailsOrderId, setSavingDetailsOrderId] = useState<string>("");
   const [deletingOrderId, setDeletingOrderId] = useState<string>("");
+  const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
+  const [addProductSearchQuery, setAddProductSearchQuery] = useState("");
   const [orderEditor, setOrderEditor] = useState({
     customer_name: "",
     user_email: "",
@@ -204,6 +208,25 @@ export function OrdersPage() {
     return focusedOrderItems.reduce((sum, item) => sum + item.lineProfit, 0);
   }, [focusedOrderItems]);
 
+  const addableProducts = useMemo(() => {
+    const queryText = addProductSearchQuery.trim().toLowerCase();
+    if (!queryText) return productsRaw;
+    return productsRaw.filter((product) => {
+      const name = String(product.name || "").toLowerCase();
+      const sku = String(product.sku || "").toLowerCase();
+      const category = String(product.category || "").toLowerCase();
+      const productType = String(product.product_type || "").toLowerCase();
+      return (
+        name.includes(queryText) ||
+        sku.includes(queryText) ||
+        category.includes(queryText) ||
+        productType.includes(queryText)
+      );
+    });
+  }, [addProductSearchQuery, productsRaw]);
+
+  const recentOrders = useMemo(() => orders.slice(0, 5), [orders]);
+
   const editedOrderSubtotal = useMemo(
     () => focusedOrderItems.reduce((sum, item) => sum + item.lineTotal, 0),
     [focusedOrderItems]
@@ -228,6 +251,10 @@ export function OrdersPage() {
         return { ...entry, [key]: value };
       })
     );
+  };
+
+  const removeOrderItemEditor = (index: number) => {
+    setOrderItemsEditor((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
   };
 
   const columns: DataTableColumn<OrderRow>[] = [
@@ -286,20 +313,24 @@ export function OrdersPage() {
       ),
     },
     {
-      key: "fulfillment",
-      header: "Fulfillment",
+      key: "paymentToggle",
+      header: "Paid",
       render: (row) => (
         <button
           type="button"
           className="adm-button adm-button--ghost"
           onClick={(event) => {
             event.stopPropagation();
-            void toggleFulfillment(row.id);
+            void togglePaymentStatus(row.id);
           }}
-          disabled={savingFulfillmentOrderId === row.id}
+          disabled={savingPaymentOrderId === row.id}
           style={{ height: 32, padding: "0 10px", textTransform: "capitalize" }}
         >
-          {savingFulfillmentOrderId === row.id ? "Saving..." : row.fulfillmentStatus}
+          {savingPaymentOrderId === row.id
+            ? "Saving..."
+            : row.paymentStatus === "paid"
+            ? "Paid"
+            : "Not paid"}
         </button>
       ),
     },
@@ -324,6 +355,228 @@ export function OrdersPage() {
   };
 
   const clearSelection = () => setSelectedIds([]);
+
+  const escapeHtml = (value: unknown) =>
+    String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
+  const downloadOrderReceipt = (row: OrderRow) => {
+    const rawOrder = ordersRaw.find((entry) => entry.id === row.id);
+    if (!rawOrder) {
+      showToast({ title: "Order not found", description: "Could not load order details for receipt." });
+      return;
+    }
+
+    const items = Array.isArray(rawOrder.items) ? rawOrder.items : [];
+    const subtotal =
+      Number(rawOrder.subtotal) > 0
+        ? Number(rawOrder.subtotal)
+        : items.reduce((sum, item) => {
+            const qty = Math.max(1, Number(item?.quantity || 1));
+            const unit = Math.max(0, Number(item?.price ?? item?.unitPrice ?? 0));
+            return sum + qty * unit;
+          }, 0);
+    const shipping = Math.max(0, Number(rawOrder.shipping || 0));
+    const tax = Math.max(0, Number(rawOrder.tax || 0));
+    const total = Math.max(0, Number(rawOrder.total || row.total || subtotal + shipping + tax));
+    const customerName = String(rawOrder.customer_name || row.customer || "Customer").trim();
+    const email = String(rawOrder.user_email || row.email || "").trim();
+    const phone = String(rawOrder.phone || "").trim() || "-";
+    const orderDate =
+      rawOrder.created_at instanceof Timestamp
+        ? rawOrder.created_at.toDate().toLocaleString()
+        : row.date || "-";
+
+    const itemsHtml =
+      items.length === 0
+        ? `<tr><td colspan="3" class="muted center">No items</td></tr>`
+        : items
+            .map((item) => {
+              const name = escapeHtml(String(item?.product_name || "Product").trim() || "Product");
+              const qty = Math.max(1, Number(item?.quantity || 1));
+              const unit = Math.max(0, Number(item?.price ?? item?.unitPrice ?? 0));
+              const line = unit * qty;
+              return `
+                <tr>
+                  <td>${name}</td>
+                  <td>${qty}</td>
+                  <td class="right">${money.format(line)}</td>
+                </tr>
+              `;
+            })
+            .join("");
+
+    const logoUrl = `${window.location.origin}/logo-modified.png`;
+
+    const receiptHtml = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Receipt ${escapeHtml(row.orderNumber)}</title>
+          <style>
+            body {
+              margin: 0;
+              padding: 24px;
+              background: #f5f7fb;
+              font-family: "Helvetica Neue", Arial, sans-serif;
+              color: #0f172a;
+            }
+            .receipt {
+              width: min(420px, 100%);
+              margin: 0 auto;
+              background: #fff;
+              border: 1px solid #e2e8f0;
+              border-radius: 12px;
+              padding: 18px;
+              box-shadow: 0 14px 36px rgba(15, 23, 42, 0.1);
+            }
+            .logo {
+              width: 92px;
+              height: auto;
+              display: block;
+              margin: 0 auto 10px;
+            }
+            h1 {
+              margin: 0;
+              text-align: center;
+              font-size: 18px;
+              letter-spacing: 0.4px;
+            }
+            .sub {
+              margin: 4px 0 12px;
+              text-align: center;
+              color: #64748b;
+              font-size: 12px;
+            }
+            .sep {
+              border-top: 1px dashed #cbd5e1;
+              margin: 12px 0;
+            }
+            .row {
+              display: flex;
+              justify-content: space-between;
+              gap: 12px;
+              margin: 4px 0;
+              font-size: 13px;
+            }
+            .label {
+              color: #64748b;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 8px;
+              font-size: 12px;
+            }
+            th, td {
+              padding: 6px 4px;
+              border-bottom: 1px solid #e2e8f0;
+              text-align: left;
+            }
+            th {
+              color: #64748b;
+              font-weight: 600;
+            }
+            .right {
+              text-align: right;
+            }
+            .center {
+              text-align: center;
+            }
+            .muted {
+              color: #94a3b8;
+            }
+            .totals .row {
+              margin: 6px 0;
+            }
+            .totals .grand {
+              font-weight: 700;
+              font-size: 15px;
+            }
+            @media print {
+              body {
+                background: #fff;
+                padding: 0;
+              }
+              .receipt {
+                border: 0;
+                border-radius: 0;
+                box-shadow: none;
+                width: 100%;
+                margin: 0;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <article class="receipt">
+            <img src="${logoUrl}" alt="Logo" class="logo" />
+            <h1>Order Receipt</h1>
+            <p class="sub">Thank you for your order</p>
+
+            <div class="row"><span class="label">Order #</span><strong>${escapeHtml(
+              row.orderNumber
+            )}</strong></div>
+            <div class="row"><span class="label">Date</span><span>${escapeHtml(orderDate)}</span></div>
+            <div class="row"><span class="label">Payment</span><span>${escapeHtml(
+              row.paymentStatus
+            )}</span></div>
+
+            <div class="sep"></div>
+
+            <div class="row"><span class="label">Name</span><span>${escapeHtml(customerName)}</span></div>
+            <div class="row"><span class="label">Email</span><span>${escapeHtml(email || "-")}</span></div>
+            <div class="row"><span class="label">Phone</span><span>${escapeHtml(phone)}</span></div>
+
+            <div class="sep"></div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Qty</th>
+                  <th class="right">Total</th>
+                </tr>
+              </thead>
+              <tbody>${itemsHtml}</tbody>
+            </table>
+
+            <div class="sep"></div>
+
+            <div class="totals">
+              <div class="row"><span class="label">Subtotal</span><span>${money.format(subtotal)}</span></div>
+              <div class="row"><span class="label">Shipping</span><span>${money.format(shipping)}</span></div>
+              <div class="row"><span class="label">Tax</span><span>${money.format(tax)}</span></div>
+              <div class="row grand"><span>Total</span><span>${money.format(total)}</span></div>
+            </div>
+          </article>
+        </body>
+      </html>
+    `;
+
+    const fileNameSafeOrder = String(row.orderNumber || row.id || "receipt")
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase();
+    const blob = new Blob([receiptHtml], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${fileNameSafeOrder || "receipt"}.html`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+    showToast({
+      title: "Receipt downloaded",
+      description: `Saved as ${fileNameSafeOrder || "receipt"}.html`,
+    });
+  };
 
   const updateStatus = async (orderId: string, status: OrderStatus) => {
     const rawOrder = ordersRaw.find((entry) => entry.id === orderId);
@@ -406,6 +659,51 @@ export function OrdersPage() {
     }
   };
 
+  const togglePaymentStatus = async (orderId: string) => {
+    const rawOrder = ordersRaw.find((entry) => entry.id === orderId);
+    if (!rawOrder) {
+      showToast({ title: "Order not found", description: "Could not resolve selected order." });
+      return;
+    }
+
+    const currentStatus = String(rawOrder.payment_status || "")
+      .trim()
+      .toLowerCase();
+    const nextPaymentStatus = currentStatus === "paid" ? "pending" : "paid";
+
+    setSavingPaymentOrderId(orderId);
+    try {
+      await updateDoc(doc(db, "orders", orderId), {
+        payment_status: nextPaymentStatus,
+      });
+
+      const userId = String(rawOrder.user_id || "").trim();
+      if (userId) {
+        try {
+          await updateDoc(doc(db, "users", userId, "orders", orderId), {
+            payment_status: nextPaymentStatus,
+          });
+        } catch {
+          // Skip if mirror doc is missing.
+        }
+      }
+
+      showToast({
+        title: "Payment updated",
+        description: `Order marked as ${nextPaymentStatus === "paid" ? "paid" : "not paid"}.`,
+      });
+    } catch (error) {
+      console.error("Failed to update payment status", error);
+      showToast({
+        title: "Payment update failed",
+        description:
+          error instanceof Error ? error.message : "Could not update payment status.",
+      });
+    } finally {
+      setSavingPaymentOrderId("");
+    }
+  };
+
   const deleteOrder = async (order: OrderRow) => {
     const rawOrder = ordersRaw.find((entry) => entry.id === order.id);
     if (!rawOrder) {
@@ -459,6 +757,10 @@ export function OrdersPage() {
       return;
     }
 
+    const normalizedPaymentStatus = String(orderEditor.payment_status || "")
+      .trim()
+      .toLowerCase();
+
     const patch = {
       customer_name: String(orderEditor.customer_name || "").trim() || null,
       user_email: normalizedEmail,
@@ -471,7 +773,10 @@ export function OrdersPage() {
       country: String(orderEditor.country || "").trim() || null,
       shipping_address: String(orderEditor.shipping_address || "").trim() || null,
       payment_method: String(orderEditor.payment_method || "").trim() || null,
-      payment_status: String(orderEditor.payment_status || "").trim() || null,
+      payment_status:
+        normalizedPaymentStatus === "paid" || normalizedPaymentStatus === "pending"
+          ? normalizedPaymentStatus
+          : null,
       status_note: String(orderEditor.status_note || "").trim() || null,
       subtotal: Math.max(0, Number(orderEditor.subtotal || 0)),
       shipping: Math.max(0, Number(orderEditor.shipping || 0)),
@@ -585,6 +890,44 @@ export function OrdersPage() {
     } finally {
       setSavingDetailsOrderId("");
     }
+  };
+
+  const addProductToOrderEditor = (productId: string) => {
+    const product = productsRaw.find((entry) => String(entry.id || "").trim() === productId);
+    if (!product) return;
+
+    const normalizedSizes = Array.isArray(product.sizes)
+      ? product.sizes.map((size) => String(size || "").trim()).filter(Boolean)
+      : [];
+    const soldOutSizes = new Set(
+      Array.isArray(product.sold_out_sizes)
+        ? product.sold_out_sizes.map((size) => String(size || "").trim()).filter(Boolean)
+        : []
+    );
+    const defaultSize =
+      normalizedSizes.find((size) => !soldOutSizes.has(size)) || normalizedSizes[0] || "";
+    const salePrice = Math.max(0, Number(product.price || 0));
+    const retailPrice = Math.max(0, Number(product.original_price || product.price || 0));
+    const costPrice = Math.max(0, Number(product.cost_price || 0));
+    const commission = Math.max(0, Number(product.commission_percentage || 0));
+
+    setOrderItemsEditor((prev) => [
+      ...prev,
+      {
+        product_id: String(product.id || "").trim(),
+        product_name: String(product.name || "Product").trim(),
+        product_image: String(product.image_url || "").trim() || undefined,
+        size: defaultSize || undefined,
+        quantity: 1,
+        price: salePrice,
+        unitPrice: salePrice,
+        retail_price: retailPrice > 0 ? retailPrice : undefined,
+        cost_price: costPrice > 0 ? costPrice : undefined,
+        commission_percentage: commission > 0 ? commission : undefined,
+      },
+    ]);
+    setIsAddProductModalOpen(false);
+    setAddProductSearchQuery("");
   };
 
   return (
@@ -702,6 +1045,12 @@ export function OrdersPage() {
                 onRowClick={(row) => navigate(`/admin/orders/${row.id}`)}
                 rowActions={[
                   {
+                    label: "Download receipt",
+                    onClick: (row) => {
+                      downloadOrderReceipt(row);
+                    },
+                  },
+                  {
                     label: "Send invoice",
                     onClick: (row) =>
                       showToast({
@@ -718,6 +1067,47 @@ export function OrdersPage() {
                 ]}
               />
             ) : null}
+          </section>
+
+          <section>
+            <article className="adm-card adm-panel">
+              <header className="adm-panel__header">
+                <h3>Recent orders</h3>
+              </header>
+              {loading ? <p className="adm-muted">Loading recent orders...</p> : null}
+              {!loading && recentOrders.length === 0 ? (
+                <EmptyState title="No orders yet" description="Recent orders will appear here." />
+              ) : null}
+              {!loading && recentOrders.length > 0 ? (
+                <div className="adm-mini-table">
+                  {recentOrders.map((order) => (
+                    <div
+                      key={order.id}
+                      className="adm-mini-table__row"
+                      style={{ cursor: "pointer" }}
+                      onClick={() => navigate(`/admin/orders/${order.id}`)}
+                    >
+                      <div>
+                        <p>{order.orderNumber}</p>
+                        <p className="adm-muted">{order.customer}</p>
+                      </div>
+                      <StatusBadge
+                        tone={
+                          order.paymentStatus === "paid"
+                            ? "success"
+                            : order.paymentStatus === "pending"
+                              ? "warning"
+                              : "danger"
+                        }
+                      >
+                        {order.paymentStatus}
+                      </StatusBadge>
+                      <strong>{money.format(order.total)}</strong>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </article>
           </section>
         </>
       ) : null}
@@ -855,13 +1245,17 @@ export function OrdersPage() {
                 </label>
                 <label>
                   Payment status
-                  <input
+                  <select
                     className="adm-input"
                     value={orderEditor.payment_status}
                     onChange={(event) =>
                       setOrderEditor((prev) => ({ ...prev, payment_status: event.target.value }))
                     }
-                  />
+                  >
+                    <option value="">Select status</option>
+                    <option value="pending">Pending</option>
+                    <option value="paid">Paid</option>
+                  </select>
                 </label>
                 <label>
                   City
@@ -991,8 +1385,18 @@ export function OrdersPage() {
             </section>
             <section className="adm-order-items">
               <div className="adm-order-items__header">
-                <h4>Order items</h4>
-                <p className="adm-muted">{focusedOrderItems.length} line items</p>
+                <div>
+                  <h4>Order items</h4>
+                  <p className="adm-muted">{focusedOrderItems.length} line items</p>
+                </div>
+                <button
+                  type="button"
+                  className="adm-button adm-button--ghost"
+                  onClick={() => setIsAddProductModalOpen(true)}
+                >
+                  <Plus size={14} />
+                  Add product
+                </button>
               </div>
               {focusedOrderItems.length === 0 ? (
                 <p className="adm-muted">No items were found for this order.</p>
@@ -1135,6 +1539,14 @@ export function OrdersPage() {
                         <p className="adm-muted">Profit/item {money.format(item.unitProfit)}</p>
                         <p>{money.format(item.lineTotal)}</p>
                         <p className="adm-order-item__profit">Profit {money.format(item.lineProfit)}</p>
+                        <button
+                          type="button"
+                          className="adm-button adm-button--ghost"
+                          onClick={() => removeOrderItemEditor(index)}
+                          style={{ marginTop: 8 }}
+                        >
+                          Remove
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -1191,6 +1603,73 @@ export function OrdersPage() {
                 {deletingOrderId === focusedOrder.id ? "Deleting..." : "Delete order"}
               </button>
             </div>
+            <Modal
+              open={isAddProductModalOpen}
+              title="Add product to order"
+              onClose={() => {
+                setIsAddProductModalOpen(false);
+                setAddProductSearchQuery("");
+              }}
+              footer={
+                <button
+                  type="button"
+                  className="adm-button adm-button--ghost"
+                  onClick={() => {
+                    setIsAddProductModalOpen(false);
+                    setAddProductSearchQuery("");
+                  }}
+                >
+                  Close
+                </button>
+              }
+            >
+              <div className="adm-order-product-picker">
+                <input
+                  className="adm-input"
+                  placeholder="Search products by name, SKU, category, or type"
+                  value={addProductSearchQuery}
+                  onChange={(event) => setAddProductSearchQuery(event.target.value)}
+                  aria-label="Search products"
+                />
+                <div className="adm-order-product-picker__list">
+                  {addableProducts.length === 0 ? (
+                    <p className="adm-muted">No products match this search.</p>
+                  ) : (
+                    addableProducts.map((product) => {
+                      const productId = String(product.id || "").trim();
+                      const name = String(product.name || "Untitled product").trim();
+                      const sku = String(product.sku || "").trim() || "-";
+                      const price = Math.max(0, Number(product.price || 0));
+                      const imageUrl = String(product.image_url || "").trim();
+                      return (
+                        <div key={productId} className="adm-order-product-picker__row">
+                          <div className="adm-product-cell">
+                            {imageUrl ? <img src={imageUrl} alt={name} /> : null}
+                            <div>
+                              <p>{name}</p>
+                              <p className="adm-muted">
+                                SKU: {sku} · {String(product.category || "Uncategorized")}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="adm-order-product-picker__actions">
+                            <strong>{money.format(price)}</strong>
+                            <button
+                              type="button"
+                              className="adm-button adm-button--primary"
+                              onClick={() => addProductToOrderEditor(productId)}
+                              disabled={!productId}
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </Modal>
           </section>
       ) : isDetailView ? (
         <section className="adm-card adm-panel adm-orders-panel">
