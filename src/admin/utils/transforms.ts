@@ -19,6 +19,8 @@ export interface AdminProductDoc {
   original_price?: number;
   commission_percentage?: number;
   discount_percentage?: number;
+  use_manual_profit?: boolean;
+  profit_per_unit?: number;
   category?: string;
   subcategory?: string;
   audience?: string;
@@ -172,12 +174,25 @@ const getEffectiveSalePrice = (salePrice: number, product?: AdminProductDoc) => 
   return Math.max(0, Number(product?.price || 0));
 };
 
+const normalizeCommissionPercent = (value: unknown) => {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  if (parsed <= 1) return parsed * 100;
+  return parsed;
+};
+
 export const getUnitProfitFromProductDoc = (
   product: AdminProductDoc | undefined,
   salePrice: number
 ) => {
   const effectiveSalePrice = getEffectiveSalePrice(salePrice, product);
-  const commission = Math.max(0, Number(product?.commission_percentage || 0));
+  const useManualProfit = Boolean(product?.use_manual_profit);
+  const manualProfit = Number(product?.profit_per_unit);
+  if (useManualProfit && Number.isFinite(manualProfit)) {
+    return Math.max(0, manualProfit);
+  }
+
+  const commission = Math.max(0, normalizeCommissionPercent(product?.commission_percentage));
   const costPrice = Math.max(0, Number(product?.cost_price || 0));
   const retailPrice = Math.max(
     0,

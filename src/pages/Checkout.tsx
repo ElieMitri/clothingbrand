@@ -6,6 +6,7 @@ import { db } from "../lib/firebase";
 import { useAuth } from "../contexts/AuthContext";
 import { readGuestCart, writeGuestCart } from "../lib/cart";
 import { formatPrice } from "../lib/storefront";
+import { toFastImageUrl } from "../lib/image";
 import { Button } from "../components/storefront/Button";
 import { placeOrderWithInventory } from "../lib/orderLogic";
 import type { PaymentMethod } from "../lib/orderLogic";
@@ -479,9 +480,12 @@ export function Checkout() {
             {items.map((item) => (
               <div key={item.id} className="flex items-center gap-3">
                 <img
-                  src={item.product.image_url}
+                  src={toFastImageUrl(item.product.image_url, 240)}
                   alt={item.product.name}
                   className="h-14 w-12 rounded-[8px] border border-[var(--sf-line)] object-cover"
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
                 />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold text-[var(--sf-text)]">{item.product.name}</p>

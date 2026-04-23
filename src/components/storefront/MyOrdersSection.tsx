@@ -21,6 +21,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { OrderStatus, updateOrderStatusWithInventory } from "../../lib/orderLogic";
+import { toFastImageUrl } from "../../lib/image";
 
 interface OrderItem {
   product_id: string;
@@ -360,7 +361,14 @@ export function MyOrdersSection({ userId, userEmail }: MyOrdersSectionProps) {
                       <div key={index} className="flex flex-col sm:flex-row gap-4 bg-white p-4 rounded-xl">
                         {item.product_image ? (
                           <div className="w-20 h-24 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
-                            <img src={item.product_image} alt={item.product_name || "Product"} className="w-full h-full object-cover" />
+                            <img
+                              src={toFastImageUrl(item.product_image, 320)}
+                              alt={item.product_name || "Product"}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                              decoding="async"
+                              referrerPolicy="no-referrer"
+                            />
                           </div>
                         ) : null}
                         <div className="flex-1">

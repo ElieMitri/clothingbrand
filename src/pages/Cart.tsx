@@ -15,6 +15,7 @@ import { db } from "../lib/firebase";
 import { useAuth } from "../contexts/AuthContext";
 import { readGuestCart, writeGuestCart } from "../lib/cart";
 import { formatPrice } from "../lib/storefront";
+import { toFastImageUrl } from "../lib/image";
 import { Button } from "../components/storefront/Button";
 
 interface CartItem {
@@ -211,9 +212,12 @@ export function Cart() {
           {items.map((item) => (
             <article key={item.id} className="store-card flex gap-3 p-3 md:p-4">
               <img
-                src={item.product.image_url}
+                src={toFastImageUrl(item.product.image_url, 320)}
                 alt={item.product.name}
                 className="h-24 w-20 rounded-[10px] border border-[var(--sf-line)] object-cover md:h-28 md:w-24"
+                loading="lazy"
+                decoding="async"
+                referrerPolicy="no-referrer"
               />
 
               <div className="flex flex-1 flex-col justify-between gap-3">

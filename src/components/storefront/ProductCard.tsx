@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { ShoppingBag } from "lucide-react";
 import { StoreProduct, formatPrice, getCompareAtPrice, getDiscountPercent } from "../../lib/storefront";
+import { toFastImageUrl } from "../../lib/image";
 import { Button } from "./Button";
 
 interface ProductCardProps {
@@ -12,15 +13,18 @@ export function ProductCard({ product, onQuickAdd }: ProductCardProps) {
   const compareAtPrice = getCompareAtPrice(product);
   const discountPercent = getDiscountPercent(product);
   const isSoldOut = Boolean(product.sold_out);
+  const cardImageUrl = toFastImageUrl(product.image_url, 720);
 
   return (
     <article className="group store-card flex h-full flex-col overflow-hidden">
       <Link to={`/product/${product.id}`} className="relative block aspect-[4/5] overflow-hidden bg-[var(--sf-bg-soft)]">
         <img
-          src={product.image_url}
+          src={cardImageUrl}
           alt={product.name}
           className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
           loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
         />
         {discountPercent > 0 ? (
           <span className="absolute left-3 top-3 rounded-md bg-[var(--sf-accent)] px-2.5 py-1 text-xs font-semibold text-white">

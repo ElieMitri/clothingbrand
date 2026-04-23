@@ -15,6 +15,7 @@ import { useToast } from "../hooks/useToast";
 import type { ProductRow } from "../types";
 import { useAdminLiveData } from "../hooks/useAdminLiveData";
 import { getDefaultSizesByCategory } from "../../lib/productSizing";
+import { parseExcelProducts } from "../utils/excelProductImport";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -46,6 +47,8 @@ interface ProductEditorState {
   original_price: number;
   commission_percentage: number;
   discount_percentage: number;
+  use_manual_profit: boolean;
+  profit_per_unit: number;
   material: string;
   care_instructions: string;
   tags: string;
@@ -77,6 +80,8 @@ const emptyEditor: ProductEditorState = {
   original_price: 0,
   commission_percentage: 0,
   discount_percentage: 0,
+  use_manual_profit: false,
+  profit_per_unit: 0,
   material: "",
   care_instructions: "",
   tags: "",
@@ -91,6 +96,13 @@ const parseList = (value: string) =>
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+
+const normalizeCommissionPercent = (value: unknown) => {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  if (parsed <= 1) return parsed * 100;
+  return parsed;
+};
 
 interface ImportedLinkProduct {
   name?: string;
@@ -107,6 +119,11 @@ interface ImportedLinkProduct {
   original_price?: number;
   stock?: number;
   source_url?: string;
+  commission_percentage?: number;
+}
+
+interface ImageFetchEntry {
+  image_url?: string;
 }
 
 export function ProductsPage() {
@@ -123,13 +140,27 @@ export function ProductsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [importUrl, setImportUrl] = useState("");
   const [importingFromUrl, setImportingFromUrl] = useState(false);
+  const [importingFromExcel, setImportingFromExcel] = useState(false);
   const [importQueue, setImportQueue] = useState<ImportedLinkProduct[]>([]);
   const [selectedImportIndexes, setSelectedImportIndexes] = useState<number[]>([]);
   const [importQueueSourceUrl, setImportQueueSourceUrl] = useState("");
   const [committingImportSelection, setCommittingImportSelection] = useState(false);
+  const [deletingSelected, setDeletingSelected] = useState(false);
   const [focusedProductId, setFocusedProductId] = useState<string>("");
   const [editor, setEditor] = useState<ProductEditorState>(emptyEditor);
   const query = searchParams.get("q") || "";
+
+  const updateImportQueueEntry = (
+    index: number,
+    patch: Partial<ImportedLinkProduct>
+  ) => {
+    setImportQueue((prev) =>
+      prev.map((entry, entryIndex) => {
+        if (entryIndex !== index) return entry;
+        return { ...entry, ...patch };
+      })
+    );
+  };
 
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -197,8 +228,10 @@ export function ProductsPage() {
       price: Number(raw?.price || focusedProduct.price || 0),
       cost_price: Number(raw?.cost_price || 0),
       original_price: Number(raw?.original_price || raw?.price || focusedProduct.price || 0),
-      commission_percentage: Number(raw?.commission_percentage || 0),
+      commission_percentage: normalizeCommissionPercent(raw?.commission_percentage),
       discount_percentage: Number(raw?.discount_percentage || 0),
+      use_manual_profit: Boolean(raw?.use_manual_profit),
+      profit_per_unit: Number(raw?.profit_per_unit || 0),
       material: String(raw?.material || ""),
       care_instructions: String(raw?.care_instructions || ""),
       tags: Array.isArray(raw?.tags) ? raw.tags.join(", ") : "",
@@ -237,6 +270,28 @@ export function ProductsPage() {
     setEditor((prev) => ({ ...prev, [key]: value }));
   };
 
+  const automaticProfitPerUnit = useMemo(() => {
+    const salePrice = Math.max(0, Number(editor.price || 0));
+    const commission = Math.max(0, normalizeCommissionPercent(editor.commission_percentage));
+    const costPrice = Math.max(0, Number(editor.cost_price || 0));
+    const retailPrice = Math.max(0, Number(editor.original_price || editor.price || 0));
+
+    if (retailPrice > 0 && costPrice > 0) {
+      return retailPrice - costPrice;
+    }
+    if (commission > 0) {
+      return salePrice * (commission / 100);
+    }
+    if (costPrice > 0) {
+      return salePrice - costPrice;
+    }
+    return 0;
+  }, [editor.commission_percentage, editor.cost_price, editor.original_price, editor.price]);
+
+  const effectiveProfitPerUnit = editor.use_manual_profit
+    ? Math.max(0, Number(editor.profit_per_unit || 0))
+    : automaticProfitPerUnit;
+
   const payloadFromEditor = () => ({
     name: editor.name,
     brand: editor.brand || null,
@@ -257,8 +312,10 @@ export function ProductsPage() {
     price: Number(editor.price || 0),
     cost_price: Number(editor.cost_price || 0),
     original_price: Number(editor.original_price || editor.price || 0),
-    commission_percentage: Number(editor.commission_percentage || 0),
+    commission_percentage: normalizeCommissionPercent(editor.commission_percentage),
     discount_percentage: Number(editor.discount_percentage || 0),
+    use_manual_profit: Boolean(editor.use_manual_profit),
+    profit_per_unit: Number(editor.profit_per_unit || 0),
     material: editor.material || null,
     care_instructions: editor.care_instructions || null,
     tags: parseList(editor.tags),
@@ -411,6 +468,7 @@ export function ProductsPage() {
             original_price: Number.isFinite(compareAt)
               ? Math.max(compareAt, price)
               : Math.max(0, price),
+            commission_percentage: normalizeCommissionPercent(entry.commission_percentage),
             source_url: String(entry.source_url || importQueueSourceUrl).trim(),
             is_featured: false,
             is_new_arrival: false,
@@ -457,6 +515,68 @@ export function ProductsPage() {
     }
   };
 
+  const importProductsFromExcel = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImportingFromExcel(true);
+    try {
+      const importedProducts = await parseExcelProducts(file);
+      if (importedProducts.length === 0) {
+        throw new Error("No products found in this Excel sheet.");
+      }
+
+      let withImages: ImportedLinkProduct[] = importedProducts;
+      try {
+        const imageResponse = await fetch("/api/fetch-product-images", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            products: importedProducts.map((entry) => ({
+              name: entry.name,
+              category: entry.category,
+            })),
+          }),
+        });
+        const imagePayload = await imageResponse.json().catch(() => ({}));
+        if (imageResponse.ok && Array.isArray(imagePayload?.images)) {
+          const images = imagePayload.images as ImageFetchEntry[];
+          withImages = importedProducts.map((entry, index) => {
+            const imageUrl = String(images[index]?.image_url || "").trim();
+            return {
+              ...entry,
+              image_url: imageUrl || undefined,
+              images: imageUrl ? [imageUrl] : [],
+            };
+          });
+        }
+      } catch (error) {
+        console.error("Image lookup failed for Excel import", error);
+      }
+
+      setImportQueue(withImages);
+      setSelectedImportIndexes(withImages.map((_, index) => index));
+      setImportQueueSourceUrl(file.name);
+      setImportUrl("");
+      showToast({
+        title: "Excel ready to import",
+        description: `${withImages.length} item${
+          withImages.length === 1 ? "" : "s"
+        } loaded, image search completed. Review and press Import selected.`,
+      });
+    } catch (error) {
+      console.error("Import from Excel failed", error);
+      showToast({
+        title: "Excel import failed",
+        description:
+          error instanceof Error ? error.message : "Could not parse this Excel workbook.",
+      });
+    } finally {
+      event.target.value = "";
+      setImportingFromExcel(false);
+    }
+  };
+
   const toggleRow = (id: string) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]));
   };
@@ -468,6 +588,51 @@ export function ProductsPage() {
       if (allSelected) return prev.filter((id) => !visibleIds.includes(id));
       return Array.from(new Set([...prev, ...visibleIds]));
     });
+  };
+
+  const deleteSelectedProducts = async () => {
+    if (selectedIds.length === 0) {
+      showToast({ title: "Select products to delete first" });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${selectedIds.length} selected product${
+        selectedIds.length === 1 ? "" : "s"
+      }? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingSelected(true);
+    try {
+      for (let index = 0; index < selectedIds.length; index += 400) {
+        const chunk = selectedIds.slice(index, index + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((productId) => {
+          batch.delete(doc(db, "products", productId));
+        });
+        await batch.commit();
+      }
+
+      const deletedIds = new Set(selectedIds);
+      setSelectedIds([]);
+      if (deletedIds.has(focusedProductId)) {
+        setFocusedProductId("");
+      }
+
+      showToast({
+        title: "Products deleted",
+        description: `${deletedIds.size} product${deletedIds.size === 1 ? "" : "s"} removed.`,
+      });
+    } catch (error) {
+      console.error("Bulk delete failed", error);
+      showToast({
+        title: "Delete failed",
+        description: error instanceof Error ? error.message : "Could not delete selected products.",
+      });
+    } finally {
+      setDeletingSelected(false);
+    }
   };
 
   return (
@@ -561,6 +726,28 @@ export function ProductsPage() {
         </div>
       </section>
 
+      <section className="adm-card adm-panel">
+        <header className="adm-panel__header">
+          <h3>Import from Excel</h3>
+          <span className="adm-muted">Upload .xlsx/.xls file and review before saving</span>
+        </header>
+        <div className="adm-form-grid">
+          <label className="adm-form-grid__full" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={importProductsFromExcel}
+              disabled={importingFromExcel}
+            />
+            <span className="adm-muted">
+              {importingFromExcel
+                ? "Reading Excel file..."
+                : "Expected headers: item name, selling price, commission"}
+            </span>
+          </label>
+        </div>
+      </section>
+
       {importQueue.length > 0 ? (
         <section className="adm-card adm-panel">
           <header className="adm-panel__header">
@@ -602,6 +789,8 @@ export function ProductsPage() {
                   <th>Brand</th>
                   <th>Category</th>
                   <th>Price</th>
+                  <th>Commission</th>
+                  <th>Image URL</th>
                 </tr>
               </thead>
               <tbody>
@@ -627,6 +816,21 @@ export function ProductsPage() {
                       <td>{String(entry.brand || "-")}</td>
                       <td>{String(entry.category || "-")}</td>
                       <td>{money.format(Number(entry.price || 0))}</td>
+                      <td>{`${Math.round(normalizeCommissionPercent(entry.commission_percentage))}%`}</td>
+                      <td style={{ minWidth: 280 }}>
+                        <input
+                          className="adm-input"
+                          placeholder="https://..."
+                          value={String(entry.image_url || "")}
+                          onChange={(event) => {
+                            const nextImageUrl = event.target.value;
+                            updateImportQueueEntry(index, {
+                              image_url: nextImageUrl,
+                              images: nextImageUrl.trim() ? [nextImageUrl.trim()] : [],
+                            });
+                          }}
+                        />
+                      </td>
                     </tr>
                   );
                 })}
@@ -643,14 +847,10 @@ export function ProductsPage() {
             <button
               type="button"
               className="adm-button adm-button--ghost"
-              onClick={() =>
-                showToast({
-                  title: "Bulk action queued",
-                  description: "Bulk publish action is queued for selected rows.",
-                })
-              }
+              onClick={deleteSelectedProducts}
+              disabled={deletingSelected}
             >
-              Publish
+              {deletingSelected ? "Deleting..." : "Delete selected"}
             </button>
             <button type="button" className="adm-button adm-button--ghost" onClick={() => setSelectedIds([])}>
               Clear
@@ -776,6 +976,32 @@ export function ProductsPage() {
                   <label>
                     Discount (%)
                     <input className="adm-input" type="number" value={editor.discount_percentage} onChange={(event) => updateEditor("discount_percentage", Number(event.target.value || 0))} />
+                  </label>
+                  <label>
+                    Automatic profit (per item)
+                    <input className="adm-input" type="number" value={Number(automaticProfitPerUnit.toFixed(2))} readOnly />
+                  </label>
+                  <label className="adm-toggle">
+                    <input
+                      type="checkbox"
+                      checked={editor.use_manual_profit}
+                      onChange={(event) => updateEditor("use_manual_profit", event.target.checked)}
+                    />
+                    Use manual profit override
+                  </label>
+                  <label>
+                    Manual profit (per item)
+                    <input
+                      className="adm-input"
+                      type="number"
+                      value={editor.profit_per_unit}
+                      disabled={!editor.use_manual_profit}
+                      onChange={(event) => updateEditor("profit_per_unit", Number(event.target.value || 0))}
+                    />
+                  </label>
+                  <label>
+                    Active profit used
+                    <input className="adm-input" type="number" value={Number(effectiveProfitPerUnit.toFixed(2))} readOnly />
                   </label>
                 </FormSection>
               ) : null}
@@ -926,6 +1152,18 @@ export function ProductsPage() {
           <label>
             Discount (%)
             <input className="adm-input" type="number" value={editor.discount_percentage} onChange={(event) => updateEditor("discount_percentage", Number(event.target.value || 0))} />
+          </label>
+          <label>
+            Commission (%)
+            <input className="adm-input" type="number" value={editor.commission_percentage} onChange={(event) => updateEditor("commission_percentage", Number(event.target.value || 0))} />
+          </label>
+          <label className="adm-toggle">
+            <input type="checkbox" checked={editor.use_manual_profit} onChange={(event) => updateEditor("use_manual_profit", event.target.checked)} />
+            Use manual profit
+          </label>
+          <label>
+            Manual profit (per item)
+            <input className="adm-input" type="number" value={editor.profit_per_unit} disabled={!editor.use_manual_profit} onChange={(event) => updateEditor("profit_per_unit", Number(event.target.value || 0))} />
           </label>
           <label className="adm-form-grid__full">
             Main image URL

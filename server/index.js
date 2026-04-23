@@ -5,6 +5,7 @@ import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
 import importProductsFromUrl from "../api/import-products-from-url.js";
+import fetchProductImages from "../api/fetch-product-images.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1075,6 +1076,8 @@ app.post(
 );
 app.post("/import-products-from-url", importProductsFromUrl);
 app.post("/api/import-products-from-url", importProductsFromUrl);
+app.post("/fetch-product-images", fetchProductImages);
+app.post("/api/fetch-product-images", fetchProductImages);
 
 app.listen(3001, () => {
   const webhookUrl = String(process.env.DISCORD_ORDER_WEBHOOK_URL || "").trim();

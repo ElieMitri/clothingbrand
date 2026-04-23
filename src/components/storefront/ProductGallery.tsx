@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { toFastImageUrl } from "../../lib/image";
 
 interface ProductGalleryProps {
   images: string[];
@@ -8,6 +9,8 @@ interface ProductGalleryProps {
 
 export function ProductGallery({ images, productName }: ProductGalleryProps) {
   const safeImages = images.length > 0 ? images : ["https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=1000&q=80"];
+  const optimizedMainImages = safeImages.map((image) => toFastImageUrl(image, 1200));
+  const optimizedThumbImages = safeImages.map((image) => toFastImageUrl(image, 320));
   const [activeIndex, setActiveIndex] = useState(0);
 
   const goPrev = () => {
@@ -24,9 +27,13 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
     <div className="space-y-4">
       <div className="relative overflow-hidden rounded-[var(--sf-radius-lg)] border border-[var(--sf-line)] bg-[var(--sf-bg-soft)]">
         <img
-          src={safeImages[activeIndex]}
+          src={optimizedMainImages[activeIndex]}
           alt={`${productName} image ${activeIndex + 1}`}
           className="h-full w-full object-cover"
+          loading="eager"
+          fetchPriority="high"
+          decoding="async"
+          referrerPolicy="no-referrer"
         />
 
         {safeImages.length > 1 ? (
@@ -65,7 +72,14 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
               onClick={() => setActiveIndex(index)}
               aria-label={`View image ${index + 1}`}
             >
-              <img src={image} alt={`${productName} thumbnail ${index + 1}`} className="aspect-square w-full object-cover" />
+              <img
+                src={optimizedThumbImages[index]}
+                alt={`${productName} thumbnail ${index + 1}`}
+                className="aspect-square w-full object-cover"
+                loading="lazy"
+                decoding="async"
+                referrerPolicy="no-referrer"
+              />
             </button>
           ))}
         </div>
