@@ -17,6 +17,7 @@ import { NewArrivals } from "./pages/NewArrivals";
 import { Profile } from "./pages/Profile";
 import { Settings } from "./pages/Settings";
 import { Sale } from "./pages/Sale";
+import { OrderDetails } from "./pages/OrderDetails";
 import { MainLayout } from "./layouts/MainLayout";
 import { AdminRoute } from "./components/AdminRoute";
 import { RouteAnalyticsTracker } from "./components/RouteAnalyticsTracker";
@@ -63,6 +64,14 @@ function AppRoutes() {
               }
             />
             <Route
+              path="/orders/:orderId"
+              element={
+                <ProtectedRoute>
+                  <OrderDetails />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/settings"
               element={
                 <ProtectedRoute>
@@ -84,6 +93,7 @@ function AppRoutes() {
             <Route index element={<Navigate to="overview" replace />} />
             <Route path="overview" element={<DashboardPage />} />
             <Route path="orders" element={<OrdersPage />} />
+            <Route path="orders/:orderId" element={<OrdersPage />} />
             <Route path="products" element={<ProductsPage />} />
             <Route path="customers" element={<CustomersPage />} />
             <Route path="collections" element={<CollectionsPage />} />

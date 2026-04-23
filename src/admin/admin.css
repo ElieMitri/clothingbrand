@@ -807,6 +807,8 @@
   display: grid;
   align-content: start;
   gap: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .adm-overlay {

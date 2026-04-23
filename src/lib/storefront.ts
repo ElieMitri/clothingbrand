@@ -19,10 +19,17 @@ export interface StoreProduct {
 export const formatPrice = (value: number) => `$${Number(value || 0).toFixed(2)}`;
 
 export const productGalleryImages = (product: StoreProduct) => {
-  if (Array.isArray(product.images) && product.images.length > 0) {
-    return product.images;
+  const isHttpUrl = (value: string) => /^https?:\/\//i.test(String(value || "").trim());
+  const cleanedGallery = (Array.isArray(product.images) ? product.images : [])
+    .map((image) => String(image || "").trim())
+    .filter((image) => image && isHttpUrl(image));
+
+  if (cleanedGallery.length > 0) {
+    return cleanedGallery;
   }
-  return [product.image_url].filter(Boolean);
+
+  const fallbackMainImage = String(product.image_url || "").trim();
+  return fallbackMainImage && isHttpUrl(fallbackMainImage) ? [fallbackMainImage] : [];
 };
 
 export const getCompareAtPrice = (product: StoreProduct) => {

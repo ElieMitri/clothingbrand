@@ -63,6 +63,7 @@ export interface CustomerRow {
   location: string;
   spend: number;
   orderCount: number;
+  hasAccount: boolean;
   tags: string[];
 }
 

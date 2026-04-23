@@ -15,13 +15,10 @@ import {
   Clock,
   CheckCircle,
   Truck,
-  ChevronDown,
-  ChevronUp,
   Calendar,
   XCircle,
 } from "lucide-react";
 import { OrderStatus, updateOrderStatusWithInventory } from "../../lib/orderLogic";
-import { toFastImageUrl } from "../../lib/image";
 
 interface OrderItem {
   product_id: string;
@@ -49,7 +46,6 @@ interface MyOrdersSectionProps {
 export function MyOrdersSection({ userId, userEmail }: MyOrdersSectionProps) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
   const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
   const [cancelModalOrder, setCancelModalOrder] = useState<Order | null>(null);
   const [cancelReasonInput, setCancelReasonInput] = useState("");
@@ -154,59 +150,6 @@ export function MyOrdersSection({ userId, userEmail }: MyOrdersSectionProps) {
       default:
         return "bg-gray-100 text-gray-800 border-gray-200";
     }
-  };
-
-  const statusRank: Record<Exclude<OrderStatus, "cancelled">, number> = {
-    pending: 0,
-    processing: 1,
-    shipped: 2,
-    delivered: 3,
-  };
-
-  const getTimelineSteps = (status: OrderStatus) => {
-    if (status === "cancelled") {
-      return [
-        {
-          key: "cancelled",
-          title: "Closed",
-          description: "Order cancelled",
-          completed: true,
-          icon: "cancelled" as const,
-        },
-      ];
-    }
-
-    const currentRank = statusRank[status];
-    return [
-      {
-        key: "pending",
-        title: "Order Placed",
-        description: "Your order has been received",
-        completed: currentRank >= 0,
-        icon: "check" as const,
-      },
-      {
-        key: "processing",
-        title: "Processing",
-        description: "Your order is being processed",
-        completed: currentRank >= 1,
-        icon: "processing" as const,
-      },
-      {
-        key: "shipped",
-        title: "Shipped",
-        description: "Your order is on the way",
-        completed: currentRank >= 2,
-        icon: "shipped" as const,
-      },
-      {
-        key: "delivered",
-        title: "Delivered",
-        description: "Your order has been delivered",
-        completed: currentRank >= 3,
-        icon: "check" as const,
-      },
-    ];
   };
 
   const requestStatusChange = async (
@@ -327,6 +270,9 @@ export function MyOrdersSection({ userId, userEmail }: MyOrdersSectionProps) {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                  <span className="text-sm text-gray-500">
+                    Total: <span className="font-semibold text-gray-900">${order.total.toFixed(2)}</span>
+                  </span>
                   <span className={`px-4 py-2 rounded-full text-sm font-medium border ${getStatusColor(order.status)}`}>
                     {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
                   </span>
@@ -342,88 +288,15 @@ export function MyOrdersSection({ userId, userEmail }: MyOrdersSectionProps) {
                       Cancel Order
                     </button>
                   ) : null}
-                  <button
-                    onClick={() => setExpandedOrder(expandedOrder === order.id ? null : order.id)}
-                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                  <Link
+                    to={`/orders/${order.id}`}
+                    className="px-3 py-2 rounded-lg text-xs font-medium border border-gray-300 text-gray-700 hover:bg-gray-50"
                   >
-                    {expandedOrder === order.id ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-                  </button>
+                    View Details
+                  </Link>
                 </div>
               </div>
             </div>
-
-            {expandedOrder === order.id ? (
-              <div className="p-4 sm:p-6 bg-gray-50">
-                <div className="mb-6">
-                  <h3 className="font-semibold text-lg mb-4">Order Items</h3>
-                  <div className="space-y-4">
-                    {order.items.map((item, index) => (
-                      <div key={index} className="flex flex-col sm:flex-row gap-4 bg-white p-4 rounded-xl">
-                        {item.product_image ? (
-                          <div className="w-20 h-24 bg-gray-100 rounded-lg overflow-hidden flex-shrink-0">
-                            <img
-                              src={toFastImageUrl(item.product_image, 320)}
-                              alt={item.product_name || "Product"}
-                              className="w-full h-full object-cover"
-                              loading="lazy"
-                              decoding="async"
-                              referrerPolicy="no-referrer"
-                            />
-                          </div>
-                        ) : null}
-                        <div className="flex-1">
-                          <h4 className="font-medium mb-1">{item.product_name || "Product"}</h4>
-                          <div className="flex items-center gap-4 text-sm text-gray-600 mb-2">
-                            <span className="px-2 py-1 bg-gray-100 rounded">Size: {item.size}</span>
-                            <span>Qty: {item.quantity}</span>
-                          </div>
-                          <p className="font-semibold">${item.price.toFixed(2)} each</p>
-                        </div>
-                        <div className="text-left sm:text-right">
-                          <p className="text-sm text-gray-500 mb-1">Item Total</p>
-                          <p className="font-bold text-lg">${(item.price * item.quantity).toFixed(2)}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-xl p-6">
-                  <h3 className="font-semibold text-lg mb-4">Order Status</h3>
-                  {(() => {
-                    const timelineSteps = getTimelineSteps(order.status);
-                    return (
-                      <div className="relative">
-                        {timelineSteps.length > 1 ? (
-                          <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-200" />
-                        ) : null}
-                        <div className="space-y-6 relative">
-                          {timelineSteps.map((step) => (
-                            <div key={step.key} className={`flex items-center gap-4 ${step.completed ? "" : "opacity-50"}`}>
-                              <div
-                                className={`w-8 h-8 rounded-full flex items-center justify-center z-10 ${
-                                  step.key === "cancelled" ? "bg-red-500" : step.completed ? "bg-green-500" : "bg-gray-300"
-                                }`}
-                              >
-                                {step.key === "cancelled" ? (
-                                  <XCircle className="text-white" size={16} />
-                                ) : (
-                                  <CheckCircle className="text-white" size={16} />
-                                )}
-                              </div>
-                              <div>
-                                <p className="font-medium">{step.title}</p>
-                                <p className="text-sm text-gray-500">{step.description}</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            ) : null}
           </div>
         ))}
       </div>

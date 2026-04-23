@@ -4,7 +4,7 @@ import { PageHeader } from "../components/PageHeader";
 import { StatCard } from "../components/StatCard";
 import { TrendChart } from "../components/TrendChart";
 import { useAdminLiveData } from "../hooks/useAdminLiveData";
-import { getUnitProfitFromProductDoc } from "../utils/transforms";
+import { getUnitProfitFromOrderItemDoc } from "../utils/transforms";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -41,6 +41,10 @@ export function AnalyticsPage() {
     const grossSales = inRange.reduce((sum, order) => sum + Number(order.total || 0), 0);
     const revenue = nonCancelled.reduce((sum, order) => sum + Number(order.total || 0), 0);
     const profit = nonCancelled.reduce((sum, order) => {
+      const persistedProfit = Number(order.profit);
+      if (Number.isFinite(persistedProfit) && persistedProfit >= 0) {
+        return sum + persistedProfit;
+      }
       const items = Array.isArray(order.items) ? order.items : [];
       const orderProfit = items.reduce((itemSum, item) => {
         const quantity = Number(item?.quantity || 0);
@@ -48,7 +52,7 @@ export function AnalyticsPage() {
         const unitSalePrice = Number(item?.price ?? item?.unitPrice ?? 0);
         const productId = String(item?.product_id || "").trim();
         const product = productById.get(productId);
-        const unitProfit = getUnitProfitFromProductDoc(product, unitSalePrice);
+        const unitProfit = getUnitProfitFromOrderItemDoc(item, product, unitSalePrice);
         return itemSum + unitProfit * quantity;
       }, 0);
       return sum + orderProfit;

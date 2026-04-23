@@ -53,6 +53,7 @@ export function CustomersPage() {
     { key: "location", header: "Location", render: (row) => row.location },
     { key: "orders", header: "Orders", render: (row) => row.orderCount },
     { key: "spend", header: "Spend", render: (row) => money.format(row.spend) },
+    { key: "account", header: "Account", render: (row) => (row.hasAccount ? "Has account" : "No account") },
   ];
 
   return (

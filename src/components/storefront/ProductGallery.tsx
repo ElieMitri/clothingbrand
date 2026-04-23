@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState, type SyntheticEvent } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { toFastImageUrl } from "../../lib/image";
 
@@ -8,10 +8,27 @@ interface ProductGalleryProps {
 }
 
 export function ProductGallery({ images, productName }: ProductGalleryProps) {
-  const safeImages = images.length > 0 ? images : ["https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=1000&q=80"];
+  const FALLBACK_IMAGE =
+    "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=1000&q=80";
+  const normalizedImages = images
+    .map((image) => String(image || "").trim())
+    .filter(Boolean);
+  const safeImages = normalizedImages.length > 0 ? normalizedImages : [FALLBACK_IMAGE];
   const optimizedMainImages = safeImages.map((image) => toFastImageUrl(image, 1200));
   const optimizedThumbImages = safeImages.map((image) => toFastImageUrl(image, 320));
   const [activeIndex, setActiveIndex] = useState(0);
+
+  useEffect(() => {
+    if (activeIndex < safeImages.length) return;
+    setActiveIndex(0);
+  }, [activeIndex, safeImages.length]);
+
+  const handleImageError = (event: SyntheticEvent<HTMLImageElement>) => {
+    const image = event.currentTarget;
+    if (image.dataset.fallbackApplied === "1") return;
+    image.dataset.fallbackApplied = "1";
+    image.src = FALLBACK_IMAGE;
+  };
 
   const goPrev = () => {
     if (safeImages.length < 2) return;
@@ -25,15 +42,16 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
 
   return (
     <div className="space-y-4">
-      <div className="relative overflow-hidden rounded-[var(--sf-radius-lg)] border border-[var(--sf-line)] bg-[var(--sf-bg-soft)]">
+      <div className="relative aspect-[4/5] overflow-hidden rounded-[var(--sf-radius-lg)] border border-[var(--sf-line)] bg-[var(--sf-bg-soft)]">
         <img
           src={optimizedMainImages[activeIndex]}
           alt={`${productName} image ${activeIndex + 1}`}
-          className="h-full w-full object-cover"
+          className="block h-full w-full object-cover"
           loading="eager"
           fetchPriority="high"
           decoding="async"
           referrerPolicy="no-referrer"
+          onError={handleImageError}
         />
 
         {safeImages.length > 1 ? (
@@ -75,10 +93,11 @@ export function ProductGallery({ images, productName }: ProductGalleryProps) {
               <img
                 src={optimizedThumbImages[index]}
                 alt={`${productName} thumbnail ${index + 1}`}
-                className="aspect-square w-full object-cover"
+                className="block aspect-square w-full object-cover"
                 loading="lazy"
                 decoding="async"
                 referrerPolicy="no-referrer"
+                onError={handleImageError}
               />
             </button>
           ))}

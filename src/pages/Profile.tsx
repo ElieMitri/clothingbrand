@@ -417,7 +417,7 @@ export function Profile() {
           <div id="my-orders" className="lg:col-span-3">
             <div className="mb-5">
               <h2 className="text-2xl font-semibold">My Orders</h2>
-              <p className="text-gray-600 mt-1">Track status, expand details, and cancel pending orders.</p>
+              <p className="text-gray-600 mt-1">Track status, open a dedicated details page, and cancel pending orders.</p>
             </div>
             {user ? <MyOrdersSection userId={user.uid} userEmail={user.email} /> : null}
           </div>

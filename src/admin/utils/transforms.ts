@@ -47,12 +47,25 @@ export interface AdminOrderItemDoc {
   price?: number;
   unitPrice?: number;
   quantity?: number;
+  retail_price?: number;
+  cost_price?: number;
+  commission_percentage?: number;
+  unit_profit?: number;
 }
 
 export interface AdminOrderDoc {
   id: string;
   user_id?: string;
   user_email?: string;
+  customer_name?: string;
+  phone?: string;
+  address?: string;
+  directions?: string;
+  zipCode?: string;
+  shipping_address?: string;
+  payment_method?: string;
+  payment_status?: string;
+  status_note?: string;
   created_at?: unknown;
   status?: OrderStatus;
   fulfillment_status?: "unfulfilled" | "processing" | "fulfilled";
@@ -63,6 +76,7 @@ export interface AdminOrderDoc {
   subtotal?: number;
   shipping?: number;
   tax?: number;
+  profit?: number;
   items?: AdminOrderItemDoc[];
 }
 
@@ -220,6 +234,11 @@ const getOrderProfit = (
   order: AdminOrderDoc,
   productById: Map<string, AdminProductDoc>
 ) => {
+  const persistedProfit = Number(order?.profit);
+  if (Number.isFinite(persistedProfit) && persistedProfit >= 0) {
+    return persistedProfit;
+  }
+
   const items = Array.isArray(order.items) ? order.items : [];
   return items.reduce((sum, item) => {
     const quantity = Number(item?.quantity || 0);
@@ -227,9 +246,47 @@ const getOrderProfit = (
     const unitSalePrice = Number(item?.price ?? item?.unitPrice ?? 0);
     const productId = String(item?.product_id || "").trim();
     const product = productById.get(productId);
-    const unitProfit = getUnitProfitFromProductDoc(product, unitSalePrice);
+    const unitProfit = getUnitProfitFromOrderItemDoc(item, product, unitSalePrice);
     return sum + unitProfit * quantity;
   }, 0);
+};
+
+export const getUnitProfitFromOrderItemDoc = (
+  item: AdminOrderItemDoc | undefined,
+  product: AdminProductDoc | undefined,
+  salePrice: number
+) => {
+  const rawManualUnitProfit = item?.unit_profit;
+  const parsedManualUnitProfit = Number(rawManualUnitProfit);
+  const hasManualUnitProfit =
+    rawManualUnitProfit !== undefined &&
+    rawManualUnitProfit !== null &&
+    String(rawManualUnitProfit).trim() !== "" &&
+    Number.isFinite(parsedManualUnitProfit) &&
+    parsedManualUnitProfit > 0;
+  if (hasManualUnitProfit) {
+    return parsedManualUnitProfit;
+  }
+
+  const effectiveSalePrice = Math.max(0, Number(salePrice || 0));
+  const commission = Math.max(0, normalizeCommissionPercent(item?.commission_percentage));
+  const costPrice = Math.max(0, Number(item?.cost_price || 0));
+  const retailPrice = Math.max(
+    0,
+    Number(item?.retail_price || effectiveSalePrice || 0)
+  );
+
+  if (retailPrice > 0 && costPrice > 0) {
+    return retailPrice - costPrice;
+  }
+  if (commission > 0) {
+    return effectiveSalePrice * (commission / 100);
+  }
+  if (costPrice > 0) {
+    return effectiveSalePrice - costPrice;
+  }
+
+  return getUnitProfitFromProductDoc(product, effectiveSalePrice);
 };
 
 export const mapProducts = (products: AdminProductDoc[]): ProductRow[] => {
@@ -255,11 +312,12 @@ export const mapProducts = (products: AdminProductDoc[]): ProductRow[] => {
 export const mapOrders = (orders: AdminOrderDoc[]): OrderRow[] => {
   return orders.map((order) => {
     const email = String(order.user_email || "").trim();
+    const explicitName = String(order.customer_name || "").trim();
     const dateValue = toDate(order.created_at);
     return {
       id: order.id,
       orderNumber: `#${order.id.slice(0, 6).toUpperCase()}`,
-      customer: email ? customerNameFromEmail(email) : "Guest",
+      customer: explicitName || (email ? customerNameFromEmail(email) : "Guest"),
       email: email || "-",
       date: dateValue.toLocaleDateString(),
       paymentStatus: derivePaymentStatus(order.status),
@@ -276,41 +334,113 @@ export const mapCustomers = (
   users: AdminUserDoc[],
   orders: AdminOrderDoc[]
 ): CustomerRow[] => {
-  return users.map((entry) => {
-    const email = String(entry.email || "").trim().toLowerCase();
-    const relatedOrders = orders.filter((order) => {
-      if (order.user_id && order.user_id === entry.id) return true;
-      if (!email) return false;
-      return String(order.user_email || "").trim().toLowerCase() === email;
-    });
+  const usersById = new Map<string, AdminUserDoc>();
+  const usersByEmail = new Map<string, AdminUserDoc>();
 
-    const spend = relatedOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+  users.forEach((entry) => {
+    const id = String(entry.id || "").trim();
+    const email = String(entry.email || "").trim().toLowerCase();
+    if (id) usersById.set(id, entry);
+    if (email) usersByEmail.set(email, entry);
+  });
+
+  const rowsByKey = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      email: string;
+      location: string;
+      spend: number;
+      orderCount: number;
+      hasAccount: boolean;
+    }
+  >();
+
+  const nameFromUser = (user: AdminUserDoc | undefined, fallbackEmail: string, fallbackName: string) => {
+    const profileName = String(
+      `${user?.firstName || ""} ${user?.lastName || ""}`.trim() ||
+        user?.displayName ||
+        ""
+    ).trim();
+    if (profileName) return profileName;
+    if (fallbackName) return fallbackName;
+    if (fallbackEmail) return customerNameFromEmail(fallbackEmail);
+    return "Guest";
+  };
+
+  orders.forEach((order) => {
+    const normalizedEmail = String(order.user_email || "").trim().toLowerCase();
+    const normalizedUserId = String(order.user_id || "").trim();
+    const matchedUser =
+      (normalizedUserId && usersById.get(normalizedUserId)) ||
+      (normalizedEmail ? usersByEmail.get(normalizedEmail) : undefined);
+    const hasAccount = Boolean(matchedUser || normalizedUserId);
+    const key = hasAccount
+      ? `account:${String(matchedUser?.id || normalizedUserId || normalizedEmail)}`
+      : normalizedEmail
+        ? `guest-email:${normalizedEmail}`
+        : `guest-order:${order.id}`;
+
+    const fallbackName = String(order.customer_name || "").trim();
+    const name = nameFromUser(matchedUser, normalizedEmail, fallbackName);
+    const profileLocation = [matchedUser?.city, matchedUser?.state, matchedUser?.country]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .join(", ");
+    const orderLocation = getOrderLocationLabel(order);
+    const location = profileLocation || (orderLocation !== "-" ? orderLocation : "-");
+    const amount = Number(order.total || 0);
+
+    const existing = rowsByKey.get(key);
+    if (existing) {
+      existing.spend += amount;
+      existing.orderCount += 1;
+      if (existing.location === "-" && location !== "-") existing.location = location;
+      return;
+    }
+
+    rowsByKey.set(key, {
+      id: String(matchedUser?.id || key),
+      name,
+      email: normalizedEmail || String(matchedUser?.email || "").trim().toLowerCase() || "-",
+      location,
+      spend: amount,
+      orderCount: 1,
+      hasAccount,
+    });
+  });
+
+  users.forEach((entry) => {
+    const id = String(entry.id || "").trim();
+    if (!id) return;
+    const exists = Array.from(rowsByKey.values()).some((row) => row.id === id);
+    if (exists) return;
+
+    const email = String(entry.email || "").trim().toLowerCase();
+    const name = nameFromUser(entry, email, "");
     const profileLocation = [entry.city, entry.state, entry.country]
       .map((part) => String(part || "").trim())
       .filter(Boolean)
       .join(", ");
-    const recentOrderLocation =
-      [...relatedOrders]
-        .sort((a, b) => toDate(b.created_at).getTime() - toDate(a.created_at).getTime())
-        .map((order) => getOrderLocationLabel(order))
-        .find((label) => label !== "-") || "";
 
-    const name = String(
-      `${entry.firstName || ""} ${entry.lastName || ""}`.trim() ||
-        entry.displayName ||
-        (email ? customerNameFromEmail(email) : "Customer")
-    );
-
-    return {
-      id: entry.id,
+    rowsByKey.set(`account:${id}`, {
+      id,
       name,
       email: email || "-",
-      location: profileLocation || recentOrderLocation || "-",
-      spend,
-      orderCount: relatedOrders.length,
-      tags: relatedOrders.length > 3 ? ["Returning"] : ["New"],
-    };
+      location: profileLocation || "-",
+      spend: 0,
+      orderCount: 0,
+      hasAccount: true,
+    });
   });
+
+  return Array.from(rowsByKey.values())
+    .sort((a, b) => b.spend - a.spend)
+    .map((row) => ({
+      ...row,
+      tags: [row.hasAccount ? "Has account" : "No account"],
+    }));
 };
 
 export const buildDashboardKpis = (
