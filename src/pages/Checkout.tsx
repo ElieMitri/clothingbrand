@@ -152,6 +152,23 @@ export function Checkout() {
   );
   const shipping = subtotal > 120 || items.length === 0 ? 0 : 4;
   const total = subtotal + shipping;
+  const canPlaceOrder = useMemo(() => {
+    if (items.length === 0) return false;
+    const requiredFields: Array<keyof typeof checkoutForm> = [
+      "name",
+      "email",
+      "phone",
+      "address",
+      "directions",
+      "city",
+    ];
+    const hasAllRequired = requiredFields.every((field) =>
+      String(checkoutForm[field] || "").trim()
+    );
+    if (!hasAllRequired) return false;
+    const normalizedEmail = String(checkoutForm.email || "").trim().toLowerCase();
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
+  }, [checkoutForm, items.length]);
 
   const handlePlaceOrder = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -524,7 +541,7 @@ export function Checkout() {
             contact you to confirm delivery.
           </p>
 
-          <Button type="submit" fullWidth size="lg" disabled={placingOrder}>
+          <Button type="submit" fullWidth size="lg" disabled={placingOrder || !canPlaceOrder}>
             {placingOrder ? "Placing order..." : "Place Order"}
           </Button>
         </aside>

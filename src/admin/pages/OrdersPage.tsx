@@ -378,6 +378,10 @@ export function OrdersPage() {
     const customerName = String(rawOrder.customer_name || row.customer || "Customer").trim();
     const email = String(rawOrder.user_email || row.email || "").trim();
     const phone = String(rawOrder.phone || "").trim() || "-";
+    const address = String(rawOrder.address || "").trim() || "-";
+    const shippingAddress = String(rawOrder.shipping_address || "").trim() || "-";
+    const city = String(rawOrder.city || "").trim() || "-";
+    const directions = String(rawOrder.directions || "").trim() || "-";
     const orderDate =
       rawOrder.created_at instanceof Timestamp
         ? rawOrder.created_at.toDate().toLocaleString()
@@ -577,10 +581,75 @@ export function OrdersPage() {
     ctx.fillStyle = "#334155";
     ctx.fillText(truncateByWidth(email || "-", contentWidth - 40, ctx.font), contentX + 20, customerBoxY + 108);
 
+    const addressBoxY = customerBoxY + 150;
+    const addressBoxHeight = 172;
+    drawRoundedRect(contentX, addressBoxY, contentWidth, addressBoxHeight, 16);
+    ctx.fillStyle = "#f8fbff";
+    ctx.fill();
+    ctx.strokeStyle = "#dbe6f5";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#64748b";
+    ctx.font = "700 20px Helvetica Neue, Arial, sans-serif";
+    ctx.fillText("Address details", contentX + 20, addressBoxY + 34);
+
+    const addressLabelXLeft = contentX + 20;
+    const addressValueXLeft = contentX + 180;
+    const addressLabelXRight = contentX + contentWidth / 2 + 10;
+    const addressValueXRight = addressLabelXRight + 130;
+    const addressRightMaxWidth = contentRightX - 20 - addressValueXRight;
+    const addressLeftMaxWidth = contentX + contentWidth / 2 - 22 - addressValueXLeft;
+
+    const drawAddressRow = (
+      y: number,
+      leftLabel: string,
+      leftValue: string,
+      rightLabel: string,
+      rightValue: string
+    ) => {
+      ctx.fillStyle = "#64748b";
+      ctx.font = "600 18px Helvetica Neue, Arial, sans-serif";
+      ctx.fillText(leftLabel, addressLabelXLeft, y);
+      if (rightLabel.trim()) {
+        ctx.fillText(rightLabel, addressLabelXRight, y);
+      }
+
+      ctx.fillStyle = "#0f172a";
+      ctx.font = "500 18px Helvetica Neue, Arial, sans-serif";
+      ctx.fillText(
+        truncateByWidth(leftValue || "-", addressLeftMaxWidth, ctx.font),
+        addressValueXLeft,
+        y
+      );
+      if (rightLabel.trim()) {
+        ctx.fillText(
+          truncateByWidth(rightValue || "-", addressRightMaxWidth, ctx.font),
+          addressValueXRight,
+          y
+        );
+      }
+    };
+
+    drawAddressRow(addressBoxY + 68, "Address", address, "City", city);
+    drawAddressRow(addressBoxY + 102, "Shipping", shippingAddress, "", "");
+
+    ctx.fillStyle = "#64748b";
+    ctx.font = "600 18px Helvetica Neue, Arial, sans-serif";
+    ctx.fillText("Directions", addressLabelXLeft, addressBoxY + 136);
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "500 18px Helvetica Neue, Arial, sans-serif";
+    ctx.fillText(
+      truncateByWidth(directions || "-", contentWidth - 40, ctx.font),
+      addressValueXLeft,
+      addressBoxY + 136
+    );
+
     const footerHeight = 74;
     const totalsHeight = 190;
     const totalsY = cardY + fullCardHeight - footerHeight - totalsHeight - 24;
-    const tableY = customerBoxY + 156;
+    const tableY = addressBoxY + addressBoxHeight + 18;
     const tableBottomY = totalsY - 20;
 
     drawRoundedRect(contentX, tableY, contentWidth, tableBottomY - tableY, 16);
