@@ -62,6 +62,12 @@ body {
   padding-inline: 1rem;
 }
 
+@media (max-width: 767px) {
+  .checkout-container {
+    padding-inline: 1.25rem;
+  }
+}
+
 @media (min-width: 768px) {
   .store-container {
     padding-inline: 1.5rem;

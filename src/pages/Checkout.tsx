@@ -336,8 +336,8 @@ export function Checkout() {
   }
 
   return (
-    <div className="store-container pb-10 pt-8">
-      <div className="mb-5 flex items-center justify-between gap-3">
+    <div className="store-container checkout-container overflow-x-hidden pb-10 pt-6 sm:pt-8">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--sf-text-muted)]">
             Secure Checkout
@@ -348,15 +348,74 @@ export function Checkout() {
         </div>
         <Link
           to="/cart"
-          className="rounded-[10px] border border-[var(--sf-line)] px-3.5 py-2 text-sm text-[var(--sf-text)] hover:bg-[var(--sf-bg-soft)]"
+          className="inline-flex h-10 self-start items-center justify-center rounded-[10px] border border-[var(--sf-line)] px-3.5 py-2 text-sm text-[var(--sf-text)] hover:bg-[var(--sf-bg-soft)] sm:h-auto sm:self-auto"
         >
           Back to Cart
         </Link>
       </div>
 
-      <form onSubmit={handlePlaceOrder} className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="space-y-5">
-          <section className="rounded-[12px] border border-[var(--sf-line)] bg-white p-4">
+      <form onSubmit={handlePlaceOrder} className="grid min-w-0 gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <aside className="order-1 h-fit min-w-0 space-y-4 rounded-[12px] border border-[var(--sf-line)] bg-white p-4 sm:p-5 lg:order-2 lg:sticky lg:top-28">
+          <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-[var(--sf-text-muted)]">
+            Order Items
+          </h2>
+          <div className="space-y-3">
+            {items.map((item) => (
+              <div key={item.id} className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+                <img
+                  src={toFastImageUrl(item.product.image_url, 240)}
+                  alt={item.product.name}
+                  className="h-12 w-10 rounded-[8px] border border-[var(--sf-line)] object-cover sm:h-14 sm:w-12"
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-[var(--sf-text)]">{item.product.name}</p>
+                  <p className="text-xs text-[var(--sf-text-muted)]">{item.size} · Qty {item.quantity}</p>
+                </div>
+                <p className="text-sm font-semibold text-[var(--sf-text)]">
+                  {formatPrice(item.product.price * item.quantity)}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-1 border-t border-[var(--sf-line)] pt-3 text-sm">
+            <div className="flex items-center justify-between text-[var(--sf-text-muted)]">
+              <span>Subtotal</span>
+              <span>{formatPrice(subtotal)}</span>
+            </div>
+            <div className="flex items-center justify-between text-[var(--sf-text-muted)]">
+              <span>Shipping</span>
+              <span>{formatPrice(shipping)}</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-base font-semibold text-[var(--sf-text)]">
+              <span>Total</span>
+              <span>{formatPrice(total)}</span>
+            </div>
+          </div>
+
+          <div className="hidden space-y-4 lg:block">
+            {checkoutError ? (
+              <p className="rounded-[10px] border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                {checkoutError}
+              </p>
+            ) : null}
+
+            <p className="text-xs leading-5 text-[var(--sf-text-muted)]">
+              By placing your order, you agree to our terms and acknowledge that we may
+              contact you to confirm delivery.
+            </p>
+
+            <Button type="submit" fullWidth size="lg" disabled={placingOrder || !canPlaceOrder}>
+              {placingOrder ? "Placing order..." : "Place Order"}
+            </Button>
+          </div>
+        </aside>
+
+        <div className="order-2 space-y-5 lg:order-1">
+          <section className="rounded-[12px] border border-[var(--sf-line)] bg-white p-4 sm:p-5">
             <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-[var(--sf-text-muted)]">
               Contact Information
             </h2>
@@ -398,7 +457,7 @@ export function Checkout() {
             </div>
           </section>
 
-          <section className="rounded-[12px] border border-[var(--sf-line)] bg-white p-4">
+          <section className="rounded-[12px] border border-[var(--sf-line)] bg-white p-4 sm:p-5">
             <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-[var(--sf-text-muted)]">
               Shipping Address
             </h2>
@@ -451,7 +510,7 @@ export function Checkout() {
             </div>
           </section>
 
-          <section className="rounded-[12px] border border-[var(--sf-line)] bg-white p-4">
+          <section className="rounded-[12px] border border-[var(--sf-line)] bg-white p-4 sm:p-5">
             <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-[var(--sf-text-muted)]">
               Shipping Method
             </h2>
@@ -460,14 +519,14 @@ export function Checkout() {
                 <Truck size={16} className="text-[var(--sf-accent)]" />
                 <div>
                   <p className="text-sm font-semibold text-[var(--sf-text)]">Standard Delivery</p>
-                  <p className="text-xs text-[var(--sf-text-muted)]">1-3 business days</p>
+                  <p className="text-xs text-[var(--sf-text-muted)]">1-3 business days(might differ due to current conditions)</p>
                 </div>
               </div>
               <p className="text-sm font-semibold text-[var(--sf-text)]">{formatPrice(shipping)}</p>
             </div>
           </section>
 
-          <section className="rounded-[12px] border border-[var(--sf-line)] bg-white p-4">
+          <section className="rounded-[12px] border border-[var(--sf-line)] bg-white p-4 sm:p-5">
             <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-[var(--sf-text-muted)]">
               Payment Method
             </h2>
@@ -501,64 +560,26 @@ export function Checkout() {
               </button>
             </div>
           </section>
-        </div>
 
-        <aside className="h-fit space-y-4 rounded-[12px] border border-[var(--sf-line)] bg-white p-4 lg:sticky lg:top-28">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.1em] text-[var(--sf-text-muted)]">
-            Order Summary
-          </h2>
-          <div className="space-y-3">
-            {items.map((item) => (
-              <div key={item.id} className="flex items-center gap-3">
-                <img
-                  src={toFastImageUrl(item.product.image_url, 240)}
-                  alt={item.product.name}
-                  className="h-14 w-12 rounded-[8px] border border-[var(--sf-line)] object-cover"
-                  loading="lazy"
-                  decoding="async"
-                  referrerPolicy="no-referrer"
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-[var(--sf-text)]">{item.product.name}</p>
-                  <p className="text-xs text-[var(--sf-text-muted)]">{item.size} · Qty {item.quantity}</p>
-                </div>
-                <p className="text-sm font-semibold text-[var(--sf-text)]">
-                  {formatPrice(item.product.price * item.quantity)}
-                </p>
-              </div>
-            ))}
-          </div>
+          <section className="rounded-[12px] border border-[var(--sf-line)] bg-white p-4 sm:p-5 lg:hidden">
+            {checkoutError ? (
+              <p className="rounded-[10px] border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                {checkoutError}
+              </p>
+            ) : null}
 
-          <div className="space-y-1 border-t border-[var(--sf-line)] pt-3 text-sm">
-            <div className="flex items-center justify-between text-[var(--sf-text-muted)]">
-              <span>Subtotal</span>
-              <span>{formatPrice(subtotal)}</span>
-            </div>
-            <div className="flex items-center justify-between text-[var(--sf-text-muted)]">
-              <span>Shipping</span>
-              <span>{formatPrice(shipping)}</span>
-            </div>
-            <div className="mt-2 flex items-center justify-between text-base font-semibold text-[var(--sf-text)]">
-              <span>Total</span>
-              <span>{formatPrice(total)}</span>
-            </div>
-          </div>
-
-          {checkoutError ? (
-            <p className="rounded-[10px] border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
-              {checkoutError}
+            <p className="mt-3 text-xs leading-5 text-[var(--sf-text-muted)]">
+              By placing your order, you agree to our terms and acknowledge that we may
+              contact you to confirm delivery.
             </p>
-          ) : null}
 
-          <p className="text-xs leading-5 text-[var(--sf-text-muted)]">
-            By placing your order, you agree to our terms and acknowledge that we may
-            contact you to confirm delivery.
-          </p>
-
-          <Button type="submit" fullWidth size="lg" disabled={placingOrder || !canPlaceOrder}>
-            {placingOrder ? "Placing order..." : "Place Order"}
-          </Button>
-        </aside>
+            <div className="mt-4">
+              <Button type="submit" fullWidth size="lg" disabled={placingOrder || !canPlaceOrder}>
+                {placingOrder ? "Placing order..." : "Place Order"}
+              </Button>
+            </div>
+          </section>
+        </div>
       </form>
     </div>
   );
