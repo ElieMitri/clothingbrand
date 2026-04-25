@@ -351,10 +351,35 @@ const suggestShopMenuPath = (label: string) => {
     : "/shop";
 };
 
+const normalizeCategoryQueryLabel = (value: string) => {
+  const decoded = decodeURIComponent(String(value || ""));
+  const cleaned = decoded.replace(/\+/g, " ").trim().replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, "");
+  if (!cleaned) return "";
+  return toDisplayCategoryFromToken(cleaned) || cleaned;
+};
+
 const normalizeHomepageShopPath = (rawPath: string) => {
   const trimmed = String(rawPath || "").trim();
   if (!trimmed) return "";
   const path = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+
+  try {
+    const parsed = new URL(path, "https://lbathletes.local");
+    if (parsed.pathname.toLowerCase() === "/shop" && parsed.searchParams.has("category")) {
+      const normalizedCategory = normalizeCategoryQueryLabel(
+        String(parsed.searchParams.get("category") || "")
+      );
+      if (!normalizedCategory) {
+        parsed.searchParams.delete("category");
+      } else {
+        parsed.searchParams.set("category", normalizedCategory);
+      }
+      const query = parsed.searchParams.toString();
+      return query ? `${parsed.pathname}?${query}` : parsed.pathname;
+    }
+  } catch {
+    // ignore parse failures and continue with fallback logic
+  }
 
   const categoryPrefixMatch = path.match(/^\/category\/([^/?#]+)/i);
   if (!categoryPrefixMatch) return path;

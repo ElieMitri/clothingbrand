@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Filter } from "lucide-react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
@@ -10,9 +10,48 @@ import { ProductCard } from "../components/storefront/ProductCard";
 import { Button } from "../components/storefront/Button";
 import { FilterSidebar } from "../components/storefront/FilterSidebar";
 
+const slugifyCategoryToken = (value: string) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+const singularizeCategoryWord = (word: string) => {
+  const token = String(word || "").trim();
+  if (!token) return "";
+  if (token.endsWith("ies") && token.length > 4) return `${token.slice(0, -3)}y`;
+  if (token.endsWith("sses") || token.endsWith("ss")) return token;
+  if (token.endsWith("s") && token.length > 3) return token.slice(0, -1);
+  return token;
+};
+
+const normalizeCategoryKey = (value: string) => {
+  const compact = slugifyCategoryToken(decodeURIComponent(String(value || "")))
+    .split("-")
+    .filter(Boolean)
+    .map((token) => singularizeCategoryWord(token))
+    .join("");
+  if (!compact) return "";
+  if (compact === "gym" || compact === "crossfit" || compact === "gymcrossfit") return "gymcrossfit";
+  if (
+    compact === "martialarts" ||
+    compact === "martial" ||
+    compact === "muaythai" ||
+    compact === "boxing" ||
+    compact === "mma" ||
+    compact === "combat" ||
+    compact === "combatsports"
+  ) {
+    return "martialarts";
+  }
+  return compact;
+};
+
 export function Shop() {
   const PRODUCTS_PER_BATCH = 12;
   const location = useLocation();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [products, setProducts] = useState<StoreProduct[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -35,38 +74,53 @@ export function Shop() {
     return () => unsubscribe();
   }, []);
 
+  const categoryOptions = useMemo(() => {
+    const byKey = new Map<string, { label: string; count: number }>();
+    products.forEach((product) => {
+      const label = String(product.category || "").trim();
+      if (!label) return;
+      const key = normalizeCategoryKey(label);
+      if (!key) return;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, { label, count: 1 });
+        return;
+      }
+      byKey.set(key, {
+        label: label.length > existing.label.length ? label : existing.label,
+        count: existing.count + 1,
+      });
+    });
+    return Array.from(byKey.entries())
+      .map(([value, entry]) => ({ value, label: entry.label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [products]);
+
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const categoryParam = params.get("category");
     const searchParam = params.get("search");
 
-    if (categoryParam) {
-      setSelectedCategory(categoryParam);
+    if (!categoryParam) {
+      setSelectedCategory("all");
+    } else {
+      const selectedKey = normalizeCategoryKey(categoryParam);
+      setSelectedCategory(selectedKey || "all");
     }
-    if (searchParam) {
-      setSearchTerm(searchParam);
-    }
-  }, [location.search]);
 
-  const categories = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          products
-            .map((product) => String(product.category || "").trim())
-            .filter(Boolean)
-        )
-      ).sort((a, b) => a.localeCompare(b)),
-    [products]
-  );
+    setSearchTerm(searchParam || "");
+  }, [location.search]);
 
   const filteredProducts = useMemo(() => {
     let next = [...products];
 
     if (selectedCategory !== "all") {
-      next = next.filter((product) =>
-        String(product.category || "").toLowerCase() === selectedCategory.toLowerCase()
-      );
+      const selectedCategoryKey = normalizeCategoryKey(selectedCategory);
+      next = next.filter((product) => {
+        const productCategoryKey = normalizeCategoryKey(String(product.category || ""));
+        if (!productCategoryKey || !selectedCategoryKey) return false;
+        return productCategoryKey === selectedCategoryKey;
+      });
     }
 
     if (searchTerm.trim()) {
@@ -91,6 +145,18 @@ export function Shop() {
 
     return next;
   }, [products, selectedCategory, searchTerm, minPrice, maxPrice, sortBy]);
+
+  const onCategoryChange = (nextCategoryKey: string) => {
+    const params = new URLSearchParams(location.search);
+    if (nextCategoryKey === "all") {
+      params.delete("category");
+    } else {
+      const selectedOption = categoryOptions.find((option) => option.value === nextCategoryKey);
+      params.set("category", selectedOption?.label || nextCategoryKey);
+    }
+    const query = params.toString();
+    navigate(`${location.pathname}${query ? `?${query}` : ""}`, { replace: true });
+  };
 
   const visibleProducts = useMemo(
     () => filteredProducts.slice(0, visibleCount),
@@ -146,9 +212,9 @@ export function Shop() {
         <FilterSidebar
           open={filtersOpen}
           onClose={() => setFiltersOpen(false)}
-          categories={categories}
+          categories={categoryOptions}
           selectedCategory={selectedCategory}
-          onCategoryChange={setSelectedCategory}
+          onCategoryChange={onCategoryChange}
           sortBy={sortBy}
           onSortChange={setSortBy}
           minPrice={minPrice}
@@ -168,11 +234,15 @@ export function Shop() {
             <button
               type="button"
               onClick={() => {
-                setSelectedCategory("all");
                 setSortBy("featured");
                 setMinPrice(0);
                 setMaxPrice(500);
                 setSearchTerm("");
+                const params = new URLSearchParams(location.search);
+                params.delete("category");
+                params.delete("search");
+                const query = params.toString();
+                navigate(`${location.pathname}${query ? `?${query}` : ""}`, { replace: true });
               }}
               className="text-sm font-medium text-[var(--sf-text-muted)] hover:text-[var(--sf-text)]"
             >

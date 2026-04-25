@@ -211,6 +211,10 @@ export function StoreHeader() {
 
       if (!queryString) {
         if (targetPath === "/") return location.pathname === "/";
+        if (targetPath === "/shop") {
+          const current = new URLSearchParams(location.search);
+          return location.pathname === "/shop" && !current.has("category");
+        }
         return (
           location.pathname === targetPath ||
           location.pathname.startsWith(`${targetPath}/`)

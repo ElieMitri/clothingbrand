@@ -3,7 +3,7 @@ import { X } from "lucide-react";
 interface FilterSidebarProps {
   open: boolean;
   onClose: () => void;
-  categories: string[];
+  categories: Array<{ label: string; value: string }>;
   selectedCategory: string;
   onCategoryChange: (value: string) => void;
   sortBy: string;
@@ -64,14 +64,14 @@ export function FilterSidebar({
                 All Products
               </label>
               {categories.map((category) => (
-                <label key={category} className="flex items-center gap-2 text-sm">
+                <label key={category.value} className="flex items-center gap-2 text-sm">
                   <input
                     type="radio"
                     name="category"
-                    checked={selectedCategory === category}
-                    onChange={() => onCategoryChange(category)}
+                    checked={selectedCategory === category.value}
+                    onChange={() => onCategoryChange(category.value)}
                   />
-                  {category}
+                  {category.label}
                 </label>
               ))}
             </div>
