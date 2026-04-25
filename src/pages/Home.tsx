@@ -44,21 +44,18 @@ const valueItems = [
 const testimonials = [
   {
     quote: "The fit and quality are better than any brand I used this year.",
-    author: "Maya K.",
-    role: "Hybrid Athlete",
+    author: "Nour Haddad",
     rating: 5,
   },
   {
     quote: "Simple checkout, fast shipping, and products that perform in the gym.",
-    author: "Karim S.",
-    role: "Strength Coach",
-    rating: 5,
+    author: "Charbel Khoury",
+    rating: 4.5,
   },
   {
     quote: "Premium feel without overdesign. Exactly what I want in sportswear.",
-    author: "Rami H.",
-    role: "Crossfit Member",
-    rating: 5,
+    author: "Lynn Daher",
+    rating: 4.8,
   },
 ];
 
@@ -66,7 +63,7 @@ export function Home() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [products, setProducts] = useState<StoreProduct[]>([]);
-  const [todayPickProductId, setTodayPickProductId] = useState("");
+  const [featuredProductIds, setFeaturedProductIds] = useState<string[]>([]);
   const [quickAddingId, setQuickAddingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -84,31 +81,53 @@ export function Home() {
   useEffect(() => {
     return onSnapshot(doc(db, "site_settings", "homepage"), (snapshot) => {
       if (!snapshot.exists()) {
-        setTodayPickProductId("");
+        setFeaturedProductIds([]);
         return;
       }
-      const data = snapshot.data() as { today_pick_product_id?: string };
-      setTodayPickProductId(String(data.today_pick_product_id || "").trim());
+      const data = snapshot.data() as {
+        featured_product_ids?: string[];
+      };
+      const ids = Array.isArray(data.featured_product_ids)
+        ? data.featured_product_ids.map((entry) => String(entry || "").trim()).filter(Boolean)
+        : [];
+      setFeaturedProductIds(ids.slice(0, 6));
     });
   }, []);
 
-  const featuredPick = useMemo(() => {
-    if (todayPickProductId) {
-      const adminSelected = products.find((item) => item.id === todayPickProductId);
-      if (adminSelected) return adminSelected;
-    }
-    return products.find((item) => item.is_featured) || products[0] || null;
-  }, [products, todayPickProductId]);
+  const featuredProducts = useMemo(() => {
+    const byId = new Map(products.map((item) => [item.id, item]));
+    const selectedFromAdmin = featuredProductIds
+      .map((id) => byId.get(id))
+      .filter((item): item is StoreProduct => Boolean(item));
+
+    const selectedIds = new Set(selectedFromAdmin.map((item) => item.id));
+    const remainingFeatured = products.filter(
+      (item) => Boolean(item.is_featured) && !selectedIds.has(item.id)
+    );
+
+    const merged = [...selectedFromAdmin, ...remainingFeatured];
+    if (merged.length >= 6) return merged.slice(0, 6);
+
+    const fallback = products.filter((item) => !selectedIds.has(item.id));
+    return [...merged, ...fallback].slice(0, 6);
+  }, [featuredProductIds, products]);
 
   const randomProducts = useMemo(() => {
-    const pool = products.filter((item) => item.id !== featuredPick?.id);
+    const featuredIds = new Set(featuredProducts.map((item) => item.id));
+    const pool = products.filter((item) => !featuredIds.has(item.id));
     const shuffled = [...pool];
     for (let index = shuffled.length - 1; index > 0; index -= 1) {
       const randomIndex = Math.floor(Math.random() * (index + 1));
       [shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]];
     }
     return shuffled.slice(0, 8);
-  }, [products, featuredPick?.id]);
+  }, [products, featuredProducts]);
+
+  const averageTestimonialRating = useMemo(() => {
+    if (testimonials.length === 0) return 0;
+    const total = testimonials.reduce((sum, testimonial) => sum + Number(testimonial.rating || 0), 0);
+    return total / testimonials.length;
+  }, []);
 
   const handleQuickAdd = async (product: StoreProduct) => {
     const size = Array.isArray(product.sizes) && product.sizes.length > 0 ? product.sizes[0] : "M";
@@ -166,18 +185,22 @@ export function Home() {
 
       <section className="store-container mt-16">
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="font-display text-2xl font-bold">Featured Pick</h2>
+          <h2 className="font-display text-2xl font-bold">Featured Products</h2>
         </div>
-        {featuredPick ? (
-          <div className="max-w-sm">
-            <ProductCard product={featuredPick} onQuickAdd={handleQuickAdd} />
-            {quickAddingId === featuredPick.id ? (
-              <p className="mt-2 text-xs text-[var(--sf-text-muted)]">Adding to cart...</p>
-            ) : null}
+        {featuredProducts.length > 0 ? (
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+            {featuredProducts.map((product) => (
+              <div key={product.id} className="h-full">
+                <ProductCard product={product} onQuickAdd={handleQuickAdd} />
+                {quickAddingId === product.id ? (
+                  <p className="mt-2 text-xs text-[var(--sf-text-muted)]">Adding to cart...</p>
+                ) : null}
+              </div>
+            ))}
           </div>
         ) : (
           <div className="store-card p-8 text-center">
-            <p className="text-sm text-[var(--sf-text-muted)]">No featured product configured yet.</p>
+            <p className="text-sm text-[var(--sf-text-muted)]">No featured products configured yet.</p>
           </div>
         )}
       </section>
@@ -212,7 +235,9 @@ export function Home() {
         <div className="store-card overflow-hidden p-6 md:p-8">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <h2 className="font-display text-2xl font-bold">Trusted By Athletes</h2>
-            <p className="text-sm text-[var(--sf-text-muted)]">4.9/5 average customer satisfaction</p>
+            <p className="text-sm text-[var(--sf-text-muted)]">
+              {averageTestimonialRating.toFixed(1)}/5 average customer satisfaction
+            </p>
           </div>
           <div className="grid gap-4 md:grid-cols-3">
             {testimonials.map((testimonial) => (
@@ -222,9 +247,31 @@ export function Home() {
               >
                 <Quote size={18} className="absolute right-4 top-4 text-[var(--sf-accent)]/30" />
                 <div className="mb-3 flex items-center gap-1 text-amber-500">
-                  {Array.from({ length: testimonial.rating }).map((_, index) => (
-                    <Star key={`${testimonial.author}-${index}`} size={14} fill="currentColor" />
-                  ))}
+                  {Array.from({ length: 5 }).map((_, index) => {
+                    const starIndex = index + 1;
+                    const fillRatio = Math.max(0, Math.min(1, Number(testimonial.rating || 0) - index));
+                    const fillPercent = Math.round(fillRatio * 100);
+                    return (
+                      <span
+                        key={`${testimonial.author}-${index}`}
+                        className="relative inline-flex"
+                        aria-hidden="true"
+                      >
+                        <Star size={14} className="text-amber-200" />
+                        {fillPercent > 0 ? (
+                          <span
+                            className="absolute inset-0 overflow-hidden"
+                            style={{ width: `${fillPercent}%` }}
+                          >
+                            <Star size={14} fill="currentColor" />
+                          </span>
+                        ) : null}
+                      </span>
+                    );
+                  })}
+                  <span className="ml-1 text-xs font-semibold text-amber-600">
+                    {Number(testimonial.rating || 0).toFixed(1)}
+                  </span>
                 </div>
                 <p className="text-sm leading-6 text-[var(--sf-text)]">“{testimonial.quote}”</p>
                 <div className="mt-4 flex items-center gap-3">
@@ -237,9 +284,6 @@ export function Home() {
                   </span>
                   <div>
                     <p className="text-sm font-semibold text-[var(--sf-text)]">{testimonial.author}</p>
-                    <p className="text-xs uppercase tracking-[0.08em] text-[var(--sf-text-muted)]">
-                      {testimonial.role}
-                    </p>
                   </div>
                 </div>
               </article>

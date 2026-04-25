@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Filter } from "lucide-react";
 import { db } from "../lib/firebase";
@@ -31,6 +31,7 @@ interface Product {
 }
 
 export function NewArrivals() {
+  const PRODUCTS_PER_BATCH = 12;
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +47,7 @@ export function NewArrivals() {
   const [configuredNewArrivalIds, setConfiguredNewArrivalIds] = useState<string[]>(
     []
   );
+  const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_BATCH);
 
   const categories = Array.from(
     new Set(
@@ -189,6 +191,15 @@ export function NewArrivals() {
     selectedAudience !== "all" ||
     priceRange[0] > 0 ||
     priceRange[1] < 1000;
+  const visibleProducts = useMemo(
+    () => filteredProducts.slice(0, visibleCount),
+    [filteredProducts, visibleCount]
+  );
+  const hasMoreProducts = visibleProducts.length < filteredProducts.length;
+
+  useEffect(() => {
+    setVisibleCount(PRODUCTS_PER_BATCH);
+  }, [selectedCategories, selectedAudience, priceRange, sortBy, products]);
 
   return (
     <div className="min-h-screen pt-20 pb-10 px-4 bg-white">
@@ -247,7 +258,7 @@ export function NewArrivals() {
 
           <div className="flex items-center gap-2.5">
             <span className="text-sm text-gray-600 hidden sm:inline">
-              {filteredProducts.length}{" "}
+              {visibleProducts.length} of {filteredProducts.length}{" "}
               {filteredProducts.length === 1 ? "item" : "items"}
             </span>
             <select
@@ -375,37 +386,50 @@ export function NewArrivals() {
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 md:gap-6">
-                {filteredProducts.map((product) => (
-                  <Link
-                    key={product.id}
-                    to={`/product/${product.id}`}
-                    className="group"
-                  >
-                    <div className="aspect-[3/4] rounded-lg mb-3 overflow-hidden relative bg-white">
-                      <img
-                        src={product.image_url}
-                        alt={product.name}
-                        loading="lazy"
-                        decoding="async"
-                        className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
-                      />
-                      <div className="absolute top-3 left-3 bg-black text-white text-xs px-3 py-1 tracking-wider">
-                        NEW
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 md:gap-6">
+                  {visibleProducts.map((product) => (
+                    <Link
+                      key={product.id}
+                      to={`/product/${product.id}`}
+                      className="group"
+                    >
+                      <div className="aspect-[3/4] rounded-lg mb-3 overflow-hidden relative bg-white">
+                        <img
+                          src={product.image_url}
+                          alt={product.name}
+                          loading="lazy"
+                          decoding="async"
+                          className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
+                        />
+                        <div className="absolute top-3 left-3 bg-black text-white text-xs px-3 py-1 tracking-wider">
+                          NEW
+                        </div>
                       </div>
-                    </div>
-                    <h3 className="font-light text-sm md:text-base mb-1 tracking-wide line-clamp-1">
-                      {product.name}
-                    </h3>
-                    <p className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">
-                      {toProductAuthenticityLabel(product.authenticity)}
-                    </p>
-                    <p className="text-gray-600 text-sm md:text-base font-medium">
-                      ${product.price.toFixed(2)}
-                    </p>
-                  </Link>
-                ))}
-              </div>
+                      <h3 className="font-light text-sm md:text-base mb-1 tracking-wide line-clamp-1">
+                        {product.name}
+                      </h3>
+                      <p className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">
+                        {toProductAuthenticityLabel(product.authenticity)}
+                      </p>
+                      <p className="text-gray-600 text-sm md:text-base font-medium">
+                        ${product.price.toFixed(2)}
+                      </p>
+                    </Link>
+                  ))}
+                </div>
+                {hasMoreProducts ? (
+                  <div className="mt-8 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setVisibleCount((prev) => prev + PRODUCTS_PER_BATCH)}
+                      className="inline-flex items-center rounded-xl border border-gray-300 px-5 py-2.5 text-sm font-medium hover:border-black transition-colors"
+                    >
+                      Load more ({filteredProducts.length - visibleProducts.length} left)
+                    </button>
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
         </div>

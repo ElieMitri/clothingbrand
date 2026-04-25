@@ -104,6 +104,7 @@ const categoryMatchesSlug = (product: Product, slug: string) => {
 };
 
 export function CategoryPage() {
+  const PRODUCTS_PER_BATCH = 12;
   const { slug = "" } = useParams<{ slug: string }>();
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
@@ -118,6 +119,7 @@ export function CategoryPage() {
     "featured"
   );
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_BATCH);
 
   useEffect(() => {
     setLoading(true);
@@ -252,6 +254,15 @@ export function CategoryPage() {
     () => (displayName?.trim() ? displayName : fromCategorySlug(slug)),
     [displayName, slug]
   );
+  const visibleProducts = useMemo(
+    () => filteredProducts.slice(0, visibleCount),
+    [filteredProducts, visibleCount]
+  );
+  const hasMoreProducts = visibleProducts.length < filteredProducts.length;
+
+  useEffect(() => {
+    setVisibleCount(PRODUCTS_PER_BATCH);
+  }, [slug, selectedType, selectedAudience, searchTerm, sortBy]);
 
   useEffect(() => {
     if (!isFilterPanelOpen) return;
@@ -316,7 +327,7 @@ export function CategoryPage() {
 
         <div className="mb-8 flex items-center justify-between gap-3">
           <p className="text-sm text-gray-500">
-            Showing {filteredProducts.length} product
+            Showing {visibleProducts.length} of {filteredProducts.length} product
             {filteredProducts.length === 1 ? "" : "s"}
           </p>
           {activeFilterCount > 0 ? (
@@ -484,50 +495,63 @@ export function CategoryPage() {
             </Link>
           </div>
         ) : (
-          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-            {filteredProducts.map((product) => (
-              <Link
-                key={product.id}
-                to={`/product/${product.id}`}
-                className="group"
-              >
-                <div className="relative aspect-[3/4] mb-4 overflow-hidden rounded-lg bg-white">
-                  <img
-                    src={product.image_url}
-                    alt={product.name}
-                    loading="lazy"
-                    decoding="async"
-                    className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
-                  />
-                  {Boolean(product.sold_out) && (
-                    <span className="absolute top-2 left-2 px-2 py-1 bg-red-600 text-white text-[10px] font-semibold rounded">
-                      Sold Out
-                    </span>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <p className="text-xs tracking-wider text-gray-500 uppercase">
-                    {[
-                      product.category,
-                      shouldShowAudienceForProduct(product)
-                        ? audienceLabelMap[
-                            normalizeProductAudience(product.audience, product.category)
-                          ]
-                        : "",
-                      toProductAuthenticityLabel(product.authenticity),
-                    ]
-                      .map((entry) => String(entry || "").trim())
-                      .filter(Boolean)
-                      .join(" • ")}
-                  </p>
-                  <h3 className="font-light text-lg">{product.name}</h3>
-                  <p className="text-gray-900 font-medium">
-                    ${product.price.toFixed(2)}
-                  </p>
-                </div>
-              </Link>
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+              {visibleProducts.map((product) => (
+                <Link
+                  key={product.id}
+                  to={`/product/${product.id}`}
+                  className="group"
+                >
+                  <div className="relative aspect-[3/4] mb-4 overflow-hidden rounded-lg bg-white">
+                    <img
+                      src={product.image_url}
+                      alt={product.name}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
+                    />
+                    {Boolean(product.sold_out) && (
+                      <span className="absolute top-2 left-2 px-2 py-1 bg-red-600 text-white text-[10px] font-semibold rounded">
+                        Sold Out
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs tracking-wider text-gray-500 uppercase">
+                      {[
+                        product.category,
+                        shouldShowAudienceForProduct(product)
+                          ? audienceLabelMap[
+                              normalizeProductAudience(product.audience, product.category)
+                            ]
+                          : "",
+                        toProductAuthenticityLabel(product.authenticity),
+                      ]
+                        .map((entry) => String(entry || "").trim())
+                        .filter(Boolean)
+                        .join(" • ")}
+                    </p>
+                    <h3 className="font-light text-lg">{product.name}</h3>
+                    <p className="text-gray-900 font-medium">
+                      ${product.price.toFixed(2)}
+                    </p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+            {hasMoreProducts ? (
+              <div className="mt-8 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount((prev) => prev + PRODUCTS_PER_BATCH)}
+                  className="inline-flex items-center rounded-xl border border-gray-300 px-5 py-2.5 text-sm font-medium hover:border-black transition-colors"
+                >
+                  Load more ({filteredProducts.length - visibleProducts.length} left)
+                </button>
+              </div>
+            ) : null}
+          </>
         )}
       </div>
     </div>

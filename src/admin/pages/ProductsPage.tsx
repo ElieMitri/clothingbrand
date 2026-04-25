@@ -146,7 +146,10 @@ export function ProductsPage() {
   const [importQueueSourceUrl, setImportQueueSourceUrl] = useState("");
   const [committingImportSelection, setCommittingImportSelection] = useState(false);
   const [deletingSelected, setDeletingSelected] = useState(false);
+  const [updatingSelectedCategory, setUpdatingSelectedCategory] = useState(false);
   const [focusedProductId, setFocusedProductId] = useState<string>("");
+  const [bulkCategoryValue, setBulkCategoryValue] = useState("");
+  const [bulkSubcategoryValue, setBulkSubcategoryValue] = useState("");
   const [editor, setEditor] = useState<ProductEditorState>(emptyEditor);
   const query = searchParams.get("q") || "";
 
@@ -190,6 +193,18 @@ export function ProductsPage() {
     });
   }, [activeView, products, productsRaw, query]);
 
+  const visibleRowIds = useMemo(() => {
+    const pageSize = 8;
+    const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize).map((row) => row.id);
+  }, [filteredRows, page]);
+
+  const filteredRowIds = useMemo(() => filteredRows.map((row) => row.id), [filteredRows]);
+  const allFilteredSelected =
+    filteredRowIds.length > 0 && filteredRowIds.every((id) => selectedIds.includes(id));
+
   useEffect(() => {
     if (!focusedProductId && products.length > 0) {
       setFocusedProductId(products[0].id);
@@ -199,6 +214,28 @@ export function ProductsPage() {
   const focusedProduct = useMemo(
     () => products.find((product) => product.id === focusedProductId) ?? null,
     [focusedProductId, products]
+  );
+  const existingCategories = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          productsRaw
+            .map((entry) => String(entry.category || "").trim())
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [productsRaw]
+  );
+  const existingSubcategories = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          productsRaw
+            .map((entry) => String(entry.subcategory || "").trim())
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [productsRaw]
   );
 
   useEffect(() => {
@@ -582,11 +619,18 @@ export function ProductsPage() {
   };
 
   const toggleVisibleRows = () => {
-    const visibleIds = filteredRows.slice((page - 1) * 8, page * 8).map((row) => row.id);
-    const allSelected = visibleIds.every((id) => selectedIds.includes(id));
+    const allSelected = visibleRowIds.every((id) => selectedIds.includes(id));
     setSelectedIds((prev) => {
-      if (allSelected) return prev.filter((id) => !visibleIds.includes(id));
-      return Array.from(new Set([...prev, ...visibleIds]));
+      if (allSelected) return prev.filter((id) => !visibleRowIds.includes(id));
+      return Array.from(new Set([...prev, ...visibleRowIds]));
+    });
+  };
+
+  const toggleSelectAllFilteredRows = () => {
+    if (filteredRowIds.length === 0) return;
+    setSelectedIds((prev) => {
+      if (allFilteredSelected) return prev.filter((id) => !filteredRowIds.includes(id));
+      return Array.from(new Set([...prev, ...filteredRowIds]));
     });
   };
 
@@ -632,6 +676,92 @@ export function ProductsPage() {
       });
     } finally {
       setDeletingSelected(false);
+    }
+  };
+
+  const bulkUpdateSelectedCategory = async () => {
+    if (selectedIds.length === 0) {
+      showToast({ title: "Select products first" });
+      return;
+    }
+    const nextCategory = String(bulkCategoryValue || "").trim();
+    if (!nextCategory) {
+      showToast({ title: "Category is required", description: "Enter a category to apply." });
+      return;
+    }
+
+    setUpdatingSelectedCategory(true);
+    try {
+      for (let index = 0; index < selectedIds.length; index += 400) {
+        const chunk = selectedIds.slice(index, index + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((productId) => {
+          batch.update(doc(db, "products", productId), {
+            category: nextCategory,
+            updated_at: Timestamp.now(),
+          });
+        });
+        await batch.commit();
+      }
+
+      showToast({
+        title: "Category updated",
+        description: `Applied "${nextCategory}" to ${selectedIds.length} product${
+          selectedIds.length === 1 ? "" : "s"
+        }.`,
+      });
+    } catch (error) {
+      console.error("Bulk category update failed", error);
+      showToast({
+        title: "Category update failed",
+        description:
+          error instanceof Error ? error.message : "Could not update selected products.",
+      });
+    } finally {
+      setUpdatingSelectedCategory(false);
+    }
+  };
+
+  const bulkUpdateSelectedSubcategory = async () => {
+    if (selectedIds.length === 0) {
+      showToast({ title: "Select products first" });
+      return;
+    }
+    const nextSubcategory = String(bulkSubcategoryValue || "").trim();
+    if (!nextSubcategory) {
+      showToast({ title: "Subcategory is required", description: "Enter a subcategory to apply." });
+      return;
+    }
+
+    setUpdatingSelectedCategory(true);
+    try {
+      for (let index = 0; index < selectedIds.length; index += 400) {
+        const chunk = selectedIds.slice(index, index + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((productId) => {
+          batch.update(doc(db, "products", productId), {
+            subcategory: nextSubcategory,
+            updated_at: Timestamp.now(),
+          });
+        });
+        await batch.commit();
+      }
+
+      showToast({
+        title: "Subcategory updated",
+        description: `Applied "${nextSubcategory}" to ${selectedIds.length} product${
+          selectedIds.length === 1 ? "" : "s"
+        }.`,
+      });
+    } catch (error) {
+      console.error("Bulk subcategory update failed", error);
+      showToast({
+        title: "Subcategory update failed",
+        description:
+          error instanceof Error ? error.message : "Could not update selected products.",
+      });
+    } finally {
+      setUpdatingSelectedCategory(false);
     }
   };
 
@@ -840,21 +970,80 @@ export function ProductsPage() {
         </section>
       ) : null}
 
-      {selectedIds.length > 0 ? (
+      {filteredRows.length > 0 ? (
         <div className="adm-bulk-toolbar" role="status">
           <strong>{selectedIds.length} selected</strong>
           <div>
             <button
               type="button"
               className="adm-button adm-button--ghost"
-              onClick={deleteSelectedProducts}
-              disabled={deletingSelected}
+              onClick={toggleSelectAllFilteredRows}
             >
-              {deletingSelected ? "Deleting..." : "Delete selected"}
+              {allFilteredSelected
+                ? "Unselect all products"
+                : `Select all products (${filteredRows.length})`}
             </button>
-            <button type="button" className="adm-button adm-button--ghost" onClick={() => setSelectedIds([])}>
-              Clear
-            </button>
+            {selectedIds.length > 0 ? (
+              <>
+                <input
+                  className="adm-input"
+                  style={{ minWidth: 180 }}
+                  placeholder="New category"
+                  value={bulkCategoryValue}
+                  onChange={(event) => setBulkCategoryValue(event.target.value)}
+                  list="product-bulk-categories"
+                />
+                <datalist id="product-bulk-categories">
+                  {existingCategories.map((category) => (
+                    <option key={category} value={category} />
+                  ))}
+                </datalist>
+                <button
+                  type="button"
+                  className="adm-button adm-button--ghost"
+                  onClick={bulkUpdateSelectedCategory}
+                  disabled={updatingSelectedCategory}
+                >
+                  {updatingSelectedCategory ? "Applying..." : "Apply category"}
+                </button>
+                <input
+                  className="adm-input"
+                  style={{ minWidth: 180 }}
+                  placeholder="New subcategory"
+                  value={bulkSubcategoryValue}
+                  onChange={(event) => setBulkSubcategoryValue(event.target.value)}
+                  list="product-bulk-subcategories"
+                />
+                <datalist id="product-bulk-subcategories">
+                  {existingSubcategories.map((subcategory) => (
+                    <option key={subcategory} value={subcategory} />
+                  ))}
+                </datalist>
+                <button
+                  type="button"
+                  className="adm-button adm-button--ghost"
+                  onClick={bulkUpdateSelectedSubcategory}
+                  disabled={updatingSelectedCategory}
+                >
+                  {updatingSelectedCategory ? "Applying..." : "Apply subcategory"}
+                </button>
+                <button
+                  type="button"
+                  className="adm-button adm-button--ghost"
+                  onClick={deleteSelectedProducts}
+                  disabled={deletingSelected}
+                >
+                  {deletingSelected ? "Deleting..." : "Delete selected"}
+                </button>
+                <button
+                  type="button"
+                  className="adm-button adm-button--ghost"
+                  onClick={() => setSelectedIds([])}
+                >
+                  Clear
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}

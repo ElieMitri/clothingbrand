@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Filter, Heart } from "lucide-react";
 import { db } from "../lib/firebase";
@@ -23,10 +23,12 @@ interface Product {
 }
 
 export function Men() {
+  const PRODUCTS_PER_BATCH = 12;
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_BATCH);
 
   const [selectedSubcategories, setSelectedSubcategories] = useState<string[]>(
     []
@@ -150,6 +152,15 @@ export function Men() {
     Brown: "bg-[#8B4513]",
     Blue: "bg-blue-600",
   };
+  const visibleProducts = useMemo(
+    () => filteredProducts.slice(0, visibleCount),
+    [filteredProducts, visibleCount]
+  );
+  const hasMoreProducts = visibleProducts.length < filteredProducts.length;
+
+  useEffect(() => {
+    setVisibleCount(PRODUCTS_PER_BATCH);
+  }, [selectedSubcategories, selectedColors, selectedSizes, priceRange, sortBy, products]);
 
   return (
     <div className="min-h-screen pt-24 pb-16 px-4 bg-gray-50">
@@ -231,7 +242,7 @@ export function Men() {
 
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-600 font-medium hidden sm:inline">
-              {filteredProducts.length} items
+              {visibleProducts.length} of {filteredProducts.length} items
             </span>
             <select
               value={sortBy}
@@ -377,7 +388,7 @@ export function Men() {
               </div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                {filteredProducts.map((product) => (
+                {visibleProducts.map((product) => (
                   <Link
                     key={product.id}
                     to={`/product/${product.id}`}
@@ -473,6 +484,17 @@ export function Men() {
                   </Link>
                 ))}
               </div>
+              {hasMoreProducts ? (
+                <div className="mt-8 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCount((prev) => prev + PRODUCTS_PER_BATCH)}
+                    className="inline-flex items-center rounded-xl border border-gray-300 px-5 py-2.5 text-sm font-medium hover:border-black transition-colors"
+                  >
+                    Load more ({filteredProducts.length - visibleProducts.length} left)
+                  </button>
+                </div>
+              ) : null}
             )}
           </div>
         </div>

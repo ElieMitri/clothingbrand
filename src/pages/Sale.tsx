@@ -39,6 +39,7 @@ interface Product {
 }
 
 export function Sale() {
+  const PRODUCTS_PER_BATCH = 12;
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,6 +68,7 @@ export function Sale() {
   const [subscribeStatus, setSubscribeStatus] = useState<
     "idle" | "success" | "exists" | "error"
   >("idle");
+  const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_BATCH);
   const categorySupportsAudienceFilter = (categoryName: string) => {
     const slug = toCategorySlug(categoryName || "");
     return (
@@ -82,6 +84,11 @@ export function Sale() {
       categorySupportsAudienceFilter(category)
     );
   }, [selectedCategories]);
+  const visibleProducts = useMemo(
+    () => filteredProducts.slice(0, visibleCount),
+    [filteredProducts, visibleCount]
+  );
+  const hasMoreProducts = visibleProducts.length < filteredProducts.length;
 
   const categories = Array.from(
     new Set(
@@ -201,6 +208,10 @@ export function Sale() {
     sortBy,
     shouldShowAudienceFilter,
   ]);
+
+  useEffect(() => {
+    setVisibleCount(PRODUCTS_PER_BATCH);
+  }, [selectedCategories, selectedAudience, selectedDiscount, sortBy, products]);
 
   useEffect(() => {
     if (!shouldShowAudienceFilter && selectedAudience !== "all") {
@@ -489,7 +500,7 @@ export function Sale() {
 
           <div className="flex items-center gap-4">
             <span className="text-sm text-slate-300 hidden sm:inline">
-              {filteredProducts.length} items
+              {visibleProducts.length} of {filteredProducts.length} items
             </span>
             <select
               value={sortBy}
@@ -572,56 +583,69 @@ export function Sale() {
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                {filteredProducts.map((product) => (
-                  <Link
-                    key={product.id}
-                    to={`/product/${product.id}`}
-                    className="group surface-card rounded-xl overflow-hidden border border-slate-700 hover:shadow-xl transition-all"
-                  >
-                    <div className="aspect-[3/4] bg-white overflow-hidden relative">
-                      <img
-                        src={product.image_url}
-                        alt={product.name}
-                        loading="lazy"
-                        decoding="async"
-                        className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
-                      />
-                      <div className="absolute top-3 left-3 bg-rose-600 text-white px-3 py-1 rounded-full text-xs font-bold">
-                        -{product.discount_percentage}%
-                      </div>
-                      <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-sm text-white px-2 py-1 rounded text-xs">
-                        <Clock size={12} className="inline mr-1" />
-                        Limited
-                      </div>
-                      {Boolean(product.sold_out) && (
-                        <div className="absolute bottom-3 left-3 bg-red-600 text-white px-3 py-1 rounded-full text-xs font-bold">
-                          Sold Out
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                  {visibleProducts.map((product) => (
+                    <Link
+                      key={product.id}
+                      to={`/product/${product.id}`}
+                      className="group surface-card rounded-xl overflow-hidden border border-slate-700 hover:shadow-xl transition-all"
+                    >
+                      <div className="aspect-[3/4] bg-white overflow-hidden relative">
+                        <img
+                          src={product.image_url}
+                          alt={product.name}
+                          loading="lazy"
+                          decoding="async"
+                          className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
+                        />
+                        <div className="absolute top-3 left-3 bg-rose-600 text-white px-3 py-1 rounded-full text-xs font-bold">
+                          -{product.discount_percentage}%
                         </div>
-                      )}
-                    </div>
-                    <div className="p-4">
-                      <h3 className="font-medium text-sm mb-2 tracking-wide line-clamp-1 text-slate-100">
-                        {product.name}
-                      </h3>
-                      <p className="text-[11px] uppercase tracking-wider text-slate-300 mb-1">
-                        {toProductAuthenticityLabel(product.authenticity)}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <p className="text-rose-300 font-bold text-lg">
-                          ${product.price.toFixed(2)}
+                        <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-sm text-white px-2 py-1 rounded text-xs">
+                          <Clock size={12} className="inline mr-1" />
+                          Limited
+                        </div>
+                        {Boolean(product.sold_out) && (
+                          <div className="absolute bottom-3 left-3 bg-red-600 text-white px-3 py-1 rounded-full text-xs font-bold">
+                            Sold Out
+                          </div>
+                        )}
+                      </div>
+                      <div className="p-4">
+                        <h3 className="font-medium text-sm mb-2 tracking-wide line-clamp-1 text-slate-100">
+                          {product.name}
+                        </h3>
+                        <p className="text-[11px] uppercase tracking-wider text-slate-300 mb-1">
+                          {toProductAuthenticityLabel(product.authenticity)}
                         </p>
-                        <p className="text-slate-400 line-through text-sm">
-                          ${(product.original_price || product.price).toFixed(2)}
+                        <div className="flex items-center gap-2">
+                          <p className="text-rose-300 font-bold text-lg">
+                            ${product.price.toFixed(2)}
+                          </p>
+                          <p className="text-slate-400 line-through text-sm">
+                            ${(product.original_price || product.price).toFixed(2)}
+                          </p>
+                        </div>
+                        <p className="text-xs text-emerald-300 mt-1 font-medium">
+                          Save ${((product.original_price || product.price) - product.price).toFixed(2)}
                         </p>
                       </div>
-                      <p className="text-xs text-emerald-300 mt-1 font-medium">
-                        Save ${((product.original_price || product.price) - product.price).toFixed(2)}
-                      </p>
-                    </div>
-                  </Link>
-                ))}
-              </div>
+                    </Link>
+                  ))}
+                </div>
+                {hasMoreProducts ? (
+                  <div className="mt-8 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setVisibleCount((prev) => prev + PRODUCTS_PER_BATCH)}
+                      className="inline-flex items-center rounded-xl border border-slate-600 px-5 py-2.5 text-sm font-medium text-slate-100 hover:border-cyan-300 transition-colors"
+                    >
+                      Load more ({filteredProducts.length - visibleProducts.length} left)
+                    </button>
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
         </div>

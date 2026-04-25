@@ -11,6 +11,7 @@ import { Button } from "../components/storefront/Button";
 import { FilterSidebar } from "../components/storefront/FilterSidebar";
 
 export function Shop() {
+  const PRODUCTS_PER_BATCH = 12;
   const location = useLocation();
   const { user } = useAuth();
   const [products, setProducts] = useState<StoreProduct[]>([]);
@@ -20,6 +21,7 @@ export function Shop() {
   const [minPrice, setMinPrice] = useState(0);
   const [maxPrice, setMaxPrice] = useState(500);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_BATCH);
 
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, "products"), (snapshot) => {
@@ -90,6 +92,16 @@ export function Shop() {
     return next;
   }, [products, selectedCategory, searchTerm, minPrice, maxPrice, sortBy]);
 
+  const visibleProducts = useMemo(
+    () => filteredProducts.slice(0, visibleCount),
+    [filteredProducts, visibleCount]
+  );
+  const hasMoreProducts = visibleProducts.length < filteredProducts.length;
+
+  useEffect(() => {
+    setVisibleCount(PRODUCTS_PER_BATCH);
+  }, [selectedCategory, searchTerm, minPrice, maxPrice, sortBy]);
+
   const handleQuickAdd = async (product: StoreProduct) => {
     const size = Array.isArray(product.sizes) && product.sizes.length > 0 ? product.sizes[0] : "M";
 
@@ -150,7 +162,8 @@ export function Shop() {
         <section>
           <div className="mb-4 flex items-center justify-between">
             <p className="text-sm text-[var(--sf-text-muted)]">
-              Showing {filteredProducts.length} product{filteredProducts.length === 1 ? "" : "s"}
+              Showing {visibleProducts.length} of {filteredProducts.length} product
+              {filteredProducts.length === 1 ? "" : "s"}
             </p>
             <button
               type="button"
@@ -172,11 +185,26 @@ export function Shop() {
               <p className="text-sm text-[var(--sf-text-muted)]">No products match your current filters.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
-              {filteredProducts.map((product) => (
-                <ProductCard key={product.id} product={product} onQuickAdd={handleQuickAdd} />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
+                {visibleProducts.map((product) => (
+                  <ProductCard key={product.id} product={product} onQuickAdd={handleQuickAdd} />
+                ))}
+              </div>
+              {hasMoreProducts ? (
+                <div className="mt-6 flex justify-center">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() =>
+                      setVisibleCount((prev) => prev + PRODUCTS_PER_BATCH)
+                    }
+                  >
+                    Load more ({filteredProducts.length - visibleProducts.length} left)
+                  </Button>
+                </div>
+              ) : null}
+            </>
           )}
         </section>
       </div>

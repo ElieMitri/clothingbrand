@@ -21,6 +21,7 @@ interface StoreSettingsForm {
   sale_end_at_input: string;
   hero_image_url: string;
   today_pick_product_id: string;
+  featured_product_ids: string[];
   home_categories: HomeCategoryEntry[];
   shop_menu_items: ShopMenuItemEntry[];
   home_collection_ids: string[];
@@ -57,6 +58,7 @@ const defaultSettings: StoreSettingsForm = {
   sale_end_at_input: "",
   hero_image_url: "",
   today_pick_product_id: "",
+  featured_product_ids: [],
   home_categories: defaultHomeCategories,
   shop_menu_items: defaultShopMenuItems,
   home_collection_ids: [],
@@ -316,6 +318,7 @@ export function SettingsPage() {
       const data = snap.data() as {
         hero_image_url?: string;
         today_pick_product_id?: string;
+        featured_product_ids?: string[];
         home_categories?: unknown[];
         shop_menu_items?: unknown[];
         home_collection_ids?: string[];
@@ -357,6 +360,9 @@ export function SettingsPage() {
         ...prev,
         hero_image_url: String(data.hero_image_url || ""),
         today_pick_product_id: String(data.today_pick_product_id || ""),
+        featured_product_ids: Array.isArray(data.featured_product_ids)
+          ? data.featured_product_ids.map((entry) => String(entry || "").trim()).filter(Boolean).slice(0, 6)
+          : [],
         home_categories: configuredCategories,
         shop_menu_items: configuredShopMenu,
         home_collection_ids: Array.isArray(data.home_collection_ids)
@@ -394,6 +400,7 @@ export function SettingsPage() {
         {
           hero_image_url: form.hero_image_url.trim(),
           today_pick_product_id: form.today_pick_product_id.trim(),
+          featured_product_ids: form.featured_product_ids.slice(0, 6),
           home_categories: form.home_categories
             .map((entry) => ({
               id: String(entry.id || "").trim(),
@@ -422,6 +429,29 @@ export function SettingsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const toggleFeaturedProductOnHome = (productId: string) => {
+    setForm((prev) => {
+      const exists = prev.featured_product_ids.includes(productId);
+      if (exists) {
+        return {
+          ...prev,
+          featured_product_ids: prev.featured_product_ids.filter((id) => id !== productId),
+        };
+      }
+      if (prev.featured_product_ids.length >= 6) {
+        showToast({
+          title: "Maximum reached",
+          description: "You can select up to 6 featured products for Home.",
+        });
+        return prev;
+      }
+      return {
+        ...prev,
+        featured_product_ids: [...prev.featured_product_ids, productId],
+      };
+    });
   };
 
   return (
@@ -584,6 +614,42 @@ export function SettingsPage() {
             >
               Remove featured item
             </button>
+          </label>
+
+          <label className="adm-form-grid__full" style={{ display: "grid", gap: 8 }}>
+            Featured products on Home (max 6)
+            <p className="adm-muted">
+              These products appear in the Home featured section in the selected order.
+            </p>
+            <div style={{ display: "grid", gap: 8, maxHeight: 220, overflowY: "auto" }}>
+              {selectableProducts.map((entry) => {
+                const checked = form.featured_product_ids.includes(entry.id);
+                return (
+                  <label key={entry.id} className="adm-toggle">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleFeaturedProductOnHome(entry.id)}
+                    />
+                    {entry.name}
+                  </label>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <span className="adm-muted">
+                Selected: {form.featured_product_ids.length}/6
+              </span>
+              {form.featured_product_ids.length > 0 ? (
+                <button
+                  type="button"
+                  className="adm-button adm-button--ghost"
+                  onClick={() => setForm((prev) => ({ ...prev, featured_product_ids: [] }))}
+                >
+                  Clear featured products
+                </button>
+              ) : null}
+            </div>
           </label>
 
           <div className="adm-form-grid__full" style={{ display: "grid", gap: 8 }}>

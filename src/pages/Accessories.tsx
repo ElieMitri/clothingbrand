@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Filter, Grid, List } from "lucide-react";
 import { db } from "../lib/firebase";
@@ -20,11 +20,13 @@ interface Product {
 }
 
 export function Accessories() {
+  const PRODUCTS_PER_BATCH = 12;
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_BATCH);
 
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [priceRange, setPriceRange] = useState<[number, number]>([0, 300]);
@@ -111,6 +113,15 @@ export function Accessories() {
     setSelectedTypes([]);
     setPriceRange([0, 300]);
   };
+  const visibleProducts = useMemo(
+    () => filteredProducts.slice(0, visibleCount),
+    [filteredProducts, visibleCount]
+  );
+  const hasMoreProducts = visibleProducts.length < filteredProducts.length;
+
+  useEffect(() => {
+    setVisibleCount(PRODUCTS_PER_BATCH);
+  }, [selectedTypes, priceRange, sortBy, viewMode, products]);
 
   return (
     <div className="min-h-screen pt-24 pb-16 px-4 bg-white">
@@ -206,7 +217,7 @@ export function Accessories() {
             </div>
 
             <span className="text-sm text-gray-600 hidden sm:inline">
-              {filteredProducts.length} items
+              {visibleProducts.length} of {filteredProducts.length} items
             </span>
 
             <select
@@ -339,7 +350,7 @@ export function Accessories() {
               </div>
             ) : viewMode === "grid" ? (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                {filteredProducts.map((product) => (
+                {visibleProducts.map((product) => (
                   <Link
                     key={product.id}
                     to={`/product/${product.id}`}
@@ -371,7 +382,7 @@ export function Accessories() {
               </div>
             ) : (
               <div className="space-y-6">
-                {filteredProducts.map((product) => (
+                {visibleProducts.map((product) => (
                   <Link
                     key={product.id}
                     to={`/product/${product.id}`}
@@ -409,6 +420,17 @@ export function Accessories() {
                 ))}
               </div>
             )}
+            {filteredProducts.length > 0 && hasMoreProducts ? (
+              <div className="mt-8 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount((prev) => prev + PRODUCTS_PER_BATCH)}
+                  className="inline-flex items-center rounded-xl border border-gray-300 px-5 py-2.5 text-sm font-medium hover:border-black transition-colors"
+                >
+                  Load more ({filteredProducts.length - visibleProducts.length} left)
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
