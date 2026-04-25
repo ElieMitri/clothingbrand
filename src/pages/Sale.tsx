@@ -38,6 +38,23 @@ interface Product {
   discount_percentage?: number;
 }
 
+const getEffectiveDiscountPercent = (product: Product) => {
+  const explicit = Math.max(0, Number(product.discount_percentage || 0));
+  if (explicit > 0) return explicit;
+  const original = Math.max(0, Number(product.original_price || 0));
+  const price = Math.max(0, Number(product.price || 0));
+  if (original > price && original > 0) {
+    return Math.round(((original - price) / original) * 100);
+  }
+  return 0;
+};
+
+const isProductOnSale = (product: Product) => {
+  const original = Math.max(0, Number(product.original_price || 0));
+  const price = Math.max(0, Number(product.price || 0));
+  return getEffectiveDiscountPercent(product) > 0 || (original > 0 && original > price);
+};
+
 export function Sale() {
   const PRODUCTS_PER_BATCH = 12;
   const [products, setProducts] = useState<Product[]>([]);
@@ -127,7 +144,7 @@ export function Sale() {
     if (showSaleLink === null) return;
     const isExpired =
       saleEndAt instanceof Date && saleEndAt.getTime() <= Date.now();
-    if (!showSaleLink || isExpired) {
+    if (isExpired) {
       setProducts([]);
       setLoading(false);
       return;
@@ -135,20 +152,30 @@ export function Sale() {
 
     setLoading(true);
     const productsRef = collection(db, "products");
-    const q = query(productsRef, where("discount_percentage", ">", 0), limit(50));
+    const q = query(productsRef, limit(200));
     const unsubscribe = onSnapshot(
       q,
       (querySnapshot) => {
-        const productsWithDiscount = querySnapshot.docs.map((entry) => {
-          const data = entry.data();
-          return {
-            id: entry.id,
-            ...data,
-            original_price:
-              data.original_price ||
-              data.price / (1 - (data.discount_percentage || 0) / 100),
-          } as Product;
-        });
+        const productsWithDiscount = querySnapshot.docs
+          .map((entry) => {
+            const data = entry.data();
+            return {
+              id: entry.id,
+              ...data,
+              original_price:
+                Number(data.original_price || 0) > 0
+                  ? Number(data.original_price)
+                  : Number(data.price || 0),
+            } as Product;
+          })
+          .filter((product) => isProductOnSale(product))
+          .map((product) => {
+            const discount = getEffectiveDiscountPercent(product);
+            return {
+              ...product,
+              discount_percentage: discount,
+            } as Product;
+          });
         setProducts(productsWithDiscount);
         setLoading(false);
       },
@@ -295,19 +322,19 @@ export function Sale() {
     if (selectedDiscount !== "all") {
       const discountThreshold = parseInt(selectedDiscount);
       filtered = filtered.filter(
-        (p) => (p.discount_percentage || 0) >= discountThreshold
+        (p) => getEffectiveDiscountPercent(p) >= discountThreshold
       );
     }
 
     switch (sortBy) {
       case "discount-high":
         filtered.sort(
-          (a, b) => (b.discount_percentage || 0) - (a.discount_percentage || 0)
+          (a, b) => getEffectiveDiscountPercent(b) - getEffectiveDiscountPercent(a)
         );
         break;
       case "discount-low":
         filtered.sort(
-          (a, b) => (a.discount_percentage || 0) - (b.discount_percentage || 0)
+          (a, b) => getEffectiveDiscountPercent(a) - getEffectiveDiscountPercent(b)
         );
         break;
       case "price-low":
@@ -384,7 +411,7 @@ export function Sale() {
     );
   }
 
-  if (showSaleLink === false || isSaleExpired) {
+  if ((showSaleLink === false && products.length === 0) || isSaleExpired) {
     return (
       <div className="min-h-screen pt-24 pb-16 px-4">
         <div className="max-w-4xl mx-auto text-center surface-card rounded-2xl p-10 border border-slate-700/70">
@@ -600,7 +627,7 @@ export function Sale() {
                           className="w-full h-full object-cover object-center scale-[1.14] group-hover:scale-[1.18] transition-transform duration-500"
                         />
                         <div className="absolute top-3 left-3 bg-rose-600 text-white px-3 py-1 rounded-full text-xs font-bold">
-                          -{product.discount_percentage}%
+                          -{getEffectiveDiscountPercent(product)}%
                         </div>
                         <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-sm text-white px-2 py-1 rounded text-xs">
                           <Clock size={12} className="inline mr-1" />

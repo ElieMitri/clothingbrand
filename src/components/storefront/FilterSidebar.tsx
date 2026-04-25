@@ -7,7 +7,15 @@ interface FilterSidebarProps {
   selectedCategory: string;
   onCategoryChange: (value: string) => void;
   sortBy: string;
-  onSortChange: (value: "featured" | "price-low" | "price-high" | "newest") => void;
+  onSortChange: (
+    value:
+      | ""
+      | "newest"
+      | "oldest"
+      | "price-low"
+      | "price-high"
+      | "name-asc"
+  ) => void;
   minPrice: number;
   maxPrice: number;
   onPriceChange: (next: { min: number; max: number }) => void;
@@ -81,11 +89,23 @@ export function FilterSidebar({
             <h4 className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--sf-text-muted)]">Sort</h4>
             <select
               value={sortBy}
-              onChange={(event) => onSortChange(event.target.value as "featured" | "price-low" | "price-high" | "newest")}
+              onChange={(event) =>
+                onSortChange(
+                  event.target.value as
+                    | ""
+                    | "newest"
+                    | "oldest"
+                    | "price-low"
+                    | "price-high"
+                    | "name-asc"
+                )
+              }
               className="w-full rounded-[10px] border border-[var(--sf-line-strong)] bg-white px-3 py-2.5 text-sm"
             >
-              <option value="featured">Featured</option>
-              <option value="newest">Newest</option>
+              <option value="">Sort by</option>
+              <option value="name-asc">A-Z</option>
+              <option value="newest">Latest to Oldest</option>
+              <option value="oldest">Oldest to Latest</option>
               <option value="price-low">Price: Low to High</option>
               <option value="price-high">Price: High to Low</option>
             </select>

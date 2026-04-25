@@ -56,7 +56,9 @@ export function Shop() {
   const [products, setProducts] = useState<StoreProduct[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [sortBy, setSortBy] = useState<"featured" | "price-low" | "price-high" | "newest">("featured");
+  const [sortBy, setSortBy] = useState<
+    "" | "newest" | "oldest" | "price-low" | "price-high" | "name-asc"
+  >("");
   const [minPrice, setMinPrice] = useState(0);
   const [maxPrice, setMaxPrice] = useState(500);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -139,7 +141,15 @@ export function Shop() {
       next.sort((a, b) => b.price - a.price);
     } else if (sortBy === "newest") {
       next.sort((a, b) => toDate(b.created_at).getTime() - toDate(a.created_at).getTime());
-    } else {
+    } else if (sortBy === "oldest") {
+      next.sort((a, b) => toDate(a.created_at).getTime() - toDate(b.created_at).getTime());
+    } else if (sortBy === "name-asc") {
+      next.sort((a, b) =>
+        String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+          sensitivity: "base",
+        })
+      );
+    } else if (sortBy) {
       next.sort((a, b) => Number(Boolean(b.is_featured)) - Number(Boolean(a.is_featured)));
     }
 
@@ -234,7 +244,7 @@ export function Shop() {
             <button
               type="button"
               onClick={() => {
-                setSortBy("featured");
+                setSortBy("");
                 setMinPrice(0);
                 setMaxPrice(500);
                 setSearchTerm("");

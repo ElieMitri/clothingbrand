@@ -104,6 +104,33 @@ const normalizeCommissionPercent = (value: unknown) => {
   return parsed;
 };
 
+const normalizeSaleFields = (
+  rawPrice: number,
+  rawOriginalPrice: number,
+  rawDiscountPercentage: number
+) => {
+  let price = Math.max(0, Number(rawPrice || 0));
+  let originalPrice = Math.max(0, Number(rawOriginalPrice || 0));
+  let discountPercentage = Math.max(0, Math.min(95, Number(rawDiscountPercentage || 0)));
+
+  if (discountPercentage > 0) {
+    const compareAt = Math.max(originalPrice, price);
+    originalPrice = compareAt;
+    price = Number((compareAt * (1 - discountPercentage / 100)).toFixed(2));
+  } else if (originalPrice > price && originalPrice > 0) {
+    discountPercentage = Math.round(((originalPrice - price) / originalPrice) * 100);
+  } else {
+    discountPercentage = 0;
+    originalPrice = Math.max(originalPrice, price);
+  }
+
+  return {
+    price,
+    originalPrice,
+    discountPercentage,
+  };
+};
+
 interface ImportedLinkProduct {
   name?: string;
   description?: string;
@@ -330,6 +357,18 @@ export function ProductsPage() {
     : automaticProfitPerUnit;
 
   const payloadFromEditor = () => ({
+    ...(() => {
+      const sale = normalizeSaleFields(
+        Number(editor.price || 0),
+        Number(editor.original_price || editor.price || 0),
+        Number(editor.discount_percentage || 0)
+      );
+      return {
+        price: sale.price,
+        original_price: sale.originalPrice,
+        discount_percentage: sale.discountPercentage,
+      };
+    })(),
     name: editor.name,
     brand: editor.brand || null,
     product_type: editor.product_type || null,
@@ -346,11 +385,8 @@ export function ProductsPage() {
     sold_out: Boolean(editor.sold_out),
     sold_out_sizes: parseList(editor.sold_out_sizes),
     stock: Number(editor.stock || 0),
-    price: Number(editor.price || 0),
     cost_price: Number(editor.cost_price || 0),
-    original_price: Number(editor.original_price || editor.price || 0),
     commission_percentage: normalizeCommissionPercent(editor.commission_percentage),
-    discount_percentage: Number(editor.discount_percentage || 0),
     use_manual_profit: Boolean(editor.use_manual_profit),
     profit_per_unit: Number(editor.profit_per_unit || 0),
     material: editor.material || null,
