@@ -1,18 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Filter, Tag, Clock, TrendingDown, ArrowRight } from "lucide-react";
+import { Filter, Tag, Clock, TrendingDown } from "lucide-react";
 import { db } from "../lib/firebase";
 import {
   collection,
   query,
-  where,
-  getDocs,
   limit,
   doc,
   onSnapshot,
   Timestamp,
-  addDoc,
-  serverTimestamp,
 } from "firebase/firestore";
 import {
   ProductAudience,
@@ -81,10 +77,6 @@ export function Sale() {
     seconds: 0,
   });
 
-  const [email, setEmail] = useState("");
-  const [subscribeStatus, setSubscribeStatus] = useState<
-    "idle" | "success" | "exists" | "error"
-  >("idle");
   const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_BATCH);
   const categorySupportsAudienceFilter = (categoryName: string) => {
     const slug = toCategorySlug(categoryName || "");
@@ -255,53 +247,6 @@ export function Sale() {
 
     return () => clearInterval(timer);
   }, [saleEndAt]);
-
-  const handleSubscribe = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!email.includes("@")) {
-      setSubscribeStatus("error");
-      setTimeout(() => setSubscribeStatus("idle"), 3000);
-      return;
-    }
-
-    try {
-      const q = query(
-        collection(db, "newsletter"),
-        where("email", "==", email.toLowerCase())
-      );
-      const existing = await getDocs(q);
-
-      if (existing.empty) {
-        await addDoc(collection(db, "newsletter"), {
-          email: email.toLowerCase(),
-          subscribed_at: serverTimestamp(),
-          sent_emails: 0,
-        });
-        try {
-          await fetch("/api/send-newsletter-subscriber-discord", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              email: email.toLowerCase(),
-              source: "sale",
-            }),
-          });
-        } catch (notifyError) {
-          console.error("Newsletter Discord notify failed:", notifyError);
-        }
-        setSubscribeStatus("success");
-      } else {
-        setSubscribeStatus("exists");
-      }
-      setEmail("");
-    } catch (error) {
-      console.error("Newsletter subscribe failed:", error);
-      setSubscribeStatus("error");
-    } finally {
-      setTimeout(() => setSubscribeStatus("idle"), 3000);
-    }
-  };
 
   const filterAndSortProducts = () => {
     let filtered = [...products];
@@ -677,45 +622,6 @@ export function Sale() {
           </div>
         </div>
 
-        <div className="mt-16 surface-card rounded-3xl p-8 md:p-10 text-center border border-slate-700/70">
-          <h2 className="font-display text-3xl md:text-5xl tracking-[0.08em] text-slate-50">
-            NEVER MISS A DROP
-          </h2>
-          <p className="mt-4 text-slate-300 max-w-2xl mx-auto">
-            Subscribe for flash-sale alerts, countdown updates, and exclusive discount previews.
-          </p>
-
-          <form
-            onSubmit={handleSubscribe}
-            className="mt-7 max-w-xl mx-auto flex flex-col sm:flex-row gap-3"
-          >
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@email.com"
-              className="flex-1 rounded-xl px-5 py-3 border border-slate-600/80 bg-slate-950/65 text-slate-100 focus:outline-none focus:border-cyan-300"
-              required
-            />
-            <button
-              type="submit"
-              className="rounded-xl px-6 py-3 luxe-button text-sm font-semibold tracking-[0.12em] inline-flex items-center justify-center gap-2"
-            >
-              SUBSCRIBE
-              <ArrowRight size={15} />
-            </button>
-          </form>
-
-          {subscribeStatus === "success" ? (
-            <p className="mt-4 text-emerald-300 text-sm">Subscribed successfully.</p>
-          ) : null}
-          {subscribeStatus === "exists" ? (
-            <p className="mt-4 text-cyan-200 text-sm">This email is already subscribed.</p>
-          ) : null}
-          {subscribeStatus === "error" ? (
-            <p className="mt-4 text-rose-300 text-sm">Please enter a valid email address.</p>
-          ) : null}
-        </div>
       </div>
     </div>
   );

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { db, auth } from "../lib/firebase";
-import { doc, getDoc, setDoc, collection, getDocs } from "firebase/firestore";
+import { doc, setDoc, collection, onSnapshot } from "firebase/firestore";
 import { updateProfile } from "firebase/auth";
 import { MyOrdersSection } from "../components/storefront/MyOrdersSection";
 import {
@@ -44,49 +44,46 @@ export function Profile() {
       navigate("/login");
       return;
     }
-    loadProfile();
-    loadStats();
-  }, [user, navigate]);
-
-  const loadProfile = async () => {
-    if (!user) return;
-
-    try {
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      if (userDoc.exists()) {
-        const data = userDoc.data() as UserProfile;
-        setProfile(data);
-        setEditForm(data);
+    const unsubProfile = onSnapshot(
+      doc(db, "users", user.uid),
+      (userDoc) => {
+        if (userDoc.exists()) {
+          const data = userDoc.data() as UserProfile;
+          setProfile(data);
+          setEditForm((prev) => (Object.keys(prev).length === 0 ? data : prev));
+        }
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error loading profile:", error);
+        setLoading(false);
       }
-    } catch (error) {
-      console.error("Error loading profile:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    );
 
-  const loadStats = async () => {
-    if (!user) return;
+    const ordersRef = collection(db, "users", user.uid, "orders");
+    const unsubOrders = onSnapshot(
+      ordersRef,
+      (ordersSnapshot) => {
+        const totalSpent = ordersSnapshot.docs.reduce((sum, entry) => {
+          const data = entry.data() as { status?: string; total?: number };
+          const status = String(data.status || "").trim().toLowerCase();
+          if (status === "cancelled" || status === "canceled") return sum;
+          return sum + Number(data.total || 0);
+        }, 0);
 
-    try {
-      const ordersRef = collection(db, "users", user.uid, "orders");
-      const ordersSnapshot = await getDocs(ordersRef);
+        setStats({
+          orders: ordersSnapshot.size,
+          totalSpent,
+        });
+      },
+      (error) => console.error("Error loading stats:", error)
+    );
 
-      const totalSpent = ordersSnapshot.docs.reduce((sum, doc) => {
-        const data = doc.data() as { status?: string; total?: number };
-        const status = String(data.status || "").trim().toLowerCase();
-        if (status === "cancelled" || status === "canceled") return sum;
-        return sum + Number(data.total || 0);
-      }, 0);
-
-      setStats({
-        orders: ordersSnapshot.size,
-        totalSpent: totalSpent,
-      });
-    } catch (error) {
-      console.error("Error loading stats:", error);
-    }
-  };
+    return () => {
+      unsubProfile();
+      unsubOrders();
+    };
+  }, [user, navigate]);
 
 
   const handleSave = async () => {

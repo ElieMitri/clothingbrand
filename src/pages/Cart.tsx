@@ -5,8 +5,7 @@ import {
   collection,
   deleteDoc,
   doc,
-  getDoc,
-  getDocs,
+  onSnapshot,
   query,
   updateDoc,
   where,
@@ -31,93 +30,101 @@ interface CartItem {
   };
 }
 
+interface CartEntry {
+  id: string;
+  product_id: string;
+  size: string;
+  quantity: number;
+}
+
 export function Cart() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [cartEntries, setCartEntries] = useState<CartEntry[]>([]);
+  const [productsById, setProductsById] = useState<Map<string, CartItem["product"]>>(new Map());
   const [items, setItems] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  const loadCart = async () => {
+  useEffect(() => {
+    const unsubscribeProducts = onSnapshot(collection(db, "products"), (snapshot) => {
+      const map = new Map<string, CartItem["product"]>();
+      snapshot.docs.forEach((entry) => {
+        const data = entry.data();
+        map.set(entry.id, {
+          name: String(data.name || "Product"),
+          price: Number(data.price || 0),
+          image_url: String(data.image_url || ""),
+          category: String(data.category || ""),
+        });
+      });
+      setProductsById(map);
+    });
+
+    return () => unsubscribeProducts();
+  }, []);
+
+  useEffect(() => {
     setLoading(true);
-
-    try {
-      if (!user) {
+    if (!user) {
+      const syncGuestEntries = () => {
         const guestEntries = readGuestCart();
-        if (guestEntries.length === 0) {
-          setItems([]);
-          setLoading(false);
-          return;
-        }
+        setCartEntries(
+          guestEntries.map((entry) => ({
+            id: `${entry.product_id}__${entry.size}`,
+            product_id: entry.product_id,
+            size: entry.size,
+            quantity: entry.quantity,
+          }))
+        );
+        setLoading(false);
+      };
 
-        const enriched = await Promise.all(
-          guestEntries.map(async (entry) => {
-            const productSnap = await getDoc(doc(db, "products", entry.product_id));
-            if (!productSnap.exists()) return null;
+      syncGuestEntries();
+      window.addEventListener("guest-cart-updated", syncGuestEntries);
+      window.addEventListener("storage", syncGuestEntries);
+      return () => {
+        window.removeEventListener("guest-cart-updated", syncGuestEntries);
+        window.removeEventListener("storage", syncGuestEntries);
+      };
+    }
 
-            const productData = productSnap.data();
+    const q = query(collection(db, "carts"), where("user_id", "==", user.uid));
+    const unsubscribeCarts = onSnapshot(
+      q,
+      (snapshot) => {
+        setCartEntries(
+          snapshot.docs.map((entry) => {
+            const data = entry.data();
             return {
-              id: `${entry.product_id}__${entry.size}`,
-              product_id: entry.product_id,
-              size: entry.size,
-              quantity: entry.quantity,
-              product: {
-                name: String(productData.name || "Product"),
-                price: Number(productData.price || 0),
-                image_url: String(productData.image_url || ""),
-                category: String(productData.category || ""),
-              },
-            } as CartItem;
+              id: entry.id,
+              product_id: String(data.product_id || ""),
+              size: String(data.size || "M"),
+              quantity: Number(data.quantity || 1),
+            } as CartEntry;
           })
         );
-
-        setItems(enriched.filter((item): item is CartItem => item !== null));
         setLoading(false);
-        return;
-      }
+      },
+      () => setLoading(false)
+    );
 
-      const q = query(collection(db, "carts"), where("user_id", "==", user.uid));
-      const cartSnap = await getDocs(q);
-      const enriched = await Promise.all(
-        cartSnap.docs.map(async (entry) => {
-          const cartData = entry.data();
-          const productSnap = await getDoc(
-            doc(db, "products", String(cartData.product_id || ""))
-          );
-          if (!productSnap.exists()) return null;
-
-          const productData = productSnap.data();
-          return {
-            id: entry.id,
-            product_id: String(cartData.product_id || ""),
-            size: String(cartData.size || "M"),
-            quantity: Number(cartData.quantity || 1),
-            product: {
-              name: String(productData.name || "Product"),
-              price: Number(productData.price || 0),
-              image_url: String(productData.image_url || ""),
-              category: String(productData.category || ""),
-            },
-          } as CartItem;
-        })
-      );
-
-      setItems(enriched.filter((item): item is CartItem => item !== null));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadCart();
+    return () => unsubscribeCarts();
   }, [user]);
 
   useEffect(() => {
-    if (user) return;
-    const refreshGuest = () => loadCart();
-    window.addEventListener("guest-cart-updated", refreshGuest);
-    return () => window.removeEventListener("guest-cart-updated", refreshGuest);
-  }, [user]);
+    const nextItems = cartEntries
+      .map((entry) => {
+        const product = productsById.get(entry.product_id);
+        if (!product) return null;
+        return {
+          ...entry,
+          product,
+        } as CartItem;
+      })
+      .filter((item): item is CartItem => item !== null);
+    setItems(nextItems);
+  }, [cartEntries, productsById]);
 
   const updateQuantity = async (itemId: string, nextQuantity: number) => {
     if (nextQuantity < 1) return;
@@ -135,12 +142,6 @@ export function Cart() {
         );
         writeGuestCart(updated);
       }
-
-      setItems((prev) =>
-        prev.map((item) =>
-          item.id === itemId ? { ...item, quantity: nextQuantity } : item
-        )
-      );
     } finally {
       setUpdatingId(null);
     }
@@ -158,7 +159,6 @@ export function Cart() {
         );
         writeGuestCart(updated);
       }
-      setItems((prev) => prev.filter((item) => item.id !== itemId));
     } finally {
       setUpdatingId(null);
     }

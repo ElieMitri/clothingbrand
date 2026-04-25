@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
 import { Truck, Wallet } from "lucide-react";
 import { db } from "../lib/firebase";
 import { useAuth } from "../contexts/AuthContext";
@@ -24,10 +24,19 @@ interface CartItem {
   };
 }
 
+interface CartEntry {
+  id: string;
+  product_id: string;
+  size: string;
+  quantity: number;
+}
+
 export function Checkout() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [items, setItems] = useState<CartItem[]>([]);
+  const [cartEntries, setCartEntries] = useState<CartEntry[]>([]);
+  const [productsById, setProductsById] = useState<Map<string, CartItem["product"]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [placingOrder, setPlacingOrder] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
@@ -44,81 +53,85 @@ export function Checkout() {
   });
 
   useEffect(() => {
-    const loadCart = async () => {
-      setLoading(true);
-      try {
-        if (!user) {
-          const guestEntries = readGuestCart();
-          if (guestEntries.length === 0) {
-            setItems([]);
-            return;
-          }
+    const unsubscribeProducts = onSnapshot(collection(db, "products"), (snapshot) => {
+      const map = new Map<string, CartItem["product"]>();
+      snapshot.docs.forEach((entry) => {
+        const data = entry.data();
+        map.set(entry.id, {
+          name: String(data.name || "Product"),
+          price: Number(data.price || 0),
+          image_url: String(data.image_url || ""),
+          category: String(data.category || ""),
+        });
+      });
+      setProductsById(map);
+    });
+    return () => unsubscribeProducts();
+  }, []);
 
-          const enriched = await Promise.all(
-            guestEntries.map(async (entry) => {
-              const productSnap = await getDoc(doc(db, "products", entry.product_id));
-              if (!productSnap.exists()) return null;
+  useEffect(() => {
+    setLoading(true);
+    if (!user) {
+      const syncGuestEntries = () => {
+        const guestEntries = readGuestCart();
+        setCartEntries(
+          guestEntries.map((entry) => ({
+            id: `${entry.product_id}__${entry.size}`,
+            product_id: entry.product_id,
+            size: entry.size,
+            quantity: entry.quantity,
+          }))
+        );
+        setLoading(false);
+      };
+      syncGuestEntries();
+      window.addEventListener("guest-cart-updated", syncGuestEntries);
+      window.addEventListener("storage", syncGuestEntries);
+      return () => {
+        window.removeEventListener("guest-cart-updated", syncGuestEntries);
+        window.removeEventListener("storage", syncGuestEntries);
+      };
+    }
 
-              const productData = productSnap.data();
-              return {
-                id: `${entry.product_id}__${entry.size}`,
-                product_id: entry.product_id,
-                size: entry.size,
-                quantity: entry.quantity,
-                product: {
-                  name: String(productData.name || "Product"),
-                  price: Number(productData.price || 0),
-                  image_url: String(productData.image_url || ""),
-                  category: String(productData.category || ""),
-                },
-              } as CartItem;
-            })
-          );
-
-          setItems(enriched.filter((item): item is CartItem => item !== null));
-          return;
-        }
-
-        const q = query(collection(db, "carts"), where("user_id", "==", user.uid));
-        const cartSnap = await getDocs(q);
-        const enriched = await Promise.all(
-          cartSnap.docs.map(async (entry) => {
-            const cartData = entry.data();
-            const productSnap = await getDoc(
-              doc(db, "products", String(cartData.product_id || ""))
-            );
-            if (!productSnap.exists()) return null;
-
-            const productData = productSnap.data();
+    const q = query(collection(db, "carts"), where("user_id", "==", user.uid));
+    const unsubscribeCarts = onSnapshot(
+      q,
+      (snapshot) => {
+        setCartEntries(
+          snapshot.docs.map((entry) => {
+            const data = entry.data();
             return {
               id: entry.id,
-              product_id: String(cartData.product_id || ""),
-              size: String(cartData.size || "M"),
-              quantity: Number(cartData.quantity || 1),
-              product: {
-                name: String(productData.name || "Product"),
-                price: Number(productData.price || 0),
-                image_url: String(productData.image_url || ""),
-                category: String(productData.category || ""),
-              },
-            } as CartItem;
+              product_id: String(data.product_id || ""),
+              size: String(data.size || "M"),
+              quantity: Number(data.quantity || 1),
+            } as CartEntry;
           })
         );
-
-        setItems(enriched.filter((item): item is CartItem => item !== null));
-      } finally {
         setLoading(false);
-      }
-    };
+      },
+      () => setLoading(false)
+    );
 
-    loadCart();
+    return () => unsubscribeCarts();
   }, [user]);
 
   useEffect(() => {
+    const nextItems = cartEntries
+      .map((entry) => {
+        const product = productsById.get(entry.product_id);
+        if (!product) return null;
+        return { ...entry, product } as CartItem;
+      })
+      .filter((item): item is CartItem => item !== null);
+    setItems(nextItems);
+  }, [cartEntries, productsById]);
+
+  useEffect(() => {
     if (!user) return;
-    const run = async () => {
-      try {
-        const userSnap = await getDoc(doc(db, "users", user.uid));
+    const unsubscribeUser = onSnapshot(
+      doc(db, "users", user.uid),
+      (userSnap) => {
         const data = userSnap.exists() ? userSnap.data() : {};
         setCheckoutForm((prev) => ({
           ...prev,
@@ -136,14 +149,15 @@ export function Checkout() {
           details: String(data?.addressDetails || prev.details),
           city: String(data?.city || prev.city),
         }));
-      } catch {
+      },
+      () => {
         setCheckoutForm((prev) => ({
           ...prev,
           email: String(user.email || prev.email),
         }));
       }
-    };
-    run();
+    );
+    return () => unsubscribeUser();
   }, [user]);
 
   const subtotal = useMemo(
@@ -181,7 +195,7 @@ export function Checkout() {
       ["name", "Name is required."],
       ["email", "Email is required."],
       ["phone", "Phone is required."],
-      ["address", "Address is required."],
+      ["address", "Street is required."],
       ["directions", "Apartment, suite, etc. is required."],
       ["city", "City is required."],
     ];
@@ -390,7 +404,7 @@ export function Checkout() {
             </h2>
             <div className="mt-3 space-y-3">
               <label className="space-y-1 text-sm">
-                <span className="text-[var(--sf-text-muted)]">Address</span>
+                <span className="text-[var(--sf-text-muted)]">Street</span>
                 <input
                   className="w-full rounded-[10px] border border-[var(--sf-line)] px-3 py-2.5 text-sm"
                   value={checkoutForm.address}

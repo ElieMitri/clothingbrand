@@ -127,11 +127,19 @@ const derivePaymentStatus = (
 ): OrderRow["paymentStatus"] => {
   const normalizedPayment = String(paymentStatus || "").trim().toLowerCase();
   if (normalizedPayment === "paid") return "paid";
-  if (normalizedPayment === "pending") return "pending";
+  if (normalizedPayment === "pending" || normalizedPayment === "unpaid") return "unpaid";
   if (normalizedPayment === "refunded") return "refunded";
   if (status === "cancelled") return "refunded";
-  if (status === "pending") return "pending";
-  return "paid";
+  if (status === "pending") return "unpaid";
+  return "unpaid";
+};
+
+const formatPaymentMethod = (value: unknown) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "-";
+  if (normalized === "cash_on_delivery") return "Cash on Delivery";
+  if (normalized === "whish_money" || normalized === "whish") return "Whish Money";
+  return String(value || "").trim();
 };
 
 const deriveFulfillmentStatus = (
@@ -326,6 +334,7 @@ export const mapOrders = (orders: AdminOrderDoc[]): OrderRow[] => {
       email: email || "-",
       date: dateValue.toLocaleDateString(),
       paymentStatus: derivePaymentStatus(order.payment_status, order.status),
+      paymentMethod: formatPaymentMethod(order.payment_method),
       fulfillmentStatus: deriveFulfillmentStatus(order.fulfillment_status, order.status),
       shipmentStatus: deriveShipmentStatus(order.status),
       location: getOrderLocationLabel(order),

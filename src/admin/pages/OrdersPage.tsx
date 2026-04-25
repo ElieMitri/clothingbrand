@@ -23,7 +23,7 @@ const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD
 
 const paymentTone: Record<OrderRow["paymentStatus"], "success" | "warning" | "danger"> = {
   paid: "success",
-  pending: "warning",
+  unpaid: "warning",
   refunded: "danger",
 };
 
@@ -126,7 +126,10 @@ export function OrdersPage() {
         focusedRawOrder.shipping_address || focusedRawOrder.address || ""
       ).trim(),
       payment_method: String(focusedRawOrder.payment_method || "").trim(),
-      payment_status: String(focusedRawOrder.payment_status || "").trim(),
+      payment_status:
+        String(focusedRawOrder.payment_status || "").trim().toLowerCase() === "pending"
+          ? "unpaid"
+          : String(focusedRawOrder.payment_status || "").trim(),
       status_note: String(focusedRawOrder.status_note || "").trim(),
       subtotal: Number(focusedRawOrder.subtotal || 0),
       shipping: Number(focusedRawOrder.shipping || 0),
@@ -288,7 +291,12 @@ export function OrdersPage() {
     {
       key: "payment",
       header: "Payment",
-      render: (row) => <StatusBadge tone={paymentTone[row.paymentStatus]}>{row.paymentStatus}</StatusBadge>,
+      render: (row) => (
+        <div>
+          <StatusBadge tone={paymentTone[row.paymentStatus]}>{row.paymentStatus}</StatusBadge>
+          <p className="adm-muted">{row.paymentMethod}</p>
+        </div>
+      ),
     },
     {
       key: "shipment",
@@ -330,7 +338,7 @@ export function OrdersPage() {
             ? "Saving..."
             : row.paymentStatus === "paid"
             ? "Paid"
-            : "Not paid"}
+            : "Unpaid"}
         </button>
       ),
     },
@@ -378,10 +386,29 @@ export function OrdersPage() {
     const customerName = String(rawOrder.customer_name || row.customer || "Customer").trim();
     const email = String(rawOrder.user_email || row.email || "").trim();
     const phone = String(rawOrder.phone || "").trim() || "-";
+    const paymentMethodRaw = String(rawOrder.payment_method || "").trim();
+    const paymentMethodLabel =
+      paymentMethodRaw.toLowerCase() === "cash_on_delivery"
+        ? "Cash on Delivery"
+        : paymentMethodRaw.toLowerCase() === "whish_money" ||
+          paymentMethodRaw.toLowerCase() === "whish"
+        ? "Whish Money"
+        : paymentMethodRaw || "-";
     const address = String(rawOrder.address || "").trim() || "-";
     const shippingAddress = String(rawOrder.shipping_address || "").trim() || "-";
     const city = String(rawOrder.city || "").trim() || "-";
-    const directions = String(rawOrder.directions || "").trim() || "-";
+    const directionsRaw = String(rawOrder.directions || "").trim();
+    const directionsParts = directionsRaw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const apartmentLine =
+      directionsParts.find((line) => !/^details\s*:/i.test(line)) || "-";
+    const detailsLine =
+      directionsParts
+        .find((line) => /^details\s*:/i.test(line))
+        ?.replace(/^details\s*:/i, "")
+        .trim() || "-";
     const orderDate =
       rawOrder.created_at instanceof Timestamp
         ? rawOrder.created_at.toDate().toLocaleString()
@@ -560,10 +587,10 @@ export function OrdersPage() {
     drawLabelValue(leftColX, topSectionY, "Order #", String(row.orderNumber || "-"), true);
     drawLabelValue(rightColX, topSectionY, "Date", String(orderDate || "-"));
     drawLabelValue(leftColX, topSectionY + 90, "Payment", String(row.paymentStatus || "-"));
-    drawLabelValue(rightColX, topSectionY + 90, "Phone", phone || "-");
+    drawLabelValue(rightColX, topSectionY + 90, "Payment method", paymentMethodLabel);
 
     const customerBoxY = topSectionY + 192;
-    drawRoundedRect(contentX, customerBoxY, contentWidth, 132, 16);
+    drawRoundedRect(contentX, customerBoxY, contentWidth, 162, 16);
     ctx.fillStyle = "#f8fbff";
     ctx.fill();
     ctx.strokeStyle = "#dbe6f5";
@@ -580,8 +607,9 @@ export function OrdersPage() {
     ctx.font = "500 22px Helvetica Neue, Arial, sans-serif";
     ctx.fillStyle = "#334155";
     ctx.fillText(truncateByWidth(email || "-", contentWidth - 40, ctx.font), contentX + 20, customerBoxY + 108);
+    ctx.fillText(truncateByWidth(phone || "-", contentWidth - 40, ctx.font), contentX + 20, customerBoxY + 142);
 
-    const addressBoxY = customerBoxY + 150;
+    const addressBoxY = customerBoxY + 180;
     const addressBoxHeight = 172;
     drawRoundedRect(contentX, addressBoxY, contentWidth, addressBoxHeight, 16);
     ctx.fillStyle = "#f8fbff";
@@ -593,7 +621,7 @@ export function OrdersPage() {
     ctx.textAlign = "left";
     ctx.fillStyle = "#64748b";
     ctx.font = "700 20px Helvetica Neue, Arial, sans-serif";
-    ctx.fillText("Address details", contentX + 20, addressBoxY + 34);
+    ctx.fillText("Shipping details", contentX + 20, addressBoxY + 34);
 
     const addressLabelXLeft = contentX + 20;
     const addressValueXLeft = contentX + 180;
@@ -632,16 +660,22 @@ export function OrdersPage() {
       }
     };
 
-    drawAddressRow(addressBoxY + 68, "Address", address, "City", city);
-    drawAddressRow(addressBoxY + 102, "Shipping", shippingAddress, "", "");
+    drawAddressRow(addressBoxY + 68, "Street", address, "City", city);
+    drawAddressRow(
+      addressBoxY + 102,
+      "Apartment/Suite",
+      apartmentLine,
+      "",
+      ""
+    );
 
     ctx.fillStyle = "#64748b";
     ctx.font = "600 18px Helvetica Neue, Arial, sans-serif";
-    ctx.fillText("Directions", addressLabelXLeft, addressBoxY + 136);
+    ctx.fillText("Details", addressLabelXLeft, addressBoxY + 136);
     ctx.fillStyle = "#0f172a";
     ctx.font = "500 18px Helvetica Neue, Arial, sans-serif";
     ctx.fillText(
-      truncateByWidth(directions || "-", contentWidth - 40, ctx.font),
+      truncateByWidth(detailsLine, contentWidth - 40, ctx.font),
       addressValueXLeft,
       addressBoxY + 136
     );
@@ -866,19 +900,19 @@ export function OrdersPage() {
     const currentStatus = String(rawOrder.payment_status || "")
       .trim()
       .toLowerCase();
-    const nextPaymentStatus = currentStatus === "paid" ? "pending" : "paid";
+    const nextPaymentStatus = currentStatus === "paid" ? "unpaid" : "paid";
 
     setSavingPaymentOrderId(orderId);
     try {
       await updateDoc(doc(db, "orders", orderId), {
-        payment_status: nextPaymentStatus,
+        payment_status: nextPaymentStatus === "unpaid" ? "pending" : "paid",
       });
 
       const userId = String(rawOrder.user_id || "").trim();
       if (userId) {
         try {
           await updateDoc(doc(db, "users", userId, "orders", orderId), {
-            payment_status: nextPaymentStatus,
+            payment_status: nextPaymentStatus === "unpaid" ? "pending" : "paid",
           });
         } catch {
           // Skip if mirror doc is missing.
@@ -887,7 +921,7 @@ export function OrdersPage() {
 
       showToast({
         title: "Payment updated",
-        description: `Order marked as ${nextPaymentStatus === "paid" ? "paid" : "not paid"}.`,
+        description: `Order marked as ${nextPaymentStatus}.`,
       });
     } catch (error) {
       console.error("Failed to update payment status", error);
@@ -971,8 +1005,12 @@ export function OrdersPage() {
       shipping_address: String(orderEditor.shipping_address || "").trim() || null,
       payment_method: String(orderEditor.payment_method || "").trim() || null,
       payment_status:
-        normalizedPaymentStatus === "paid" || normalizedPaymentStatus === "pending"
-          ? normalizedPaymentStatus
+        normalizedPaymentStatus === "paid" ||
+        normalizedPaymentStatus === "pending" ||
+        normalizedPaymentStatus === "unpaid"
+          ? normalizedPaymentStatus === "unpaid"
+            ? "pending"
+            : normalizedPaymentStatus
           : null,
       status_note: String(orderEditor.status_note || "").trim() || null,
       subtotal: Math.max(0, Number(orderEditor.subtotal || 0)),
@@ -1179,7 +1217,7 @@ export function OrdersPage() {
               <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                 <option value="all">All payment statuses</option>
                 <option value="paid">Paid</option>
-                <option value="pending">Pending</option>
+                <option value="unpaid">Unpaid</option>
                 <option value="refunded">Refunded</option>
               </select>
             </label>
@@ -1292,7 +1330,7 @@ export function OrdersPage() {
                         tone={
                           order.paymentStatus === "paid"
                             ? "success"
-                            : order.paymentStatus === "pending"
+                            : order.paymentStatus === "unpaid"
                               ? "warning"
                               : "danger"
                         }
@@ -1450,7 +1488,7 @@ export function OrdersPage() {
                     }
                   >
                     <option value="">Select status</option>
-                    <option value="pending">Pending</option>
+                    <option value="unpaid">Unpaid</option>
                     <option value="paid">Paid</option>
                   </select>
                 </label>

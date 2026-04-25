@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Box, RefreshCcw, ShieldCheck, Truck } from "lucide-react";
-import { collection, doc, getDoc, onSnapshot } from "firebase/firestore";
+import { collection, doc, onSnapshot } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { useAuth } from "../contexts/AuthContext";
 import { addGuestCartItem, addItemToUserCart } from "../lib/cart";
@@ -30,33 +30,39 @@ export function ProductDetail() {
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
-    const run = async () => {
-      if (!id) return;
-      setLoading(true);
+    if (!id) return;
+    setLoading(true);
+    const ref = doc(db, "products", id);
+    const unsubscribe = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) {
+          setProduct(null);
+          setLoading(false);
+          return;
+        }
 
-      const ref = doc(db, "products", id);
-      const snap = await getDoc(ref);
+        const nextProduct = { id: snap.id, ...snap.data() } as StoreProduct;
+        setProduct(nextProduct);
 
-      if (!snap.exists()) {
+        const availableSizes = getDefaultSizes(nextProduct).filter(
+          (size) => !isSizeSoldOut(nextProduct, size)
+        );
+        setSelectedSize((prev) =>
+          prev && availableSizes.includes(prev) ? prev : availableSizes[0] || "One Size"
+        );
+
+        const colors = Array.isArray(nextProduct.colors) ? nextProduct.colors : [];
+        setSelectedColor((prev) => (prev && colors.includes(prev) ? prev : colors[0] || ""));
+        setLoading(false);
+      },
+      () => {
         setProduct(null);
         setLoading(false);
-        return;
       }
+    );
 
-      const nextProduct = { id: snap.id, ...snap.data() } as StoreProduct;
-      setProduct(nextProduct);
-
-      const availableSizes = getDefaultSizes(nextProduct).filter(
-        (size) => !isSizeSoldOut(nextProduct, size)
-      );
-      setSelectedSize(availableSizes[0] || "One Size");
-
-      const colors = Array.isArray(nextProduct.colors) ? nextProduct.colors : [];
-      setSelectedColor(colors[0] || "");
-      setLoading(false);
-    };
-
-    run();
+    return () => unsubscribe();
   }, [id]);
 
   useEffect(() => {

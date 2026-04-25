@@ -104,6 +104,12 @@ const normalizeCommissionPercent = (value: unknown) => {
   return parsed;
 };
 
+const sanitizeDiscountPercent = (value: unknown) => {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(95, parsed));
+};
+
 const normalizeSaleFields = (
   rawPrice: number,
   rawOriginalPrice: number,
@@ -113,15 +119,22 @@ const normalizeSaleFields = (
   let originalPrice = Math.max(0, Number(rawOriginalPrice || 0));
   let discountPercentage = Math.max(0, Math.min(95, Number(rawDiscountPercentage || 0)));
 
+  // Normal sale flow:
+  // - Compare-at/original is the base price before discount.
+  // - Current price is derived from original + discount.
   if (discountPercentage > 0) {
-    const compareAt = Math.max(originalPrice, price);
-    originalPrice = compareAt;
-    price = Number((compareAt * (1 - discountPercentage / 100)).toFixed(2));
-  } else if (originalPrice > price && originalPrice > 0) {
-    discountPercentage = Math.round(((originalPrice - price) / originalPrice) * 100);
+    if (originalPrice <= 0) {
+      originalPrice = price;
+    }
+    price = Number((Math.max(originalPrice, 0) * (1 - discountPercentage / 100)).toFixed(2));
   } else {
+    // Explicit 0% discount means "no sale":
+    // revert sale price back to original/base amount.
     discountPercentage = 0;
-    originalPrice = Math.max(originalPrice, price);
+    if (originalPrice <= 0) {
+      originalPrice = price;
+    }
+    price = originalPrice;
   }
 
   return {
@@ -293,7 +306,7 @@ export function ProductsPage() {
       cost_price: Number(raw?.cost_price || 0),
       original_price: Number(raw?.original_price || raw?.price || focusedProduct.price || 0),
       commission_percentage: normalizeCommissionPercent(raw?.commission_percentage),
-      discount_percentage: Number(raw?.discount_percentage || 0),
+      discount_percentage: sanitizeDiscountPercent(raw?.discount_percentage),
       use_manual_profit: Boolean(raw?.use_manual_profit),
       profit_per_unit: Number(raw?.profit_per_unit || 0),
       material: String(raw?.material || ""),
@@ -1187,11 +1200,11 @@ export function ProductsPage() {
                     <input className="adm-input" type="number" value={editor.cost_price} onChange={(event) => updateEditor("cost_price", Number(event.target.value || 0))} />
                   </label>
                   <label>
-                    Retail price
+                    Sale price
                     <input className="adm-input" type="number" value={editor.price} onChange={(event) => updateEditor("price", Number(event.target.value || 0))} />
                   </label>
                   <label>
-                    Compare-at price
+                    Original price (before discount)
                     <input className="adm-input" type="number" value={editor.original_price} onChange={(event) => updateEditor("original_price", Number(event.target.value || 0))} />
                   </label>
                   <label>
@@ -1200,7 +1213,7 @@ export function ProductsPage() {
                   </label>
                   <label>
                     Discount (%)
-                    <input className="adm-input" type="number" value={editor.discount_percentage} onChange={(event) => updateEditor("discount_percentage", Number(event.target.value || 0))} />
+                    <input className="adm-input" type="number" min={0} max={95} value={editor.discount_percentage} onChange={(event) => updateEditor("discount_percentage", sanitizeDiscountPercent(event.target.value))} />
                   </label>
                   <label>
                     Automatic profit (per item)
@@ -1376,7 +1389,7 @@ export function ProductsPage() {
           </label>
           <label>
             Discount (%)
-            <input className="adm-input" type="number" value={editor.discount_percentage} onChange={(event) => updateEditor("discount_percentage", Number(event.target.value || 0))} />
+            <input className="adm-input" type="number" min={0} max={95} value={editor.discount_percentage} onChange={(event) => updateEditor("discount_percentage", sanitizeDiscountPercent(event.target.value))} />
           </label>
           <label>
             Commission (%)

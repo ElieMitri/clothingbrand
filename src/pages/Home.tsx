@@ -59,11 +59,20 @@ const testimonials = [
   },
 ];
 
+interface HomeOfferEntry {
+  id?: string;
+  title: string;
+  subtitle?: string;
+  path: string;
+  active?: boolean;
+}
+
 export function Home() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [products, setProducts] = useState<StoreProduct[]>([]);
   const [featuredProductIds, setFeaturedProductIds] = useState<string[]>([]);
+  const [homeOffers, setHomeOffers] = useState<HomeOfferEntry[]>([]);
   const [quickAddingId, setQuickAddingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -82,15 +91,36 @@ export function Home() {
     return onSnapshot(doc(db, "site_settings", "homepage"), (snapshot) => {
       if (!snapshot.exists()) {
         setFeaturedProductIds([]);
+        setHomeOffers([]);
         return;
       }
       const data = snapshot.data() as {
         featured_product_ids?: string[];
+        home_offers?: unknown[];
       };
       const ids = Array.isArray(data.featured_product_ids)
         ? data.featured_product_ids.map((entry) => String(entry || "").trim()).filter(Boolean)
         : [];
       setFeaturedProductIds(ids.slice(0, 6));
+      const offers = Array.isArray(data.home_offers)
+        ? data.home_offers
+            .map((entry) => {
+              if (!entry || typeof entry !== "object") return null;
+              const candidate = entry as Partial<HomeOfferEntry>;
+              const title = String(candidate.title || "").trim();
+              const path = String(candidate.path || "").trim();
+              if (!title || !path || candidate.active === false) return null;
+              return {
+                id: String(candidate.id || title),
+                title,
+                subtitle: String(candidate.subtitle || "").trim(),
+                path: path.startsWith("/") ? path : `/${path}`,
+                active: true,
+              } as HomeOfferEntry;
+            })
+            .filter((entry: HomeOfferEntry | null): entry is HomeOfferEntry => Boolean(entry))
+        : [];
+      setHomeOffers(offers);
     });
   }, []);
 
@@ -182,6 +212,29 @@ export function Home() {
           ))}
         </div>
       </section>
+
+      {homeOffers.length > 0 ? (
+        <section className="store-container mt-10">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {homeOffers.map((offer) => (
+              <Link
+                key={offer.id || offer.title}
+                to={offer.path}
+                className="store-card p-5 hover:shadow-[0_10px_28px_rgba(15,23,42,0.10)] transition-shadow"
+              >
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--sf-accent)]">
+                  Offer
+                </p>
+                <h3 className="mt-2 text-lg font-semibold text-[var(--sf-text)]">{offer.title}</h3>
+                {offer.subtitle ? (
+                  <p className="mt-2 text-sm leading-6 text-[var(--sf-text-muted)]">{offer.subtitle}</p>
+                ) : null}
+                <p className="mt-4 text-sm font-semibold text-[var(--sf-accent)]">Shop offer</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="store-container mt-16">
         <div className="mb-5 flex items-center justify-between">

@@ -19,7 +19,7 @@ export interface NavItem {
   href: string;
 }
 
-export type OrderPaymentStatus = "paid" | "pending" | "refunded";
+export type OrderPaymentStatus = "paid" | "unpaid" | "refunded";
 export type OrderFulfillmentStatus = "fulfilled" | "processing" | "unfulfilled";
 export type OrderShipmentStatus =
   | "pending"
@@ -36,6 +36,7 @@ export interface OrderRow {
   location: string;
   date: string;
   paymentStatus: OrderPaymentStatus;
+  paymentMethod: string;
   fulfillmentStatus: OrderFulfillmentStatus;
   shipmentStatus: OrderShipmentStatus;
   total: number;

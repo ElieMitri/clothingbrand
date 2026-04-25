@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
-import { doc, onSnapshot, setDoc, Timestamp } from "firebase/firestore";
+import { addDoc, collection, doc, onSnapshot, setDoc, Timestamp } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { FormSection } from "../components/FormSection";
 import { PageHeader } from "../components/PageHeader";
@@ -25,6 +25,7 @@ interface StoreSettingsForm {
   home_categories: HomeCategoryEntry[];
   shop_menu_items: ShopMenuItemEntry[];
   home_collection_ids: string[];
+  home_offers: HomeOfferEntry[];
 }
 
 interface HomeCategoryEntry {
@@ -41,8 +42,19 @@ interface ShopMenuItemEntry {
   special?: boolean;
 }
 
+interface HomeOfferEntry {
+  id: string;
+  title: string;
+  subtitle: string;
+  path: string;
+  badge?: string;
+  image_url?: string;
+  active?: boolean;
+}
+
 const defaultHomeCategories: HomeCategoryEntry[] = [];
 const defaultShopMenuItems: ShopMenuItemEntry[] = [];
+const defaultHomeOffers: HomeOfferEntry[] = [];
 
 const defaultSettings: StoreSettingsForm = {
   store_name: "Atlas Activewear",
@@ -62,6 +74,7 @@ const defaultSettings: StoreSettingsForm = {
   home_categories: defaultHomeCategories,
   shop_menu_items: defaultShopMenuItems,
   home_collection_ids: [],
+  home_offers: defaultHomeOffers,
 };
 
 const slugifyPathToken = (value: string) =>
@@ -166,6 +179,12 @@ export function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<StoreSettingsForm>(defaultSettings);
+  const [promoForm, setPromoForm] = useState({
+    code: "",
+    type: "percent" as "percent" | "amount",
+    value: 10,
+  });
+  const [creatingPromo, setCreatingPromo] = useState(false);
 
   useEffect(() => {
     return onSnapshot(doc(db, "site_settings", "store"), (snap) => {
@@ -274,6 +293,54 @@ export function SettingsPage() {
     });
   };
 
+  const updateHomeOffer = (
+    index: number,
+    patch: Partial<Omit<HomeOfferEntry, "id">>
+  ) => {
+    setForm((prev) => {
+      const nextOffers = [...prev.home_offers];
+      const current = nextOffers[index];
+      if (!current) return prev;
+      nextOffers[index] = { ...current, ...patch };
+      return { ...prev, home_offers: nextOffers };
+    });
+  };
+
+  const addHomeOffer = () => {
+    setForm((prev) => ({
+      ...prev,
+      home_offers: [
+        ...prev.home_offers,
+        {
+          id: `offer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          title: "",
+          subtitle: "",
+          path: "/shop",
+          badge: "",
+          image_url: "",
+          active: true,
+        },
+      ],
+    }));
+  };
+
+  const removeHomeOffer = (index: number) => {
+    setForm((prev) => ({
+      ...prev,
+      home_offers: prev.home_offers.filter((_, rowIndex) => rowIndex !== index),
+    }));
+  };
+
+  const moveHomeOffer = (index: number, direction: "up" | "down") => {
+    setForm((prev) => {
+      const nextOffers = [...prev.home_offers];
+      const targetIndex = direction === "up" ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= nextOffers.length) return prev;
+      [nextOffers[index], nextOffers[targetIndex]] = [nextOffers[targetIndex], nextOffers[index]];
+      return { ...prev, home_offers: nextOffers };
+    });
+  };
+
   const addShopMenuItem = () => {
     setForm((prev) => ({
       ...prev,
@@ -348,6 +415,7 @@ export function SettingsPage() {
         home_categories?: unknown[];
         shop_menu_items?: unknown[];
         home_collection_ids?: string[];
+        home_offers?: unknown[];
       };
       const configuredCategories = Array.isArray(data.home_categories)
         ? data.home_categories
@@ -382,6 +450,26 @@ export function SettingsPage() {
             })
             .filter((entry: ShopMenuItemEntry | null): entry is ShopMenuItemEntry => Boolean(entry))
         : defaultShopMenuItems;
+      const configuredHomeOffers = Array.isArray(data.home_offers)
+        ? data.home_offers
+            .map((entry, index) => {
+              if (!entry || typeof entry !== "object") return null;
+              const candidate = entry as Partial<HomeOfferEntry>;
+              const title = String(candidate.title || "").trim();
+              const path = normalizeHomepageShopPath(String(candidate.path || "").trim() || "/shop");
+              if (!title || !path) return null;
+              return {
+                id: String(candidate.id || `offer-${index}`),
+                title,
+                subtitle: String(candidate.subtitle || "").trim(),
+                path,
+                badge: String(candidate.badge || "").trim(),
+                image_url: String(candidate.image_url || "").trim(),
+                active: candidate.active !== false,
+              } as HomeOfferEntry;
+            })
+            .filter((entry: HomeOfferEntry | null): entry is HomeOfferEntry => Boolean(entry))
+        : defaultHomeOffers;
       setForm((prev) => ({
         ...prev,
         hero_image_url: String(data.hero_image_url || ""),
@@ -394,6 +482,7 @@ export function SettingsPage() {
         home_collection_ids: Array.isArray(data.home_collection_ids)
           ? data.home_collection_ids.map((entry) => String(entry)).filter(Boolean)
           : [],
+        home_offers: configuredHomeOffers,
       }));
     });
   }, []);
@@ -444,6 +533,17 @@ export function SettingsPage() {
             }))
             .filter((entry) => entry.label && entry.path),
           home_collection_ids: form.home_collection_ids,
+          home_offers: form.home_offers
+            .map((entry) => ({
+              id: String(entry.id || "").trim(),
+              title: String(entry.title || "").trim(),
+              subtitle: String(entry.subtitle || "").trim(),
+              path: normalizeHomepageShopPath(String(entry.path || "")),
+              badge: String(entry.badge || "").trim(),
+              image_url: String(entry.image_url || "").trim(),
+              active: entry.active !== false,
+            }))
+            .filter((entry) => entry.id && entry.title && entry.path),
           updated_at: Timestamp.now(),
         },
         { merge: true }
@@ -454,6 +554,40 @@ export function SettingsPage() {
       showToast({ title: "Save failed", description: "Could not update store settings." });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const createPromoCode = async () => {
+    const code = String(promoForm.code || "").trim().toUpperCase();
+    const value = Math.max(0, Number(promoForm.value || 0));
+    if (!code) {
+      showToast({ title: "Promo code is required" });
+      return;
+    }
+    if (value <= 0) {
+      showToast({ title: "Promo value must be greater than 0" });
+      return;
+    }
+
+    setCreatingPromo(true);
+    try {
+      await addDoc(collection(db, "discount_codes"), {
+        code,
+        type: promoForm.type,
+        value,
+        status: "active",
+        usage_count: 0,
+        starts_at: Timestamp.now(),
+        created_at: Timestamp.now(),
+        updated_at: Timestamp.now(),
+      });
+      setPromoForm({ code: "", type: "percent", value: 10 });
+      showToast({ title: "Promo code created", description: `${code} is now active.` });
+    } catch (error) {
+      console.error("Failed to create promo code", error);
+      showToast({ title: "Create failed", description: "Could not create promo code." });
+    } finally {
+      setCreatingPromo(false);
     }
   };
 
@@ -816,6 +950,91 @@ export function SettingsPage() {
             </button>
           </div>
 
+          <div className="adm-form-grid__full" style={{ display: "grid", gap: 8 }}>
+            <p style={{ margin: 0, fontWeight: 600 }}>Home Offers</p>
+            <p className="adm-muted">
+              Add offer cards shown on Home. You can link to any page, category, product, collection, or sale.
+            </p>
+            {form.home_offers.map((entry, index) => (
+              <div
+                key={entry.id}
+                style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.4fr auto auto auto auto", gap: 8 }}
+              >
+                <input
+                  className="adm-input"
+                  value={entry.title}
+                  onChange={(event) => updateHomeOffer(index, { title: event.target.value })}
+                  placeholder="Offer title"
+                />
+                <input
+                  className="adm-input"
+                  value={entry.subtitle}
+                  onChange={(event) => updateHomeOffer(index, { subtitle: event.target.value })}
+                  placeholder="Offer subtitle"
+                />
+                <input
+                  className="adm-input"
+                  value={entry.path}
+                  onChange={(event) => updateHomeOffer(index, { path: event.target.value })}
+                  placeholder="/shop?category=Gym Supplements"
+                  list="home-offers-path-suggestions"
+                />
+                <label className="adm-toggle">
+                  <input
+                    type="checkbox"
+                    checked={entry.active !== false}
+                    onChange={(event) => updateHomeOffer(index, { active: event.target.checked })}
+                  />
+                  Active
+                </label>
+                <button
+                  type="button"
+                  className="adm-button adm-button--ghost"
+                  onClick={() => moveHomeOffer(index, "up")}
+                  disabled={index === 0}
+                  aria-label="Move offer up"
+                >
+                  <ChevronUp size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="adm-button adm-button--ghost"
+                  onClick={() => moveHomeOffer(index, "down")}
+                  disabled={index === form.home_offers.length - 1}
+                  aria-label="Move offer down"
+                >
+                  <ChevronDown size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="adm-button adm-button--ghost"
+                  onClick={() => removeHomeOffer(index)}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+            <datalist id="home-offers-path-suggestions">
+              <option value="/shop" />
+              <option value="/sale" />
+              <option value="/collections" />
+              <option value="/new-arrivals" />
+              {collectionsRaw.map((entry) => {
+                const collectionName = String(entry.name || "").trim();
+                return collectionName ? (
+                  <option key={`collection-${entry.id}`} value={`/shop?category=${encodeURIComponent(collectionName)}`} />
+                ) : null;
+              })}
+              {selectableProducts.map((entry) => (
+                <option key={`product-${entry.id}`} value={`/product/${entry.id}`} />
+              ))}
+            </datalist>
+            <button type="button" className="adm-button adm-button--ghost" onClick={addHomeOffer}>
+              <Plus size={16} />
+              Add home offer
+            </button>
+          </div>
+
           <label className="adm-form-grid__full" style={{ display: "grid", gap: 8 }}>
             Collections on home
             <div style={{ display: "grid", gap: 8, maxHeight: 200, overflowY: "auto" }}>
@@ -841,6 +1060,60 @@ export function SettingsPage() {
                 );
               })}
             </div>
+          </label>
+        </FormSection>
+      </section>
+
+      <section className="adm-grid adm-grid--two">
+        <FormSection title="Promo Codes" description="Create promo codes directly from admin settings.">
+          <label>
+            Promo code
+            <input
+              className="adm-input"
+              value={promoForm.code}
+              onChange={(event) =>
+                setPromoForm((prev) => ({ ...prev, code: event.target.value.toUpperCase() }))
+              }
+              placeholder="SAVE10"
+            />
+          </label>
+          <label>
+            Type
+            <select
+              className="adm-input"
+              value={promoForm.type}
+              onChange={(event) =>
+                setPromoForm((prev) => ({
+                  ...prev,
+                  type: event.target.value as "percent" | "amount",
+                }))
+              }
+            >
+              <option value="percent">Percent</option>
+              <option value="amount">Amount</option>
+            </select>
+          </label>
+          <label>
+            Value
+            <input
+              className="adm-input"
+              type="number"
+              min={0}
+              value={promoForm.value}
+              onChange={(event) =>
+                setPromoForm((prev) => ({ ...prev, value: Number(event.target.value || 0) }))
+              }
+            />
+          </label>
+          <label className="adm-form-grid__full" style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              className="adm-button adm-button--primary"
+              onClick={createPromoCode}
+              disabled={creatingPromo}
+            >
+              {creatingPromo ? "Creating..." : "Create promo code"}
+            </button>
           </label>
         </FormSection>
       </section>

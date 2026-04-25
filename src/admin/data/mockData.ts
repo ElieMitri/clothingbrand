@@ -36,7 +36,7 @@ export const orders: OrderRow[] = [
     email: "karim.salem@example.com",
     location: "Tripoli, Lebanon",
     date: "2026-04-20",
-    paymentStatus: "pending",
+    paymentStatus: "unpaid",
     fulfillmentStatus: "unfulfilled",
     shipmentStatus: "pending",
     total: 64,
