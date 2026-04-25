@@ -12,7 +12,10 @@ import { useAdminLiveData } from "../hooks/useAdminLiveData";
 import { useToast } from "../hooks/useToast";
 import { db } from "../../lib/firebase";
 import { toDate } from "../../lib/storefront";
-import { getUnitProfitFromOrderItemDoc } from "../utils/transforms";
+import {
+  getOrderNetAmountExcludingShipping,
+  getUnitProfitFromOrderItemDoc,
+} from "../utils/transforms";
 import type { ChecklistItem } from "../types";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -275,7 +278,7 @@ export function DashboardPage() {
       const date = toDate(order.created_at);
       if (date < start || date >= end) return;
       const bucket = selectedMonth === "all" ? date.getMonth() : date.getDate() - 1;
-      const total = Math.max(0, Number(order.total || 0));
+      const total = getOrderNetAmountExcludingShipping(order);
 
       grossByBucket.set(bucket, Number(grossByBucket.get(bucket) || 0) + total);
       ordersByBucket.set(bucket, Number(ordersByBucket.get(bucket) || 0) + 1);
@@ -395,7 +398,10 @@ export function DashboardPage() {
       .sort((a, b) => b.onlineVisitors - a.onlineVisitors)
       .slice(0, 8);
 
-    const revenue = nonCancelled.reduce((sum, order) => sum + Number(order.total || 0), 0);
+    const revenue = nonCancelled.reduce(
+      (sum, order) => sum + getOrderNetAmountExcludingShipping(order),
+      0
+    );
     const totalOrders = inRange.length;
     const fulfilledOrders = nonCancelled.filter(
       (order) => order.status === "shipped" || order.status === "delivered"

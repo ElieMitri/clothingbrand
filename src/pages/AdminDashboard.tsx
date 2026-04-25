@@ -210,6 +210,20 @@ const isCancelledOrder = (status?: string) => {
   return normalized === "cancelled" || normalized === "canceled";
 };
 
+const getOrderNetExcludingShipping = (order: {
+  subtotal?: number;
+  total?: number;
+  shipping?: number;
+}) => {
+  const subtotal = Number(order.subtotal);
+  if (Number.isFinite(subtotal) && subtotal >= 0) {
+    return subtotal;
+  }
+  const total = Math.max(0, Number(order.total || 0));
+  const shipping = Math.max(0, Number(order.shipping || 0));
+  return Math.max(0, total - shipping);
+};
+
 interface SubscriberView extends Subscriber {
   preferences: NotificationPreferences;
 }
@@ -1682,7 +1696,7 @@ export function AdminDashboard() {
         };
       }
 
-      monthlyData[monthKey].revenue += order.total || 0;
+      monthlyData[monthKey].revenue += getOrderNetExcludingShipping(order);
 
       // Calculate profit
       const profit = order.items.reduce((sum, item) => {
@@ -1715,7 +1729,7 @@ export function AdminDashboard() {
     const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const totalRevenue = revenueOrders.reduce(
-      (sum, order) => sum + (order.total || 0),
+      (sum, order) => sum + getOrderNetExcludingShipping(order),
       0
     );
 
@@ -1725,7 +1739,7 @@ export function AdminDashboard() {
     });
 
     const monthlyRevenue = monthlyOrders.reduce(
-      (sum, order) => sum + (order.total || 0),
+      (sum, order) => sum + getOrderNetExcludingShipping(order),
       0
     );
 
@@ -4199,7 +4213,7 @@ export function AdminDashboard() {
         : null;
     const totalSpent = relatedOrders.reduce((sum, order) => {
       if (isCancelledOrder(order.status)) return sum;
-      return sum + Number(order.total || 0);
+      return sum + getOrderNetExcludingShipping(order);
     }, 0);
     const fullName = String(
       `${entry.firstName || ""} ${entry.lastName || ""}`.trim() ||

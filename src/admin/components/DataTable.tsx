@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 
 export interface DataTableColumn<T> {
@@ -16,7 +17,7 @@ interface DataTableProps<T extends { id: string }> {
   page: number;
   pageSize: number;
   onPageChange: (page: number) => void;
-  rowActions?: Array<{ label: string; onClick: (row: T) => void }>;
+  rowActions?: Array<{ label: string | ((row: T) => string); onClick: (row: T) => void }>;
   onRowClick?: (row: T) => void;
 }
 
@@ -32,6 +33,23 @@ export function DataTable<T extends { id: string }>({
   rowActions,
   onRowClick,
 }: DataTableProps<T>) {
+  const [openMenuRowId, setOpenMenuRowId] = useState<string>("");
+  const tableRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleDocumentPointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest(".adm-row-menu")) return;
+      setOpenMenuRowId("");
+    };
+
+    document.addEventListener("mousedown", handleDocumentPointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentPointerDown);
+    };
+  }, []);
+
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const safePage = Math.min(page, totalPages);
   const start = (safePage - 1) * pageSize;
@@ -40,7 +58,7 @@ export function DataTable<T extends { id: string }>({
   const allSelected = pageRows.length > 0 && pageRows.every((row) => selectedIds.includes(row.id));
 
   return (
-    <div className="adm-table-wrap">
+    <div className="adm-table-wrap" ref={tableRef}>
       <table className="adm-table">
         <thead>
           <tr>
@@ -62,7 +80,13 @@ export function DataTable<T extends { id: string }>({
         </thead>
         <tbody>
           {pageRows.map((row) => (
-            <tr key={row.id} onClick={() => onRowClick?.(row)}>
+            <tr
+              key={row.id}
+              onClick={() => {
+                setOpenMenuRowId("");
+                onRowClick?.(row);
+              }}
+            >
               <td>
                 <input
                   type="checkbox"
@@ -77,23 +101,42 @@ export function DataTable<T extends { id: string }>({
               ))}
               {rowActions ? (
                 <td className="adm-row-actions-cell">
-                  <details className="adm-row-menu" onClick={(event) => event.stopPropagation()}>
-                    <summary className="adm-icon-button" aria-label="Row actions">
+                  <div className="adm-row-menu" onClick={(event) => event.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="adm-icon-button"
+                      aria-label="Row actions"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setOpenMenuRowId((prev) => (prev === row.id ? "" : row.id));
+                      }}
+                    >
                       <MoreHorizontal size={16} />
-                    </summary>
-                    <div className="adm-row-menu__content">
-                      {rowActions.map((action) => (
-                        <button
-                          key={action.label}
-                          type="button"
-                          onClick={() => action.onClick(row)}
-                          className="adm-row-menu__item"
-                        >
-                          {action.label}
-                        </button>
-                      ))}
-                    </div>
-                  </details>
+                    </button>
+                    {openMenuRowId === row.id ? (
+                      <div className="adm-row-menu__content">
+                        {rowActions.map((action, index) => {
+                          const label =
+                            typeof action.label === "function"
+                              ? action.label(row)
+                              : action.label;
+                          return (
+                            <button
+                              key={`${label}-${index}`}
+                              type="button"
+                              onClick={() => {
+                                action.onClick(row);
+                                setOpenMenuRowId("");
+                              }}
+                              className="adm-row-menu__item"
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
                 </td>
               ) : null}
             </tr>

@@ -65,6 +65,8 @@ export interface AdminOrderDoc {
   shipping_address?: string;
   payment_method?: string;
   payment_status?: string;
+  amount_paid?: number;
+  paid_amount?: number;
   status_note?: string;
   created_at?: unknown;
   status?: OrderStatus;
@@ -79,6 +81,18 @@ export interface AdminOrderDoc {
   profit?: number;
   items?: AdminOrderItemDoc[];
 }
+
+export const getOrderNetAmountExcludingShipping = (
+  order: Pick<AdminOrderDoc, "subtotal" | "total" | "shipping">
+) => {
+  const subtotal = Number(order.subtotal);
+  if (Number.isFinite(subtotal) && subtotal >= 0) {
+    return subtotal;
+  }
+  const total = Math.max(0, Number(order.total || 0));
+  const shipping = Math.max(0, Number(order.shipping || 0));
+  return Math.max(0, total - shipping);
+};
 
 export interface AdminUserDoc {
   id: string;
@@ -462,8 +476,14 @@ export const buildDashboardKpis = (
   products: AdminProductDoc[]
 ): KpiMetric[] => {
   const activeOrders = orders.filter((order) => order.status !== "cancelled");
-  const grossSales = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
-  const netRevenue = activeOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+  const grossSales = orders.reduce(
+    (sum, order) => sum + getOrderNetAmountExcludingShipping(order),
+    0
+  );
+  const netRevenue = activeOrders.reduce(
+    (sum, order) => sum + getOrderNetAmountExcludingShipping(order),
+    0
+  );
   const productById = buildProductById(products);
   const estimatedProfit = activeOrders.reduce(
     (sum, order) => sum + getOrderProfit(order, productById),

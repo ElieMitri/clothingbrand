@@ -32,6 +32,24 @@ const fulfillmentTone: Record<OrderRow["fulfillmentStatus"], "success" | "warnin
   processing: "warning",
   unfulfilled: "neutral",
 };
+
+const roundMoneyValue = (value: number) => Number(value.toFixed(2));
+
+const computeTotal = (subtotal: number, shipping: number, tax: number) =>
+  roundMoneyValue(
+    Math.max(0, Number(subtotal || 0)) +
+      Math.max(0, Number(shipping || 0)) +
+      Math.max(0, Number(tax || 0))
+  );
+
+const getAmountPaidFromOrder = (
+  order?: { amount_paid?: unknown; paid_amount?: unknown } | null
+) => {
+  const parsed = Number(order?.amount_paid ?? order?.paid_amount ?? 0);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return roundMoneyValue(parsed);
+};
+
 export function OrdersPage() {
   const { showToast } = useToast();
   const { loading, orders, ordersRaw, productsRaw } = useAdminLiveData();
@@ -47,6 +65,14 @@ export function OrdersPage() {
   const [savingPaymentOrderId, setSavingPaymentOrderId] = useState<string>("");
   const [savingDetailsOrderId, setSavingDetailsOrderId] = useState<string>("");
   const [deletingOrderId, setDeletingOrderId] = useState<string>("");
+  const [activePaidEditorOrderId, setActivePaidEditorOrderId] = useState<string>("");
+  const [showOrderDetailsEditor, setShowOrderDetailsEditor] = useState(false);
+  const [paymentAmountInputByOrderId, setPaymentAmountInputByOrderId] = useState<
+    Record<string, string>
+  >({});
+  const [shippingRestoreByOrderId, setShippingRestoreByOrderId] = useState<
+    Record<string, number>
+  >({});
   const [isAddProductModalOpen, setIsAddProductModalOpen] = useState(false);
   const [addProductSearchQuery, setAddProductSearchQuery] = useState("");
   const [orderEditor, setOrderEditor] = useState({
@@ -98,6 +124,15 @@ export function OrdersPage() {
     });
     return byId;
   }, [productsRaw]);
+
+  const rawOrderById = useMemo(() => {
+    const byId = new Map<string, (typeof ordersRaw)[number]>();
+    ordersRaw.forEach((order) => {
+      if (!order?.id) return;
+      byId.set(order.id, order);
+    });
+    return byId;
+  }, [ordersRaw]);
 
   const focusedOrder = useMemo(() => {
     if (!orderId) return null;
@@ -176,6 +211,38 @@ export function OrdersPage() {
     );
   }, [focusedOrder?.customer, focusedOrder?.email, focusedOrder?.total, focusedRawOrder]);
 
+  useEffect(() => {
+    setShowOrderDetailsEditor(false);
+  }, [focusedOrder?.id]);
+
+  useEffect(() => {
+    setPaymentAmountInputByOrderId((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      ordersRaw.forEach((order) => {
+        const orderId = String(order.id || "").trim();
+        if (!orderId || Object.prototype.hasOwnProperty.call(next, orderId)) return;
+        next[orderId] = String(getAmountPaidFromOrder(order));
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+
+    setShippingRestoreByOrderId((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      ordersRaw.forEach((order) => {
+        const orderId = String(order.id || "").trim();
+        if (!orderId || Object.prototype.hasOwnProperty.call(next, orderId)) return;
+        const shipping = Math.max(0, Number(order.shipping || 0));
+        if (shipping <= 0) return;
+        next[orderId] = shipping;
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [ordersRaw]);
+
   const focusedOrderItems = useMemo(() => {
     if (!Array.isArray(orderItemsEditor)) return [];
     return orderItemsEditor.map((item, index) => {
@@ -243,6 +310,139 @@ export function OrdersPage() {
     [editedOrderSubtotal, orderEditor.shipping, orderEditor.tax]
   );
 
+  const editedOrderShipping = useMemo(
+    () => Math.max(0, Number(orderEditor.shipping || 0)),
+    [orderEditor.shipping]
+  );
+
+  const editedOrderTax = useMemo(
+    () => Math.max(0, Number(orderEditor.tax || 0)),
+    [orderEditor.tax]
+  );
+
+  const focusedOrderAmountPaid = useMemo(() => {
+    if (!focusedOrder) return 0;
+    const rawValue = paymentAmountInputByOrderId[focusedOrder.id];
+    if (rawValue === undefined) return getAmountPaidFromOrder(focusedRawOrder);
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
+    return roundMoneyValue(parsed);
+  }, [focusedOrder, focusedRawOrder, paymentAmountInputByOrderId]);
+
+  const focusedOrderRemaining = useMemo(() => {
+    if (!focusedOrder) return 0;
+    return roundMoneyValue(Math.max(0, Number(focusedOrder.total || 0) - focusedOrderAmountPaid));
+  }, [focusedOrder, focusedOrderAmountPaid]);
+
+  const persistPaymentAmount = async (
+    orderId: string,
+    amountPaidRaw: number,
+    successDescription: string
+  ) => {
+    const rawOrder = rawOrderById.get(orderId);
+    if (!rawOrder) {
+      showToast({ title: "Order not found", description: "Could not resolve selected order." });
+      return false;
+    }
+
+    const amountPaid = roundMoneyValue(Math.max(0, Number(amountPaidRaw || 0)));
+    const total = roundMoneyValue(Math.max(0, Number(rawOrder.total || 0)));
+    const nextPaymentStatus = total === 0 || amountPaid >= total ? "paid" : "pending";
+    const remaining = roundMoneyValue(Math.max(0, total - amountPaid));
+    const patch = {
+      amount_paid: amountPaid,
+      payment_status: nextPaymentStatus,
+      updated_at: Timestamp.now(),
+    };
+
+    setSavingPaymentOrderId(orderId);
+    try {
+      await updateDoc(doc(db, "orders", orderId), patch);
+
+      const userId = String(rawOrder.user_id || "").trim();
+      if (userId) {
+        try {
+          await updateDoc(doc(db, "users", userId, "orders", orderId), patch);
+        } catch {
+          // Skip if mirror doc is missing.
+        }
+      }
+
+      setPaymentAmountInputByOrderId((prev) => ({
+        ...prev,
+        [orderId]: String(amountPaid),
+      }));
+      showToast({
+        title: "Payment updated",
+        description: `${successDescription} Remaining: ${money.format(remaining)}.`,
+      });
+      return true;
+    } catch (error) {
+      console.error("Failed to update payment amount", error);
+      showToast({
+        title: "Payment update failed",
+        description:
+          error instanceof Error ? error.message : "Could not update payment amount.",
+      });
+      return false;
+    } finally {
+      setSavingPaymentOrderId("");
+    }
+  };
+
+  const savePaymentAmount = async (orderId: string) => {
+    const rawInput = String(paymentAmountInputByOrderId[orderId] || "").trim();
+    const parsed = Number(rawInput);
+    if (!rawInput || !Number.isFinite(parsed) || parsed < 0) {
+      showToast({
+        title: "Invalid payment amount",
+        description: "Enter a valid amount paid (0 or higher).",
+      });
+      return;
+    }
+
+    await persistPaymentAmount(orderId, parsed, "Paid amount saved.");
+  };
+
+  const setOrderEditorShippingAndTotal = (nextShippingRaw: number) => {
+    setOrderEditor((prev) => {
+      const nextShipping = Math.max(0, Number(nextShippingRaw || 0));
+      return {
+        ...prev,
+        shipping: nextShipping,
+        total: computeTotal(prev.subtotal, nextShipping, prev.tax),
+      };
+    });
+  };
+
+  const removeShippingFromEditor = () => {
+    if (!focusedOrder) return;
+    const currentShipping = Math.max(0, Number(orderEditor.shipping || 0));
+    const fallbackShipping = Math.max(0, Number(focusedRawOrder?.shipping || 0));
+    const restoreAmount =
+      currentShipping > 0
+        ? currentShipping
+        : shippingRestoreByOrderId[focusedOrder.id] || fallbackShipping;
+    if (restoreAmount > 0) {
+      setShippingRestoreByOrderId((prev) => ({
+        ...prev,
+        [focusedOrder.id]: restoreAmount,
+      }));
+    }
+    setOrderEditorShippingAndTotal(0);
+  };
+
+  const reapplyShippingToEditor = () => {
+    if (!focusedOrder) return;
+    const fallbackShipping = Math.max(0, Number(focusedRawOrder?.shipping || 0));
+    const restoreAmount = shippingRestoreByOrderId[focusedOrder.id] || fallbackShipping || 4;
+    setOrderEditorShippingAndTotal(restoreAmount);
+    setShippingRestoreByOrderId((prev) => ({
+      ...prev,
+      [focusedOrder.id]: restoreAmount,
+    }));
+  };
+
   const updateOrderItemEditor = <K extends keyof AdminOrderItemDoc>(
     index: number,
     key: K,
@@ -266,9 +466,9 @@ export function OrdersPage() {
       header: "Order",
       width: "16%",
       render: (row) => (
-        <div>
-          <p>{row.orderNumber}</p>
-          <p className="adm-muted">{row.date}</p>
+        <div className="adm-order-col">
+          <p className="adm-order-col__title">{row.orderNumber}</p>
+          <p className="adm-order-col__meta">{row.date}</p>
         </div>
       ),
     },
@@ -277,30 +477,32 @@ export function OrdersPage() {
       header: "Customer",
       width: "24%",
       render: (row) => (
-        <div>
-          <p>{row.customer}</p>
-          <p className="adm-muted">{row.email}</p>
+        <div className="adm-order-col">
+          <p className="adm-order-col__title">{row.customer}</p>
+          <p className="adm-order-col__meta adm-order-col__meta--email">{row.email}</p>
         </div>
       ),
     },
     {
       key: "location",
       header: "Location",
-      render: (row) => row.location,
+      width: "12%",
+      render: (row) => <div className="adm-order-col__location">{row.location}</div>,
     },
     {
       key: "payment",
       header: "Payment",
+      width: "10%",
       render: (row) => (
-        <div>
-          <StatusBadge tone={paymentTone[row.paymentStatus]}>{row.paymentStatus}</StatusBadge>
-          <p className="adm-muted">{row.paymentMethod}</p>
+        <div className="adm-order-col">
+          <p className="adm-payment-method">{row.paymentMethod}</p>
         </div>
       ),
     },
     {
       key: "shipment",
       header: "Shipment",
+      width: "12%",
       render: (row) => (
         <select
           value={row.shipmentStatus}
@@ -308,8 +510,7 @@ export function OrdersPage() {
           onChange={async (event) => {
             await updateStatus(row.id, event.target.value as OrderStatus);
           }}
-          className="adm-input"
-          style={{ minHeight: 32, width: "auto", minWidth: 120, fontSize: 12, padding: "4px 8px" }}
+          className="adm-input adm-orders-compact-select"
           disabled={savingStatusOrderId === row.id}
         >
           {allStatuses.map((status) => (
@@ -323,28 +524,89 @@ export function OrdersPage() {
     {
       key: "paymentToggle",
       header: "Paid",
-      render: (row) => (
-        <button
-          type="button"
-          className="adm-button adm-button--ghost"
-          onClick={(event) => {
-            event.stopPropagation();
-            void togglePaymentStatus(row.id);
-          }}
-          disabled={savingPaymentOrderId === row.id}
-          style={{ height: 32, padding: "0 10px", textTransform: "capitalize" }}
-        >
-          {savingPaymentOrderId === row.id
-            ? "Saving..."
-            : row.paymentStatus === "paid"
-            ? "Paid"
-            : "Unpaid"}
-        </button>
-      ),
+      width: "20%",
+      render: (row) => {
+        const rawOrder = rawOrderById.get(row.id);
+        const inputRaw = paymentAmountInputByOrderId[row.id];
+        const amountPaid =
+          inputRaw === undefined
+            ? getAmountPaidFromOrder(rawOrder)
+            : Math.max(0, Number(inputRaw) || 0);
+        const remaining = Math.max(0, Number(row.total || 0) - amountPaid);
+        const isCleared = remaining <= 0;
+        const isEditing = activePaidEditorOrderId === row.id;
+        const rawInputValue = inputRaw ?? String(getAmountPaidFromOrder(rawOrder));
+
+        return (
+          <div className="adm-paid-compact">
+            <div className="adm-paid-compact__top">
+              <StatusBadge tone={paymentTone[row.paymentStatus]}>{row.paymentStatus}</StatusBadge>
+              <span
+                className={`adm-paid-compact__remaining ${
+                  isCleared ? "is-cleared" : "is-open"
+                }`}
+              >
+                {isCleared ? "Cleared" : `Due ${money.format(remaining)}`}
+              </span>
+              <button
+                type="button"
+                className="adm-button adm-button--ghost adm-paid-compact__edit"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setActivePaidEditorOrderId((prev) => (prev === row.id ? "" : row.id));
+                }}
+              >
+                {isEditing ? "Hide" : "Edit"}
+              </button>
+            </div>
+            {isEditing ? (
+              <div className="adm-paid-compact__editor">
+                <div className="adm-paid-compact__amount">
+                  <span>$</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    className="adm-input adm-paid-compact__amount-input"
+                    value={rawInputValue}
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => {
+                      event.stopPropagation();
+                      setPaymentAmountInputByOrderId((prev) => ({
+                        ...prev,
+                        [row.id]: event.target.value,
+                      }));
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void savePaymentAmount(row.id);
+                    }}
+                    placeholder="0.00"
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="adm-button adm-button--primary adm-paid-compact__apply"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void savePaymentAmount(row.id);
+                  }}
+                  disabled={savingPaymentOrderId === row.id}
+                >
+                  {savingPaymentOrderId === row.id ? "Saving..." : "Apply"}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        );
+      },
     },
     {
       key: "total",
       header: "Total",
+      width: "8%",
       render: (row) => <strong>{money.format(row.total)}</strong>,
     },
   ];
@@ -891,7 +1153,7 @@ export function OrdersPage() {
   };
 
   const togglePaymentStatus = async (orderId: string) => {
-    const rawOrder = ordersRaw.find((entry) => entry.id === orderId);
+    const rawOrder = rawOrderById.get(orderId);
     if (!rawOrder) {
       showToast({ title: "Order not found", description: "Could not resolve selected order." });
       return;
@@ -900,39 +1162,17 @@ export function OrdersPage() {
     const currentStatus = String(rawOrder.payment_status || "")
       .trim()
       .toLowerCase();
-    const nextPaymentStatus = currentStatus === "paid" ? "unpaid" : "paid";
-
-    setSavingPaymentOrderId(orderId);
-    try {
-      await updateDoc(doc(db, "orders", orderId), {
-        payment_status: nextPaymentStatus === "unpaid" ? "pending" : "paid",
-      });
-
-      const userId = String(rawOrder.user_id || "").trim();
-      if (userId) {
-        try {
-          await updateDoc(doc(db, "users", userId, "orders", orderId), {
-            payment_status: nextPaymentStatus === "unpaid" ? "pending" : "paid",
-          });
-        } catch {
-          // Skip if mirror doc is missing.
-        }
-      }
-
-      showToast({
-        title: "Payment updated",
-        description: `Order marked as ${nextPaymentStatus}.`,
-      });
-    } catch (error) {
-      console.error("Failed to update payment status", error);
-      showToast({
-        title: "Payment update failed",
-        description:
-          error instanceof Error ? error.message : "Could not update payment status.",
-      });
-    } finally {
-      setSavingPaymentOrderId("");
-    }
+    const total = Math.max(0, Number(rawOrder.total || 0));
+    const currentAmountPaid = getAmountPaidFromOrder(rawOrder);
+    const nextAmountPaid =
+      currentStatus === "paid"
+        ? currentAmountPaid >= total
+          ? 0
+          : currentAmountPaid
+        : total;
+    const successDescription =
+      currentStatus === "paid" ? "Order marked as unpaid." : "Order marked as paid in full.";
+    await persistPaymentAmount(orderId, nextAmountPaid, successDescription);
   };
 
   const deleteOrder = async (order: OrderRow) => {
@@ -1286,6 +1526,13 @@ export function OrdersPage() {
                     },
                   },
                   {
+                    label: (row) =>
+                      row.paymentStatus === "paid" ? "Mark as unpaid" : "Mark as paid",
+                    onClick: (row) => {
+                      void togglePaymentStatus(row.id);
+                    },
+                  },
+                  {
                     label: "Send invoice",
                     onClick: (row) =>
                       showToast({
@@ -1349,18 +1596,11 @@ export function OrdersPage() {
 
       {focusedOrder ? (
           <section className="adm-card adm-panel adm-orders-panel" aria-label="Order detail page">
-            <header>
+            <header className="adm-order-detail-header">
               <div>
                 <h3>{focusedOrder.orderNumber}</h3>
-                <p className="adm-muted">Detailed order breakdown</p>
+                <p className="adm-muted">Order summary, status controls, and payment updates.</p>
               </div>
-              <button
-                type="button"
-                className="adm-button adm-button--ghost"
-                onClick={() => navigate("/admin/orders")}
-              >
-                Back to orders
-              </button>
             </header>
             <dl className="adm-order-meta">
               <div>
@@ -1378,7 +1618,61 @@ export function OrdersPage() {
               <div>
                 <dt>Payment</dt>
                 <dd>
-                  <StatusBadge tone={paymentTone[focusedOrder.paymentStatus]}>{focusedOrder.paymentStatus}</StatusBadge>
+                  <div className="adm-order-meta__payment">
+                    <StatusBadge tone={paymentTone[focusedOrder.paymentStatus]}>
+                      {focusedOrder.paymentStatus}
+                    </StatusBadge>
+                    <button
+                      type="button"
+                      className="adm-button adm-button--ghost"
+                      onClick={() => {
+                        void togglePaymentStatus(focusedOrder.id);
+                      }}
+                      disabled={savingPaymentOrderId === focusedOrder.id}
+                    >
+                      {savingPaymentOrderId === focusedOrder.id
+                        ? "Saving..."
+                        : focusedOrder.paymentStatus === "paid"
+                        ? "Mark unpaid"
+                        : "Mark paid"}
+                    </button>
+                    <input
+                      className="adm-input"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={
+                        paymentAmountInputByOrderId[focusedOrder.id] ??
+                        String(getAmountPaidFromOrder(focusedRawOrder))
+                      }
+                      onChange={(event) =>
+                        setPaymentAmountInputByOrderId((prev) => ({
+                          ...prev,
+                          [focusedOrder.id]: event.target.value,
+                        }))
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        void savePaymentAmount(focusedOrder.id);
+                      }}
+                      placeholder="Amount paid"
+                      style={{ maxWidth: 140 }}
+                    />
+                    <button
+                      type="button"
+                      className="adm-button adm-button--ghost"
+                      onClick={() => {
+                        void savePaymentAmount(focusedOrder.id);
+                      }}
+                      disabled={savingPaymentOrderId === focusedOrder.id}
+                    >
+                      Save payment
+                    </button>
+                    <span className="adm-muted">
+                      Remaining {money.format(focusedOrderRemaining)}
+                    </span>
+                  </div>
                 </dd>
               </div>
               <div>
@@ -1423,21 +1717,31 @@ export function OrdersPage() {
                 </dd>
               </div>
             </dl>
-            <section className="adm-card adm-panel" style={{ marginTop: 12 }}>
-              <header className="adm-panel__header">
-                <h4>Edit order details</h4>
-                <button
-                  type="button"
-                  className="adm-button adm-button--primary"
-                  onClick={() => {
-                    void saveOrderDetails();
-                  }}
-                  disabled={savingDetailsOrderId === focusedOrder.id}
-                >
-                  {savingDetailsOrderId === focusedOrder.id ? "Saving..." : "Save order details"}
-                </button>
-              </header>
-              <div className="adm-form-grid">
+            <div className="adm-order-editor-toggle">
+              <button
+                type="button"
+                className="adm-button adm-button--ghost"
+                onClick={() => setShowOrderDetailsEditor((prev) => !prev)}
+              >
+                {showOrderDetailsEditor ? "Hide full edit form" : "Edit full order details"}
+              </button>
+            </div>
+            {showOrderDetailsEditor ? (
+              <section className="adm-card adm-panel" style={{ marginTop: 8 }}>
+                <header className="adm-panel__header">
+                  <h4>Edit order details</h4>
+                  <button
+                    type="button"
+                    className="adm-button adm-button--primary"
+                    onClick={() => {
+                      void saveOrderDetails();
+                    }}
+                    disabled={savingDetailsOrderId === focusedOrder.id}
+                  >
+                    {savingDetailsOrderId === focusedOrder.id ? "Saving..." : "Save order details"}
+                  </button>
+                </header>
+                <div className="adm-form-grid">
                 <label>
                   Customer name
                   <input
@@ -1539,21 +1843,57 @@ export function OrdersPage() {
                     type="number"
                     value={orderEditor.subtotal}
                     onChange={(event) =>
-                      setOrderEditor((prev) => ({ ...prev, subtotal: Number(event.target.value || 0) }))
+                      setOrderEditor((prev) => {
+                        const subtotal = Math.max(0, Number(event.target.value || 0));
+                        return {
+                          ...prev,
+                          subtotal,
+                          total: computeTotal(subtotal, prev.shipping, prev.tax),
+                        };
+                      })
                     }
                   />
                 </label>
-                <label>
-                  Shipping
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <span>Shipping</span>
+                    <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="adm-button adm-button--ghost"
+                        onClick={removeShippingFromEditor}
+                      >
+                        Remove shipping
+                      </button>
+                      <button
+                        type="button"
+                        className="adm-button adm-button--ghost"
+                        onClick={reapplyShippingToEditor}
+                      >
+                        Reapply shipping
+                      </button>
+                    </span>
+                  </div>
                   <input
                     className="adm-input"
                     type="number"
                     value={orderEditor.shipping}
-                    onChange={(event) =>
-                      setOrderEditor((prev) => ({ ...prev, shipping: Number(event.target.value || 0) }))
-                    }
+                    onChange={(event) => {
+                      const shipping = Math.max(0, Number(event.target.value || 0));
+                      if (focusedOrder && shipping > 0) {
+                        setShippingRestoreByOrderId((restorePrev) => ({
+                          ...restorePrev,
+                          [focusedOrder.id]: shipping,
+                        }));
+                      }
+                      setOrderEditor((prev) => ({
+                        ...prev,
+                        shipping,
+                        total: computeTotal(prev.subtotal, shipping, prev.tax),
+                      }));
+                    }}
                   />
-                </label>
+                </div>
                 <label>
                   Tax
                   <input
@@ -1561,7 +1901,14 @@ export function OrdersPage() {
                     type="number"
                     value={orderEditor.tax}
                     onChange={(event) =>
-                      setOrderEditor((prev) => ({ ...prev, tax: Number(event.target.value || 0) }))
+                      setOrderEditor((prev) => {
+                        const tax = Math.max(0, Number(event.target.value || 0));
+                        return {
+                          ...prev,
+                          tax,
+                          total: computeTotal(prev.subtotal, prev.shipping, tax),
+                        };
+                      })
                     }
                   />
                 </label>
@@ -1616,8 +1963,9 @@ export function OrdersPage() {
                     }
                   />
                 </label>
-              </div>
-            </section>
+                </div>
+              </section>
+            ) : null}
             <section className="adm-order-items">
               <div className="adm-order-items__header">
                 <div>
@@ -1653,7 +2001,7 @@ export function OrdersPage() {
                             {item.productId ? `ID: ${item.productId}` : "ID: -"} ·{" "}
                             {item.size ? `Size: ${item.size}` : "Size: -"} · Qty {item.quantity}
                           </p>
-                          <div className="adm-form-grid" style={{ marginTop: 8 }}>
+                          <div className="adm-form-grid adm-order-item-editor-grid" style={{ marginTop: 8 }}>
                             <label>
                               Size
                               <input
@@ -1803,6 +2151,14 @@ export function OrdersPage() {
                 <div>
                   <span>Subtotal</span>
                   <strong>{money.format(editedOrderSubtotal)}</strong>
+                </div>
+                <div>
+                  <span>Shipping</span>
+                  <strong>{money.format(editedOrderShipping)}</strong>
+                </div>
+                <div>
+                  <span>Tax</span>
+                  <strong>{money.format(editedOrderTax)}</strong>
                 </div>
                 <div>
                   <span>Estimated profit</span>

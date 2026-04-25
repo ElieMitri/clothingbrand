@@ -4,7 +4,10 @@ import { PageHeader } from "../components/PageHeader";
 import { StatCard } from "../components/StatCard";
 import { TrendChart } from "../components/TrendChart";
 import { useAdminLiveData } from "../hooks/useAdminLiveData";
-import { getUnitProfitFromOrderItemDoc } from "../utils/transforms";
+import {
+  getOrderNetAmountExcludingShipping,
+  getUnitProfitFromOrderItemDoc,
+} from "../utils/transforms";
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
@@ -38,8 +41,14 @@ export function AnalyticsPage() {
       productById.set(productId, product);
     });
 
-    const grossSales = inRange.reduce((sum, order) => sum + Number(order.total || 0), 0);
-    const revenue = nonCancelled.reduce((sum, order) => sum + Number(order.total || 0), 0);
+    const grossSales = inRange.reduce(
+      (sum, order) => sum + getOrderNetAmountExcludingShipping(order),
+      0
+    );
+    const revenue = nonCancelled.reduce(
+      (sum, order) => sum + getOrderNetAmountExcludingShipping(order),
+      0
+    );
     const profit = nonCancelled.reduce((sum, order) => {
       const persistedProfit = Number(order.profit);
       if (Number.isFinite(persistedProfit) && persistedProfit >= 0) {
@@ -69,7 +78,10 @@ export function AnalyticsPage() {
     nonCancelled.forEach((order) => {
       const date = toDate(order.created_at);
       const key = dayKey(date);
-      revenueByDay.set(key, Number(revenueByDay.get(key) || 0) + Number(order.total || 0));
+      revenueByDay.set(
+        key,
+        Number(revenueByDay.get(key) || 0) + getOrderNetAmountExcludingShipping(order)
+      );
     });
 
     const chart = Array.from({ length: rangeDays + 1 }).map((_, offset) => {
