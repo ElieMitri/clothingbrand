@@ -292,7 +292,7 @@ export function ProductDetail() {
               </div>
               <div className="flex items-center gap-3 rounded-[10px] border border-[var(--sf-line)] p-3 text-sm">
                 <RefreshCcw size={16} className="text-[var(--sf-accent)]" />
-                <span>14-day easy return policy</span>
+                <span>7-day exchange policy</span>
               </div>
               <div className="flex items-center gap-3 rounded-[10px] border border-[var(--sf-line)] p-3 text-sm">
                 <ShieldCheck size={16} className="text-[var(--sf-accent)]" />
